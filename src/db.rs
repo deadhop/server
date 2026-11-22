@@ -418,6 +418,11 @@ impl Db {
             })?)
     }
 
+    /// The next unused derivation index.
+    pub fn next_index(&self) -> Result<u32> {
+        Ok(self.totals()?.next_index)
+    }
+
     /// Aggregate counts and sums.
     pub fn totals(&self) -> Result<Totals> {
         let conn = self.lock();
