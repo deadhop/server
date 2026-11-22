@@ -20,8 +20,8 @@ use crate::error::Error;
 use crate::keys::KeyDef;
 use crate::manage::{
     AddOperatorParams, AuditLog, AuditParams, Backup, BackupList, CheckProxyParams, ControlParams, ControlResult,
-    Health, Metrics, RelayHealthReport, RelayHistory, RelayHistoryParams, RemoveOperatorParams, Series, SeriesParams,
-    SettingsView, UpdateSettingsParams, WipeParams, WipeResult,
+    Health, Metrics, RelayHealthReport, RelayHistory, RelayHistoryParams, RemoveOperatorParams, ResolveI2pNameParams,
+    Series, SeriesParams, SettingsView, UpdateSettingsParams, WipeParams, WipeResult,
 };
 use crate::privacy::{PrivacyAudit, ProxyCheck};
 use crate::service::{
@@ -289,6 +289,19 @@ impl PayServer {
     }
 
     #[tool(
+        name = "resolve_i2p_name",
+        description = "Operators only: look up an I2P name (such as example.i2p) by asking every configured I2P name registry through the I2P router proxy; returns its .b32.i2p address and which registries agree, disagree or do not know it."
+    )]
+    async fn tool_resolve_i2p_name(
+        &self,
+        Parameters(p): Parameters<ResolveI2pNameParams>,
+        ctx: RequestContext<RoleServer>,
+    ) -> Result<Json<crate::i2p::I2pNameLookup>, ErrorData> {
+        let c = caller_from(&ctx.extensions);
+        self.svc.resolve_i2p_name(&c, p).await.map(Json).map_err(rpc_error)
+    }
+
+    #[tool(
         name = "check_proxy",
         description = "Operators only: open a tunnel through a proxy (default: the current one) to each live relay and report, per relay, whether it worked and why not."
     )]
@@ -437,7 +450,8 @@ mod tests {
         let mut expected: Vec<String> = all.iter().map(|t| t.name.to_string()).collect();
         expected.sort();
         assert_eq!(names, expected, "every tool exactly once, in order");
-        for bad in ["x", "-1", "99", "22"] {
+        let past_end = all.len().to_string();
+        for bad in ["x", "-1", "99", past_end.as_str()] {
             assert!(tool_page(all.clone(), Some(bad)).is_err(), "{bad}");
         }
         // One tool bigger than a page still gets a page of its own.

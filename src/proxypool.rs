@@ -829,6 +829,7 @@ mod tests {
                     url: format!("socks5://h:{}", i + 1),
                     keys: Vec::new(),
                     pool: true,
+                    i2p: false,
                 })
                 .collect(),
             mode,
@@ -1078,6 +1079,7 @@ mod tests {
             url: url.clone(),
             keys: Vec::new(),
             pool: true,
+            i2p: false,
         }];
         r.svc.apply_settings(s);
         r.svc.refresh_pool().await;
@@ -1133,6 +1135,7 @@ mod tests {
             url: format!("socks5://{id}:1"),
             keys: Vec::new(),
             pool,
+            i2p: false,
         };
         s.proxies = ProxySettings {
             list: vec![entry("tor", true), entry("vpn", false)],
@@ -1233,6 +1236,7 @@ mod tests {
             url: "socks5://only:1".into(),
             keys: Vec::new(),
             pool: false,
+            i2p: false,
         }];
         r.svc.apply_settings(s.clone());
         probe(&r, "only", true);
@@ -1289,6 +1293,7 @@ mod tests {
             url: "socks5://127.0.0.1:1".into(),
             keys: Vec::new(),
             pool: false,
+            i2p: false,
         }];
         let direct = |p: &str| Rule {
             name: String::new(),
@@ -1497,6 +1502,7 @@ mod tests {
             url: format!("socks5://127.0.0.1:{port}"),
             keys: vec!["admin".into()],
             pool: true,
+            i2p: false,
         }];
         r.svc.apply_settings(s);
         r.svc.refresh_pool().await;
@@ -1629,6 +1635,7 @@ mod tests {
                 url: format!("socks5://127.0.0.1:{port}"),
                 keys: Vec::new(),
                 pool: true,
+                i2p: false,
             },
             ProxyEntry {
                 id: "bad".into(),
@@ -1636,6 +1643,7 @@ mod tests {
                 url: "socks5://127.0.0.1:9".into(),
                 keys: Vec::new(),
                 pool: true,
+                i2p: false,
             },
         ];
         r.svc.apply_settings(s);
@@ -1667,6 +1675,7 @@ mod tests {
             url: format!("socks5://127.0.0.1:{port}"),
             keys: Vec::new(),
             pool: true,
+            i2p: false,
         }];
         r.svc.apply_settings(s);
         r.svc.refresh_pool().await;

@@ -1210,6 +1210,7 @@ mod tests {
                 "list_invoices",
                 "remove_operator",
                 "reset_settings",
+                "resolve_i2p_name",
                 "update_settings",
                 "wipe_database"
             ]
@@ -1948,6 +1949,7 @@ mod tests {
                 url: "socks5://127.0.0.1:9".into(),
                 keys: Vec::new(),
                 pool: true,
+                i2p: false,
             }];
             st.relays = other.clone();
             app.svc.apply_settings(st);

@@ -97,6 +97,9 @@ pub struct ProxyEntry {
     // is used only by routing rules that name it.
     #[serde(default = "in_pool")]
     pub pool: bool,
+    // This is an I2P router's HTTP proxy, the one used to look up I2P names.
+    #[serde(default)]
+    pub i2p: bool,
 }
 
 fn in_pool() -> bool {
@@ -151,6 +154,10 @@ pub struct ProxySettings {
     // route; a relay none matches takes the default route (the list above).
     #[serde(default)]
     pub rules: Vec<crate::routes::Rule>,
+    // I2P name registries (jump services) asked through the I2P proxy, as url
+    // templates with a `{name}` placeholder. Empty turns lookups off.
+    #[serde(default = "crate::i2p::default_registries")]
+    pub i2p_registries: Vec<String>,
 }
 
 impl Default for ProxySettings {
@@ -164,6 +171,7 @@ impl Default for ProxySettings {
             offline: OfflinePolicy::KillSwitch,
             transparent: false,
             rules: Vec::new(),
+            i2p_registries: crate::i2p::default_registries(),
         }
     }
 }
@@ -184,6 +192,9 @@ pub struct ProxyEntryInput {
     // In the default route; left out is yes.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pool: Option<bool>,
+    // An I2P router's HTTP proxy; left out is no.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub i2p: Option<bool>,
 }
 
 // Partial update of [`ProxySettings`]; `list` replaces the whole list.
@@ -207,6 +218,9 @@ pub struct ProxyPatch {
     // Replaces the whole rule list.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub rules: Option<Vec<crate::routes::Rule>>,
+    // Replaces the whole registry list.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub i2p_registries: Option<Vec<String>>,
 }
 
 fn new_proxy_id() -> String {
@@ -224,6 +238,7 @@ fn entries_from(list: &[ProxyEntryInput]) -> Vec<ProxyEntry> {
             url: e.url.clone(),
             keys: e.keys.clone().unwrap_or_default(),
             pool: e.pool.unwrap_or(true),
+            i2p: e.i2p.unwrap_or(false),
         })
         .collect()
 }
@@ -240,6 +255,7 @@ impl ProxyPatch {
                         url: e.url.clone(),
                         keys: Some(e.keys.clone()),
                         pool: Some(e.pool),
+                        i2p: Some(e.i2p),
                     })
                     .collect(),
             ),
@@ -286,6 +302,9 @@ impl ProxyPatch {
         if let Some(rules) = &self.rules {
             s.rules.clone_from(rules);
         }
+        if let Some(r) = &self.i2p_registries {
+            s.i2p_registries.clone_from(r);
+        }
     }
 
     fn merge(&mut self, o: &ProxyPatch) {
@@ -297,6 +316,7 @@ impl ProxyPatch {
         keep(&mut self.offline, &o.offline);
         keep(&mut self.transparent, &o.transparent);
         keep(&mut self.rules, &o.rules);
+        keep(&mut self.i2p_registries, &o.i2p_registries);
     }
 
     fn names(&self, out: &mut Vec<String>) {
@@ -309,6 +329,7 @@ impl ProxyPatch {
             ("offline", self.offline.is_some()),
             ("transparent", self.transparent.is_some()),
             ("rules", self.rules.is_some()),
+            ("i2p_registries", self.i2p_registries.is_some()),
         ];
         out.extend(fields.iter().filter(|f| f.1).map(|f| format!("proxies.{}", f.0)));
     }
@@ -344,6 +365,28 @@ impl ProxySettings {
             if self.list[..i].iter().any(|o| o.url == e.url) {
                 return Err(Error::InvalidParams("proxy: the same address is listed twice".into()));
             }
+            if e.i2p {
+                if !e.url.trim().to_ascii_lowercase().starts_with("http://") {
+                    return Err(Error::InvalidParams(
+                        "proxy: an I2P router proxy must be its http:// proxy".into(),
+                    ));
+                }
+                if self.list[..i].iter().any(|o| o.i2p) {
+                    return Err(Error::InvalidParams("proxy: at most one I2P router proxy".into()));
+                }
+            }
+        }
+        if self.i2p_registries.len() > crate::i2p::MAX_REGISTRIES {
+            return Err(Error::InvalidParams(format!(
+                "at most {} I2P name registries",
+                crate::i2p::MAX_REGISTRIES
+            )));
+        }
+        for (i, r) in self.i2p_registries.iter().enumerate() {
+            crate::i2p::check_registry(r)?;
+            if self.i2p_registries[..i].contains(r) {
+                return Err(Error::InvalidParams("I2P registry: listed twice".into()));
+            }
         }
         within("proxies.rotate_secs", self.rotate_secs, PROXY_INTERVAL_SECS)?;
         within("proxies.chaos_min_secs", self.chaos_min_secs, PROXY_INTERVAL_SECS)?;
@@ -373,6 +416,10 @@ pub struct Settings {
     /// listed here is used by every key.
     #[serde(default)]
     pub relay_keys: BTreeMap<String, Vec<String>>,
+    /// Names shown for relays (such as the I2P name behind a b32 address):
+    /// relay url to name. Connections always use the url.
+    #[serde(default)]
+    pub relay_names: BTreeMap<String, String>,
     pub public_invoicing: bool,
     pub pow_bits: u8,
     pub pow_window_secs: u64,
@@ -421,6 +468,9 @@ pub struct SettingsPatch {
     /// Replaces the whole map of relays used by only some keys.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub relay_keys: Option<BTreeMap<String, Vec<String>>>,
+    /// Replaces the whole map of relay names.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub relay_names: Option<BTreeMap<String, String>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub public_invoicing: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -515,6 +565,9 @@ impl SettingsPatch {
         let relays = s.relays.clone();
         s.relay_keys
             .retain(|url, keys| !keys.is_empty() && relays.iter().any(|r| same_relay(r, url)));
+        take(&mut s.relay_names, &self.relay_names);
+        s.relay_names
+            .retain(|url, name| !name.trim().is_empty() && relays.iter().any(|r| same_relay(r, url)));
         take(&mut s.public_invoicing, &self.public_invoicing);
         take(&mut s.pow_bits, &self.pow_bits);
         take(&mut s.pow_window_secs, &self.pow_window_secs);
@@ -544,6 +597,7 @@ impl SettingsPatch {
                     url: old.clone(),
                     keys: Vec::new(),
                     pool: true,
+                    i2p: false,
                 }]
             };
         }
@@ -561,6 +615,7 @@ impl SettingsPatch {
         keep(&mut self.name, &o.name);
         keep(&mut self.relays, &o.relays);
         keep(&mut self.relay_keys, &o.relay_keys);
+        keep(&mut self.relay_names, &o.relay_names);
         keep(&mut self.public_invoicing, &o.public_invoicing);
         keep(&mut self.pow_bits, &o.pow_bits);
         keep(&mut self.pow_window_secs, &o.pow_window_secs);
@@ -599,6 +654,7 @@ impl SettingsPatch {
             ("name", self.name.is_some()),
             ("relays", self.relays.is_some()),
             ("relay_keys", self.relay_keys.is_some()),
+            ("relay_names", self.relay_names.is_some()),
             ("public_invoicing", self.public_invoicing.is_some()),
             ("pow_bits", self.pow_bits.is_some()),
             ("pow_window_secs", self.pow_window_secs.is_some()),
@@ -759,6 +815,16 @@ impl Settings {
         for keys in self.relay_keys.values() {
             crate::keys::check_ids(keys, "relay")?;
         }
+        for name in self.relay_names.values() {
+            if name.trim().is_empty()
+                || name.chars().count() > NAME_LEN
+                || !name.chars().all(crate::service::is_plain_text)
+            {
+                return Err(Error::InvalidParams(format!(
+                    "relay names must be 1 to {NAME_LEN} visible characters"
+                )));
+            }
+        }
         if let Some(k) = crate::keys::KEYS.iter().find(|k| self.relays_for(k.id).is_empty()) {
             return Err(Error::InvalidParams(format!(
                 "no relay is assigned to the {} key, which could then not be reached",
@@ -885,6 +951,7 @@ pub(crate) mod tests {
             url: url.into(),
             keys: Vec::new(),
             pool: true,
+            i2p: false,
         }
     }
 
@@ -903,6 +970,7 @@ pub(crate) mod tests {
                     url: crate::relay::redact(&current[1].url),
                     keys: None,
                     pool: None,
+                    i2p: None,
                 },
                 ProxyEntryInput {
                     id: Some("one".into()),
@@ -910,6 +978,7 @@ pub(crate) mod tests {
                     url: crate::relay::redact(&current[0].url),
                     keys: None,
                     pool: None,
+                    i2p: None,
                 },
                 ProxyEntryInput {
                     id: None,
@@ -917,6 +986,7 @@ pub(crate) mod tests {
                     url: "socks5://10.0.0.3:9050".into(),
                     keys: None,
                     pool: None,
+                    i2p: None,
                 },
             ]),
             ..ProxyPatch::default()
@@ -944,6 +1014,7 @@ pub(crate) mod tests {
             url: crate::relay::redact(&current[0].url),
             keys: None,
             pool: None,
+            i2p: None,
         }]);
         by_text.resolve(&current).unwrap();
         assert_eq!(by_text.list.as_ref().unwrap()[0].url, current[0].url);
@@ -957,6 +1028,7 @@ pub(crate) mod tests {
                 url: "socks5://u:***@evil.example:1".into(),
                 keys: None,
                 pool: None,
+                i2p: None,
             }]),
             ..ProxyPatch::default()
         };
@@ -1429,5 +1501,38 @@ pub(crate) mod tests {
         let mut stored = patch;
         stored.merge(&newer);
         assert_eq!(stored.apply(&base).relay_keys, [(a, ids(&["admin"]))].into());
+    }
+
+    #[test]
+    fn settings_saved_before_i2p_load_and_names_follow_the_relays() {
+        let old: ProxySettings = serde_json::from_value(serde_json::json!({
+            "list": [{ "id": "a", "name": "", "url": "http://127.0.0.1:4444" }],
+            "mode": "failover", "rotate_secs": 3600, "chaos_min_secs": 300, "chaos_max_secs": 900,
+            "offline": "kill_switch", "transparent": false
+        }))
+        .unwrap();
+        assert!(!old.list[0].i2p);
+        assert_eq!(old.i2p_registries, crate::i2p::default_registries());
+        // The I2P marker survives a round trip through a patch.
+        let mut marked = old.clone();
+        marked.list[0].i2p = true;
+        let mut back = ProxySettings::default();
+        ProxyPatch::with_list(&marked.list).apply(&mut back);
+        assert!(back.list[0].i2p);
+
+        let base = defaults();
+        let relay = base.relays[0].clone();
+        let named: SettingsPatch = serde_json::from_value(serde_json::json!({
+            "relay_names": { (relay.clone()): "nostr-not.i2p", "wss://gone.example": "x", (format!("{relay}/")): " " }
+        }))
+        .unwrap();
+        assert_eq!(named.names(), ["relay_names"]);
+        let s = named.apply(&base);
+        assert_eq!(s.relay_names, [(relay.clone(), "nostr-not.i2p".to_string())].into());
+        s.validate(true).unwrap();
+        // A relay taken off the list loses its name.
+        let mut stored = named.clone();
+        stored.merge(&serde_json::from_value(serde_json::json!({ "relays": ["wss://other.example"] })).unwrap());
+        assert!(stored.apply(&base).relay_names.is_empty());
     }
 }

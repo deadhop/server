@@ -201,6 +201,7 @@ fn load_proxies(get: &dyn Fn(&str) -> Option<String>) -> Result<crate::settings:
             url,
             keys: Vec::new(),
             pool: true,
+            i2p: false,
         });
     }
     let secs = |key: &str, default: u64| -> Result<u64> {
@@ -479,6 +480,7 @@ impl Config {
             name: self.name.clone(),
             relays: self.relays.clone(),
             relay_keys: std::collections::BTreeMap::new(),
+            relay_names: std::collections::BTreeMap::new(),
             public_invoicing: self.public_invoicing,
             pow_bits: self.pow_bits,
             pow_window_secs: self.pow_window_secs,
