@@ -148,7 +148,9 @@ pub fn plan(
         .as_ref()
         .and_then(|c| ups.iter().copied().find(|&i| &cfg.list[i].id == c));
 
-    if cfg.mode == ProxyMode::Failover {
+    // One proxy configured: there is nothing to choose between, so the strategy
+    // does not apply and that proxy is simply used while it is up.
+    if cfg.mode == ProxyMode::Failover || cfg.list.len() == 1 {
         let best = ups[0];
         let pick = match current {
             Some(c) if c <= best => c,
@@ -690,6 +692,21 @@ mod tests {
         assert_eq!((p.state, p.active), (PoolState::Transparent, None));
         let p = plan(&cfg(ProxyMode::Chaos, 0), &[], &mut rot, 0, &mut low);
         assert_eq!((p.state, p.active), (PoolState::Direct, None));
+    }
+
+    #[test]
+    fn one_configured_proxy_ignores_the_strategy() {
+        for mode in [ProxyMode::RoundRobin, ProxyMode::Chaos] {
+            let c = cfg(mode, 1);
+            let mut rot = Rotation::default();
+            let p = plan(&c, &up(&[true]), &mut rot, 0, &mut low);
+            assert_eq!(
+                (p.state, p.active, p.next_switch_at),
+                (PoolState::Active, Some("p0".to_string()), None)
+            );
+            let p = plan(&c, &up(&[false]), &mut rot, 10, &mut low);
+            assert_eq!((p.state, p.active), (PoolState::Offline, None));
+        }
     }
 
     #[test]
