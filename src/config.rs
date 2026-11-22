@@ -453,6 +453,18 @@ pub fn is_loopback_host(host: &str) -> bool {
     host.eq_ignore_ascii_case("localhost") || host.parse::<std::net::IpAddr>().is_ok_and(|ip| ip.is_loopback())
 }
 
+/// Whether a bare host lives on a network that encrypts the whole path itself:
+/// Tor (`.onion`), I2P (`.i2p`, including `.b32.i2p`) or the FIPS mesh
+/// (`.fips`). A plain `ws://` relay there is not readable in transit, so the
+/// mainnet rule against unencrypted relays does not apply. Like
+/// [`is_loopback_host`], use it on a host a URL parser extracted.
+pub fn is_overlay_host(host: &str) -> bool {
+    let host = host.trim_end_matches('.').to_ascii_lowercase();
+    ["onion", "i2p", "fips"]
+        .iter()
+        .any(|tld| host.strip_suffix(tld).is_some_and(|rest| rest.ends_with('.')))
+}
+
 impl Config {
     /// Settings that are allowed but that an operator should think twice about.
     pub fn warnings(&self) -> Vec<String> {
@@ -540,6 +552,34 @@ pub(crate) mod tests {
             (2_000, 1_200, 120)
         );
         assert!(c.warnings().is_empty());
+    }
+
+    #[test]
+    fn overlay_hosts_are_the_encrypted_networks() {
+        for yes in [
+            "abc.onion",
+            "ABC.Onion.",
+            "x.y.b32.i2p",
+            "relay.i2p",
+            "npub1xyz.fips",
+            "node.fips.",
+        ] {
+            assert!(is_overlay_host(yes), "{yes}");
+        }
+        // The suffix must be a whole label, at the end.
+        for no in [
+            "onion",
+            "fips",
+            "i2p",
+            "notonion",
+            "a.onion.example",
+            "a.fips.example.com",
+            "relay.example",
+            "",
+            "a.i2px",
+        ] {
+            assert!(!is_overlay_host(no), "{no}");
+        }
     }
 
     #[test]
