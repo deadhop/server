@@ -13,7 +13,7 @@ use bitcoin::Network;
 use rmcp::schemars::{self, JsonSchema};
 use serde::{Deserialize, Serialize};
 
-use crate::config::{is_loopback, is_loopback_host, MAX_MONEY_SAT};
+use crate::config::{is_loopback, is_loopback_host, is_overlay_host, MAX_MONEY_SAT};
 use crate::error::{Error, Result};
 
 /// Inclusive bounds shared by the environment loader and runtime changes, so
@@ -667,8 +667,13 @@ pub fn check_relays(relays: &[String], network: Network) -> Result<()> {
         if host.is_empty() {
             return Err(Error::InvalidParams(format!("relay '{r}' is not a valid url")));
         }
-        if network == Network::Bitcoin && r.starts_with("ws://") && !is_loopback_host(&host) {
-            return Err(Error::InvalidParams(format!("relay '{r}' must use wss:// on mainnet")));
+        // Plain ws:// is only for this machine, or for Tor, I2P and FIPS hosts,
+        // which encrypt the whole path themselves.
+        if network == Network::Bitcoin && r.starts_with("ws://") && !is_loopback_host(&host) && !is_overlay_host(&host)
+        {
+            return Err(Error::InvalidParams(format!(
+                "relay '{r}' must use wss:// on mainnet (ws:// is only for this machine, or .onion, .i2p and .fips addresses)"
+            )));
         }
         if relays[..i].contains(r) {
             return Err(Error::InvalidParams(format!("relay '{r}' is listed twice")));
@@ -814,7 +819,14 @@ impl Settings {
                 self.pow_bits
             ));
         }
-        if network == Network::Bitcoin && self.relays.iter().any(|r| r.starts_with("ws://")) {
+        let plaintext = |r: &String| {
+            r.starts_with("ws://")
+                && !nostr_sdk::Url::parse(r)
+                    .ok()
+                    .and_then(|u| u.host_str().map(is_overlay_host))
+                    .unwrap_or(false)
+        };
+        if network == Network::Bitcoin && self.relays.iter().any(plaintext) {
             w.push("a relay uses ws:// (no TLS) on mainnet".to_string());
         }
         if network == Network::Bitcoin && self.min_confirmations < 2 && self.max_amount_sat > 10_000_000 {
@@ -1160,6 +1172,29 @@ pub(crate) mod tests {
             .unwrap_err()
             .to_string()
             .contains("wss:// on mainnet"));
+        // Tor, I2P and FIPS addresses are encrypted end to end: plain ws:// is fine there.
+        assert!(r(
+            &[
+                "ws://4ajy63hxt5hui5o4zg5ep675p2jtjuolyhpzfjjueyfdh3p6gvzpk6id.onion/",
+                "ws://relay.b32.i2p:80",
+                "ws://npub1abc.fips:7777"
+            ],
+            Network::Bitcoin
+        )
+        .is_ok());
+        // ...but only as a whole trailing label, and never with userinfo.
+        for spoof in [
+            "ws://a.onion.example",
+            "ws://onion",
+            "ws://a.fips.example.com",
+            "ws://a.onion@evil.example",
+            "ws://x.i2px",
+        ] {
+            assert!(r(&[spoof], Network::Bitcoin).is_err(), "{spoof}");
+        }
+        // The reason says what to do instead.
+        let why = r(&["ws://relay.example"], Network::Bitcoin).unwrap_err().to_string();
+        assert!(why.contains(".onion, .i2p and .fips"), "{why}");
         // Local plaintext relays stay allowed on mainnet, by any loopback spelling.
         assert!(r(&["ws://localhost:7777", "ws://[::1]:7777/path"], Network::Bitcoin).is_ok());
         // Userinfo must not make a remote host pass for a local one (issue #7):
@@ -1181,6 +1216,26 @@ pub(crate) mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn encrypted_overlay_relays_are_not_warned_about() {
+        let plain = crate::electrum::Security::Plain;
+        let mut s = defaults();
+        s.relays = vec![
+            "ws://abc.onion/".into(),
+            "ws://node.b32.i2p".into(),
+            "ws://npub1abc.fips:7777".into(),
+        ];
+        assert!(!s
+            .warnings(Network::Bitcoin, "127.0.0.1:50001", &plain)
+            .iter()
+            .any(|w| w.contains("no TLS")));
+        s.relays.push("ws://relay.example".into());
+        assert!(s
+            .warnings(Network::Bitcoin, "127.0.0.1:50001", &plain)
+            .iter()
+            .any(|w| w.contains("no TLS")));
     }
 
     #[test]
