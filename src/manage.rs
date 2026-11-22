@@ -2825,7 +2825,7 @@ pub(crate) mod tests {
                 "{bad}"
             );
         }
-        // Four per minute, all operators together (two used above).
+        // Four per minute, all operators together (three used above).
         use_router(&r, port, &["one.i2p"]);
         r.svc.resolve_i2p_name(&r.admin(), lookup("x.i2p")).await.unwrap();
         assert!(matches!(
@@ -2893,6 +2893,25 @@ pub(crate) mod tests {
         assert!(v.settings.proxies.list[0].i2p);
         assert_eq!(v.settings.proxies.i2p_registries, crate::i2p::default_registries());
         assert!(v.overridden.contains(&"proxies.list".to_string()));
+    }
+
+    #[tokio::test]
+    async fn an_i2p_router_can_stay_out_of_the_default_route() {
+        let r = rig(|_| {}).await;
+        let only = serde_json::json!({ "list": [{ "id": "i2p", "url": "http://127.0.0.1:4444", "i2p": true, "pool": false }] });
+        // Alone and out of the pool, the relays would have no default route.
+        let out = r
+            .svc
+            .update_settings(&r.admin(), patch(serde_json::json!({ "proxies": only })));
+        assert!(msg(out).contains("no proxy in the default route"));
+        // With a rule that sends every relay straight, it is accepted.
+        let mut with_rule = only.clone();
+        with_rule["rules"] = serde_json::json!([{ "match": ["*"], "to": "direct" }]);
+        let v = r
+            .svc
+            .update_settings(&r.admin(), patch(serde_json::json!({ "proxies": with_rule })))
+            .unwrap();
+        assert!(v.settings.proxies.list[0].i2p && !v.settings.proxies.list[0].pool);
     }
 
     #[tokio::test]

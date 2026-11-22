@@ -128,17 +128,6 @@ pub fn helper_value(page: &[u8]) -> Option<String> {
     (!out.is_empty()).then_some(out)
 }
 
-/// Whether a reply so far holds a helper value followed by something that
-/// ends it.
-fn helper_complete(reply: &[u8]) -> bool {
-    let Some(at) = reply.windows(HELPER.len()).position(|w| w == HELPER.as_bytes()) else {
-        return false;
-    };
-    reply[at + HELPER.len()..]
-        .iter()
-        .any(|b| !(b.is_ascii_alphanumeric() || matches!(b, b'-' | b'~' | b'=' | b'%')))
-}
-
 /// Lowercase RFC 4648 base32 without padding.
 fn base32(data: &[u8]) -> String {
     const ALPHABET: &[u8; 32] = b"abcdefghijklmnopqrstuvwxyz234567";
@@ -238,6 +227,11 @@ pub fn helper_in_reply(reply: &[u8]) -> Option<String> {
     }
 }
 
+/// Whether a reply so far holds a complete, valid destination.
+fn helper_done(reply: &[u8]) -> bool {
+    helper_in_reply(reply).is_some_and(|d| b32_address(&d).is_ok())
+}
+
 /// What one registry said.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Answer {
@@ -261,8 +255,8 @@ pub async fn ask(proxy: &ProxyTransport, template: &str, name: &str, secs: u64) 
         path.to_string()
     };
     // Some registries keep the connection open after the page, so reading
-    // stops once a whole helper value has arrived, and what came before a
-    // timeout is still used.
+    // stops once a whole destination has arrived (its length is in it), and
+    // what came before a timeout is still used.
     let mut reply = Vec::new();
     let fetch = async {
         let mut s = proxy.tunnel(host, 80).await?;
@@ -270,7 +264,7 @@ pub async fn ask(proxy: &ProxyTransport, template: &str, name: &str, secs: u64) 
         s.write_all(req.as_bytes()).await?;
         s.flush().await?;
         let mut buf = [0u8; 8192];
-        while reply.len() < MAX_REPLY && !helper_complete(&reply) {
+        while reply.len() < MAX_REPLY && !helper_done(&reply) {
             let n = s.read(&mut buf).await?;
             if n == 0 {
                 break;
@@ -564,6 +558,9 @@ pub(crate) mod tests {
                     let req = read_head(&mut s).await;
                     log.lock().unwrap().push(req);
                     let _ = s.write_all(page.as_bytes()).await;
+                    if page.contains("chunked") {
+                        tokio::time::sleep(Duration::from_secs(60)).await;
+                    }
                 });
             }
         });
@@ -582,6 +579,18 @@ pub(crate) mod tests {
         String::from_utf8_lossy(&head).into_owned()
     }
 
+    /// A chunked page, with a chunk boundary inside the destination, from
+    /// a server that leaves the connection open afterwards.
+    fn chunked_page(dest: &str) -> String {
+        let body = format!("<a href=\"?i2paddresshelper={dest}\">go</a>");
+        let (one, two) = body.split_at(200);
+        format!(
+            "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n{:x}\r\n{one}\r\n{:x}\r\n{two}\r\n",
+            one.len(),
+            two.len()
+        )
+    }
+
     pub fn page_with(dest: &str) -> String {
         format!("HTTP/1.1 200 OK\r\nContent-Type: text/html\r\n\r\n<a href=\"http://x.i2p/?i2paddresshelper={dest}\">go</a>")
     }
@@ -596,6 +605,7 @@ pub(crate) mod tests {
                 "nothing.i2p".to_string(),
                 "HTTP/1.1 404 Not Found\r\n\r\nunknown".to_string(),
             ),
+            ("chunked.i2p".to_string(), chunked_page(&fake_destination(1))),
         ]
         .into();
         let (port, seen, task) = fake_router(pages).await;
@@ -604,14 +614,17 @@ pub(crate) mod tests {
                 .unwrap()
                 .unwrap(),
         );
-        let regs: Vec<String> = ["nothing", "one", "down", "other", "two"]
+        let regs: Vec<String> = ["nothing", "one", "down", "other", "two", "chunked"]
             .iter()
             .map(|h| format!("http://{h}.i2p/jump?q={{name}}"))
             .collect();
-        let out = lookup(&proxy, &regs, "x.i2p", 5).await.unwrap();
+        // The chunked page is left open: reading stops at its destination.
+        let started = std::time::Instant::now();
+        let out = lookup(&proxy, &regs, "x.i2p", 20).await.unwrap();
+        assert!(started.elapsed() < Duration::from_secs(10));
         assert_eq!(out.address, b32_address(&fake_destination(1)).unwrap());
         assert_eq!(out.registry, regs[1]);
-        assert_eq!(out.agreeing, [regs[1].clone(), regs[4].clone()]);
+        assert_eq!(out.agreeing, [regs[1].clone(), regs[4].clone(), regs[5].clone()]);
         assert_eq!(out.disagreeing[0].registry, regs[3]);
         assert_eq!(out.unknown, [regs[0].clone()]);
         assert_eq!(out.unreachable, [regs[2].clone()]);
@@ -619,7 +632,9 @@ pub(crate) mod tests {
         assert!(requests
             .iter()
             .any(|r| r.starts_with("GET /jump?q=x.i2p HTTP/1.1\r\n") && r.contains("Host: one.i2p\r\n")));
-        assert!(requests.iter().all(|r| r.contains("Connection: close\r\n")));
+        assert!(requests
+            .iter()
+            .all(|r| r.contains("Connection: close\r\n") && r.contains("User-Agent: MYOB/6.66 (AN/ON)\r\n")));
         task.abort();
     }
 
