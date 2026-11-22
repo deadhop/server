@@ -297,7 +297,7 @@ pub enum Reason {
     Default,
     // The rule's proxy is down; the rule says to use the default route.
     Fallback,
-    // The rule's proxy is down; the rule says to stay offline.
+    // The rule's proxy is no longer listed (the rule cannot be followed).
     ProxyDown,
     // A rule blocks this relay.
     Blocked,
@@ -372,7 +372,11 @@ pub fn resolve(settings: &Settings, key: &str, default: &DefaultRoute, up: &dyn 
                     fallback,
                     ..
                 }) => match proxies.list.iter().find(|e| &e.id == id) {
-                    Some(e) if up(id) => (
+                    // "Stay offline" means never another way, not "do not
+                    // try": with nothing to choose between, the relay always
+                    // goes through its proxy and the connection keeps
+                    // retrying there. The probe only decides a fallback.
+                    Some(e) if up(id) || *fallback == Fallback::Offline => (
                         Via::Proxy {
                             id: id.clone(),
                             url: e.url.clone(),
@@ -583,10 +587,12 @@ mod tests {
         let vpn_down = |id: &str| id != "vpn";
         assert_eq!(table(&s, "invoices", &pool(), &vpn_down)[0].2, via("tor"));
         assert_eq!(table(&s, "invoices", &pool(), &vpn_down)[0].3, Reason::Fallback);
+        // tor down: the onion relay still goes through tor (rule 1 says never
+        // another way, so it keeps trying there) rather than being held back.
         let tor_down = |id: &str| id != "tor";
         assert_eq!(
             table(&s, "invoices", &pool(), &tor_down)[2],
-            (ONION.into(), Some(0), Via::Off, Reason::ProxyDown)
+            (ONION.into(), Some(0), via("tor"), Reason::Rule)
         );
         // With the pool off, default and fallback relays are off as well.
         let t = table(&s, "invoices", &DefaultRoute::Off, &vpn_down);

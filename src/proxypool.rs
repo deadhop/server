@@ -1206,14 +1206,14 @@ mod tests {
         );
         assert!(h.proxies.iter().any(|p| p.id == "vpn" && !p.pool));
         assert!(h.lanes.iter().all(|l| l.uses_default));
-        // tor down too: the onion relay stays off (no fallback), the rest have
-        // no default route either: the kill switch.
+        // tor down too: the onion relay keeps trying through tor (its rule
+        // allows no other way); the rest have no default route: the kill switch.
         probe(&r, "tor", false);
         r.svc.replan();
         assert_eq!(
             routes(&r),
             vec![
-                (onion.into(), None, Reason::ProxyDown),
+                (onion.into(), Some("tor".into()), Reason::Rule),
                 (vpn.into(), None, Reason::PoolOffline),
                 (plain.into(), None, Reason::PoolOffline),
             ]
