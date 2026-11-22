@@ -582,13 +582,12 @@ mod tests {
                 (LAN.into(), Some(1), Via::Direct, Reason::Rule),
             ]
         );
-        // vpn down: its rule falls back to the default route; tor down: the
-        // onion relay stays offline (rule 1 has no fallback).
+        // A rule's proxy down with "use the default route": its relay falls back.
         let vpn_down = |id: &str| id != "vpn";
         assert_eq!(table(&s, "invoices", &pool(), &vpn_down)[0].2, via("tor"));
         assert_eq!(table(&s, "invoices", &pool(), &vpn_down)[0].3, Reason::Fallback);
-        // tor down: the onion relay still goes through tor (rule 1 says never
-        // another way, so it keeps trying there) rather than being held back.
+        // A rule's proxy down with "stay offline": its relay still goes through
+        // that proxy (never another way) rather than being held back.
         let tor_down = |id: &str| id != "tor";
         assert_eq!(
             table(&s, "invoices", &pool(), &tor_down)[2],
@@ -644,8 +643,9 @@ mod tests {
         assert!(!uses_default(&s2, "invoices"));
         let s3 = settings(vec![rule(&["*"], RouteTo::Pool)]);
         assert!(uses_default(&s3, "admin"));
-        // tor carries the onion relay (rule) and the vpn relay (pool fallback);
-        // i2p is in no rule and not in the pool: nothing; an unknown id: nothing.
+        // A proxy is probed against the relays a rule sends it, plus, while it
+        // is in the pool, those that may take the default route (here a pool
+        // fallback). One in no rule and out of the pool, or an unknown id: none.
         assert_eq!(
             relays_through_proxy(&s, "tor"),
             vec![VPN_RELAY.to_string(), ONION.to_string()]

@@ -1206,8 +1206,9 @@ mod tests {
         );
         assert!(h.proxies.iter().any(|p| p.id == "vpn" && !p.pool));
         assert!(h.lanes.iter().all(|l| l.uses_default));
-        // tor down too: the onion relay keeps trying through tor (its rule
-        // allows no other way); the rest have no default route: the kill switch.
+        // The pool's only proxy down too: a "stay offline" rule's relay keeps
+        // going through its own proxy; the rest have no default route, so the
+        // kill switch applies.
         probe(&r, "tor", false);
         r.svc.replan();
         assert_eq!(
