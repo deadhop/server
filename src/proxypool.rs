@@ -253,6 +253,9 @@ pub struct PoolRuntime {
     /// new ones works (the proxy list is the way back in, so a typo must not
     /// lock anyone out).
     pub probation: Option<Probation>,
+    /// Where each key's relays went at the last plan: (key, relay, proxy url
+    /// or "" for straight). The supervisor is woken when this changes.
+    pub route_shape: Vec<(String, String, Option<String>)>,
 }
 
 impl PoolRuntime {
@@ -303,8 +306,32 @@ pub struct ProxyHealth {
     pub status: Option<String>,
     // The first reason a relay could not be reached, if any.
     pub reason: Option<String>,
-    // The keys (by id) this proxy carries; empty is every key.
+    // The keys (by id) whose default route may use this proxy; empty is every key.
     pub keys: Vec<String>,
+    // In the default route (the pool).
+    pub pool: bool,
+}
+
+// How a relay connection goes: through a proxy, straight, or not at all.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum RouteVia {
+    Proxy,
+    Direct,
+    Off,
+}
+
+// Where one relay of one key goes now, and why.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
+pub struct RouteHealth {
+    pub key: String,
+    pub relay: String,
+    // Number (from 1) of the rule that matched; none: the default route.
+    pub rule: Option<usize>,
+    pub via: RouteVia,
+    // Id of the proxy, when it goes through one.
+    pub proxy: Option<String>,
+    pub reason: crate::routes::Reason,
 }
 
 // How one key's relay connections stand.
@@ -318,6 +345,9 @@ pub struct LaneHealth {
     pub reachable: usize,
     // When rotation changes this key's proxy next.
     pub next_switch_at: Option<u64>,
+    // Whether any relay of this key may take the default route; when none
+    // can, this lane's state does not affect the key.
+    pub uses_default: bool,
 }
 
 // The pool as shown in `get_health`.
@@ -338,19 +368,22 @@ pub struct PoolHealth {
     pub proxies: Vec<ProxyHealth>,
     // Each key's own plan. The fields above are the public invoices key's.
     pub lanes: Vec<LaneHealth>,
+    // Where every relay of every key goes now.
+    pub routes: Vec<RouteHealth>,
 }
 
 impl Service {
     /// The posture the plan implies right now: the offline policy applies as
     /// soon as any key has no reachable proxy.
     pub fn posture(&self) -> Posture {
+        let settings = self.settings().clone();
         let offline = self
             .pool
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .applied
-            .values()
-            .any(|a| a.state == PoolState::Offline);
+            .iter()
+            .any(|(k, a)| a.state == PoolState::Offline && crate::routes::uses_default(&settings, k));
         if offline {
             Posture::offline(self.settings().proxies.offline)
         } else {
@@ -421,19 +454,48 @@ impl Service {
         if !cfg.transparent && !cfg.list.is_empty() {
             let settings = self.settings().clone();
             let now = (self.clock)();
-            // A proxy is only ever tried against the relays of the keys it
-            // carries, so it never sees a key it was not given.
-            let probes = cfg.list.iter().map(|e| {
-                let (relays, spec) = (settings.relays_through(&e.keys), parse_proxy(&e.url).ok().flatten());
-                let shown = redact(&e.url);
-                async move { crate::privacy::check(spec.as_ref(), &shown, &relays, now).await }
-            });
+            // A proxy is only ever tried against the relays it would carry
+            // (by the rules, or as part of the default route for its keys), so
+            // it never sees a relay or key it was not given. One that would
+            // carry nothing is not tried at all.
+            let targets: Vec<(String, Vec<String>, Option<crate::relay::ProxySpec>, String)> = cfg
+                .list
+                .iter()
+                .map(|e| {
+                    (
+                        e.id.clone(),
+                        crate::routes::relays_through_proxy(&settings, &e.id),
+                        parse_proxy(&e.url).ok().flatten(),
+                        redact(&e.url),
+                    )
+                })
+                .collect();
+            let probes = targets
+                .iter()
+                .filter(|t| !t.1.is_empty())
+                .map(|(_, relays, spec, shown)| async move {
+                    crate::privacy::check(spec.as_ref(), shown, relays, now).await
+                });
             let results = futures_util::future::join_all(probes).await;
-            for (e, check) in cfg.list.iter().zip(results) {
-                self.record_probe(&e.id, check);
+            let mut results = results.into_iter();
+            for (id, relays, _, _) in &targets {
+                if relays.is_empty() {
+                    self.forget_probe(id);
+                } else if let Some(check) = results.next() {
+                    self.record_probe(id, check);
+                }
             }
         }
         self.replan();
+    }
+
+    /// Forget a proxy's last probe (it carries nothing, so it is not tried).
+    pub(crate) fn forget_probe(&self, id: &str) {
+        self.pool
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .probes
+            .remove(id);
     }
 
     /// Remember a probe of one proxy.
@@ -458,16 +520,33 @@ impl Service {
     /// connections should change, and undoes a proxy change that left nothing
     /// reachable.
     pub fn replan(&self) {
-        let cfg = self.settings().proxies.clone();
+        let settings = self.settings().clone();
+        let cfg = settings.proxies.clone();
         let now = (self.clock)();
         let (decided, revert_to) = {
             let mut pool = self.pool.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
             pool.probes.retain(|id, _| cfg.list.iter().any(|e| &e.id == id));
             let mut decided: Vec<(String, Applied)> = Vec::new();
             for key in crate::keys::KEYS.iter() {
-                // This key's own list, in the same order.
+                // This key's own default route: the proxies in the pool that
+                // it may use, in list order.
                 let mut lane = cfg.clone();
-                lane.list.retain(|e| crate::keys::assigned(&e.keys, key.id));
+                lane.list.retain(|e| e.pool && crate::keys::assigned(&e.keys, key.id));
+                if lane.list.is_empty() && !cfg.list.is_empty() && !cfg.transparent {
+                    // Proxies are configured but none is in this key's
+                    // default route: that is not "no proxy, go straight".
+                    decided.push((
+                        key.id.to_string(),
+                        Applied {
+                            active: None,
+                            active_url: None,
+                            state: PoolState::Offline,
+                            next_switch_at: None,
+                            reachable: 0,
+                        },
+                    ));
+                    continue;
+                }
                 let reach: Vec<Reach> = lane
                     .list
                     .iter()
@@ -503,7 +582,10 @@ impl Service {
                     },
                 ));
             }
-            let offline = decided.iter().any(|(_, a)| a.state == PoolState::Offline);
+            // Only a key whose relays may use the default route is hurt by it being down.
+            let offline = decided
+                .iter()
+                .any(|(k, a)| a.state == PoolState::Offline && crate::routes::uses_default(&settings, k));
             // A change that left a key with nothing reachable is undone once;
             // one that works (or a probation that ran out) ends the probation.
             let revert_to = match pool.probation.clone() {
@@ -545,14 +627,72 @@ impl Service {
             pool.applied = decided.into_iter().collect();
             before != shape(&pool.applied)
         };
-        if changed {
+        // A rule's own proxy going up or down moves relays even when no
+        // key's default route changed.
+        let routes = self.route_shape();
+        let moved = {
+            let mut pool = self.pool.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+            let moved = pool.route_shape != routes;
+            pool.route_shape = routes;
+            moved
+        };
+        if changed || moved {
             self.pool_switch.notify_one();
         }
     }
 
+    /// Where every key's relays go now: (key, relay, proxy url, or "" for
+    /// straight); relays with no connection are left out.
+    fn route_shape(&self) -> Vec<(String, String, Option<String>)> {
+        crate::keys::KEYS
+            .iter()
+            .flat_map(|k| {
+                self.routes_for(k.id).into_iter().map(move |r| {
+                    let url = match r.via {
+                        crate::routes::Via::Proxy { url, .. } => Some(url),
+                        crate::routes::Via::Direct => Some(String::new()),
+                        crate::routes::Via::Off => None,
+                    };
+                    (k.id.to_string(), r.relay, url)
+                })
+            })
+            .collect()
+    }
+
+    /// One key's default route now, as the routing rules see it.
+    pub fn default_route_for(&self, key: &str) -> crate::routes::DefaultRoute {
+        use crate::routes::DefaultRoute;
+        match self.connection_for(key) {
+            Connection::Off => DefaultRoute::Off,
+            Connection::Direct => DefaultRoute::Direct,
+            Connection::Via(url) => {
+                let pool = self.pool.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+                let id = pool.applied.get(key).and_then(|a| a.active.clone()).unwrap_or_default();
+                DefaultRoute::Proxy { id, url }
+            }
+        }
+    }
+
+    /// Where each of one key's relays goes now, and why.
+    pub fn routes_for(&self, key: &str) -> Vec<crate::routes::Resolved> {
+        let settings = self.settings().clone();
+        let default = self.default_route_for(key);
+        let up: std::collections::HashSet<String> = self
+            .pool
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .probes
+            .iter()
+            .filter(|(_, p)| p.up)
+            .map(|(id, _)| id.clone())
+            .collect();
+        crate::routes::resolve(&settings, key, &default, &|id| up.contains(id))
+    }
+
     /// The pool as the dashboard shows it.
     pub fn pool_health(&self) -> PoolHealth {
-        let cfg = self.settings().proxies.clone();
+        let settings = self.settings().clone();
+        let cfg = settings.proxies.clone();
         let pool = self.pool.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         let waiting = if cfg.list.is_empty() {
             PoolState::Direct
@@ -568,6 +708,7 @@ impl Service {
                     active: a.active.clone(),
                     reachable: a.reachable,
                     next_switch_at: a.next_switch_at,
+                    uses_default: crate::routes::uses_default(&settings, k.id),
                 },
                 _ => LaneHealth {
                     key: k.id.to_string(),
@@ -579,6 +720,7 @@ impl Service {
                     active: None,
                     reachable: 0,
                     next_switch_at: None,
+                    uses_default: crate::routes::uses_default(&settings, k.id),
                 },
             })
             .collect();
@@ -596,15 +738,36 @@ impl Service {
                     status: p.map(|p| p.check.status.clone()),
                     reason: p.and_then(|p| p.check.relays.iter().find(|r| !r.ok).map(|r| r.reason.clone())),
                     keys: e.keys.clone(),
+                    pool: e.pool,
                 }
             })
             .collect();
         drop(pool);
+        let routes = crate::keys::KEYS
+            .iter()
+            .flat_map(|k| {
+                self.routes_for(k.id).into_iter().map(move |r| {
+                    let (via, proxy) = match r.via {
+                        crate::routes::Via::Proxy { id, .. } => (RouteVia::Proxy, Some(id)),
+                        crate::routes::Via::Direct => (RouteVia::Direct, None),
+                        crate::routes::Via::Off => (RouteVia::Off, None),
+                    };
+                    RouteHealth {
+                        key: k.id.to_string(),
+                        relay: r.relay,
+                        rule: r.rule.map(|i| i + 1),
+                        via,
+                        proxy,
+                        reason: r.reason,
+                    }
+                })
+            })
+            .collect();
         // The top-level fields are the public invoices key's lane.
         let main = lanes[0].clone();
         PoolHealth {
             state: main.state,
-            posture: if lanes.iter().any(|l| l.state == PoolState::Offline) {
+            posture: if lanes.iter().any(|l| l.state == PoolState::Offline && l.uses_default) {
                 Posture::offline(cfg.offline)
             } else {
                 Posture::Normal
@@ -618,6 +781,7 @@ impl Service {
             next_switch_at: lanes.iter().filter_map(|l| l.next_switch_at).min(),
             proxies,
             lanes,
+            routes,
         }
     }
 }
@@ -664,6 +828,7 @@ mod tests {
                     name: String::new(),
                     url: format!("socks5://h:{}", i + 1),
                     keys: Vec::new(),
+                    pool: true,
                 })
                 .collect(),
             mode,
@@ -912,6 +1077,7 @@ mod tests {
             name: String::new(),
             url: url.clone(),
             keys: Vec::new(),
+            pool: true,
         }];
         r.svc.apply_settings(s);
         r.svc.refresh_pool().await;
@@ -952,6 +1118,204 @@ mod tests {
             .await
             .map(|_| ()))
         .contains("not both"));
+    }
+
+    #[tokio::test]
+    async fn routing_rules_move_single_relays_and_report_why() {
+        use crate::routes::{Fallback, Reason, RouteTo, Rule};
+        let r = rig(|_| {}).await;
+        let (onion, vpn, plain) = ("ws://abc.onion", "wss://vpn.example", "wss://plain.example");
+        let mut s = r.svc.settings().clone();
+        s.relays = vec![onion.into(), vpn.into(), plain.into()];
+        let entry = |id: &str, pool: bool| ProxyEntry {
+            id: id.into(),
+            name: id.into(),
+            url: format!("socks5://{id}:1"),
+            keys: Vec::new(),
+            pool,
+        };
+        s.proxies = ProxySettings {
+            list: vec![entry("tor", true), entry("vpn", false)],
+            rules: vec![
+                Rule {
+                    name: String::new(),
+                    patterns: vec!["*.onion".into()],
+                    keys: Vec::new(),
+                    to: RouteTo::Proxy("tor".into()),
+                    fallback: Fallback::Offline,
+                },
+                Rule {
+                    name: String::new(),
+                    patterns: vec![vpn.into()],
+                    keys: Vec::new(),
+                    to: RouteTo::Proxy("vpn".into()),
+                    fallback: Fallback::Pool,
+                },
+            ],
+            ..ProxySettings::default()
+        };
+        r.svc.apply_settings(s);
+        probe(&r, "tor", true);
+        probe(&r, "vpn", true);
+        r.svc.replan();
+        let routes = |r: &Rig| -> Vec<(String, Option<String>, Reason)> {
+            r.svc
+                .routes_for("invoices")
+                .into_iter()
+                .map(|x| {
+                    let via = match x.via {
+                        crate::routes::Via::Proxy { id, .. } => Some(id),
+                        crate::routes::Via::Direct => Some("direct".into()),
+                        crate::routes::Via::Off => None,
+                    };
+                    (x.relay, via, x.reason)
+                })
+                .collect()
+        };
+        assert_eq!(
+            routes(&r),
+            vec![
+                (onion.into(), Some("tor".into()), Reason::Rule),
+                (vpn.into(), Some("vpn".into()), Reason::Rule),
+                (plain.into(), Some("tor".into()), Reason::Default),
+            ]
+        );
+        // Drain the wake-up from setting things up.
+        let _ = tokio::time::timeout(std::time::Duration::from_millis(50), r.svc.pool_changed()).await;
+        // vpn goes down: only its relay moves (to the default route), and the
+        // supervisor is told although no key's default route changed.
+        probe(&r, "vpn", false);
+        r.svc.replan();
+        assert!(
+            tokio::time::timeout(std::time::Duration::from_millis(200), r.svc.pool_changed())
+                .await
+                .is_ok()
+        );
+        assert_eq!(routes(&r)[1], (vpn.into(), Some("tor".into()), Reason::Fallback));
+        // Health says the same, numbering rules from 1.
+        let h = r.svc.pool_health();
+        let vpn_route = h.routes.iter().find(|x| x.key == "invoices" && x.relay == vpn).unwrap();
+        assert_eq!(
+            (
+                vpn_route.rule,
+                vpn_route.via,
+                vpn_route.proxy.as_deref(),
+                vpn_route.reason
+            ),
+            (Some(2), RouteVia::Proxy, Some("tor"), Reason::Fallback)
+        );
+        assert!(h.proxies.iter().any(|p| p.id == "vpn" && !p.pool));
+        assert!(h.lanes.iter().all(|l| l.uses_default));
+        // tor down too: the onion relay stays off (no fallback), the rest have
+        // no default route either: the kill switch.
+        probe(&r, "tor", false);
+        r.svc.replan();
+        assert_eq!(
+            routes(&r),
+            vec![
+                (onion.into(), None, Reason::ProxyDown),
+                (vpn.into(), None, Reason::PoolOffline),
+                (plain.into(), None, Reason::PoolOffline),
+            ]
+        );
+        assert_eq!(r.svc.posture(), Posture::Off);
+    }
+
+    #[tokio::test]
+    async fn an_empty_default_route_is_offline_never_straight_and_only_matters_when_used() {
+        use crate::routes::{Fallback, Reason, RouteTo, Rule};
+        let r = rig(|_| {}).await;
+        let mut s = r.svc.settings().clone();
+        s.relays = vec!["wss://a.example".into()];
+        s.proxies.list = vec![ProxyEntry {
+            id: "only".into(),
+            name: String::new(),
+            url: "socks5://only:1".into(),
+            keys: Vec::new(),
+            pool: false,
+        }];
+        r.svc.apply_settings(s.clone());
+        probe(&r, "only", true);
+        r.svc.replan();
+        // The relay takes the default route, which has no proxy: offline, not straight.
+        let x = &r.svc.routes_for("invoices")[0];
+        assert_eq!(
+            (x.via.clone(), x.reason),
+            (crate::routes::Via::Off, Reason::PoolOffline)
+        );
+        assert_eq!(r.svc.posture(), Posture::Off);
+        assert_eq!(r.svc.pool_health().posture, Posture::Off);
+        // With every relay ruled to the proxy, the empty pool hurts nobody.
+        s.proxies.rules = vec![Rule {
+            name: String::new(),
+            patterns: vec!["*".into()],
+            keys: Vec::new(),
+            to: RouteTo::Proxy("only".into()),
+            fallback: Fallback::Offline,
+        }];
+        r.svc.apply_settings(s);
+        r.svc.replan();
+        assert!(matches!(
+            r.svc.routes_for("admin")[0].via,
+            crate::routes::Via::Proxy { .. }
+        ));
+        assert_eq!(r.svc.posture(), Posture::Normal);
+        let h = r.svc.pool_health();
+        assert_eq!(h.posture, Posture::Normal);
+        assert!(h.lanes.iter().all(|l| !l.uses_default && l.state == PoolState::Offline));
+        // A proxy that carries no relay is not probed, and its old probe is forgotten.
+        let mut s = r.svc.settings().clone();
+        s.proxies.rules.clear();
+        s.proxies.list[0].pool = false;
+        r.svc.apply_settings(s);
+        r.svc.refresh_pool().await;
+        assert!(r.svc.pool.lock().unwrap().probes.is_empty());
+    }
+
+    #[tokio::test]
+    async fn a_proxy_that_carries_nothing_cannot_be_tested_and_rule_directs_reach_the_audit() {
+        use crate::manage::CheckProxyParams;
+        use crate::routes::{Fallback, RouteTo, Rule};
+        let r = rig(|_| {}).await;
+        let mut s = r.svc.settings().clone();
+        s.relays = vec![
+            "wss://open.example".into(),
+            "ws://relay.lan:1".into(),
+            "ws://x.fips:1".into(),
+        ];
+        s.proxies.list = vec![ProxyEntry {
+            id: "spare".into(),
+            name: String::new(),
+            url: "socks5://127.0.0.1:1".into(),
+            keys: Vec::new(),
+            pool: false,
+        }];
+        let direct = |p: &str| Rule {
+            name: String::new(),
+            patterns: vec![p.into()],
+            keys: Vec::new(),
+            to: RouteTo::Direct,
+            fallback: Fallback::Offline,
+        };
+        // Straight to an internet relay is a finding; to the LAN and FIPS it is not.
+        s.proxies.rules = vec![direct("open.example"), direct("*.lan"), direct("*.fips")];
+        r.svc.apply_settings(s);
+        r.svc.replan();
+        let err = r
+            .svc
+            .check_proxy(
+                &r.admin(),
+                CheckProxyParams {
+                    id: Some("spare".into()),
+                    proxy: None,
+                },
+            )
+            .await
+            .unwrap_err();
+        assert!(err.to_string().contains("no relay goes through this proxy"), "{err}");
+        let audit = r.svc.privacy_audit(&r.admin()).await.unwrap();
+        let c = audit.checks.iter().find(|c| c.id == "relays_direct_by_rule").unwrap();
+        assert_eq!(c.evidence, vec!["direct   wss://open.example".to_string()]);
     }
 
     use crate::service::tests::{public, rig, Rig, T0};
@@ -1132,6 +1496,7 @@ mod tests {
             name: String::new(),
             url: format!("socks5://127.0.0.1:{port}"),
             keys: vec!["admin".into()],
+            pool: true,
         }];
         r.svc.apply_settings(s);
         r.svc.refresh_pool().await;
@@ -1263,12 +1628,14 @@ mod tests {
                 name: "Tor".into(),
                 url: format!("socks5://127.0.0.1:{port}"),
                 keys: Vec::new(),
+                pool: true,
             },
             ProxyEntry {
                 id: "bad".into(),
                 name: String::new(),
                 url: "socks5://127.0.0.1:9".into(),
                 keys: Vec::new(),
+                pool: true,
             },
         ];
         r.svc.apply_settings(s);
@@ -1299,6 +1666,7 @@ mod tests {
             name: String::new(),
             url: format!("socks5://127.0.0.1:{port}"),
             keys: Vec::new(),
+            pool: true,
         }];
         r.svc.apply_settings(s);
         r.svc.refresh_pool().await;

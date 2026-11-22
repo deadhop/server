@@ -367,6 +367,8 @@ pub struct AuditInputs<'a> {
     pub electrum_transport: String,
     pub announce: bool,
     pub listening: Option<Listening>,
+    /// Relays that a routing rule sends straight to an internet host.
+    pub direct_by_rule: Vec<String>,
     pub now: u64,
 }
 
@@ -416,6 +418,30 @@ fn finding(
 /// Score what can be measured; list what cannot.
 pub fn audit(i: AuditInputs<'_>) -> PrivacyAudit {
     let mut checks = Vec::new();
+    if !i.direct_by_rule.is_empty() && !i.transparent {
+        checks.push(finding(
+            "relays_direct_by_rule",
+            "network",
+            "A routing rule exposes this machine's IP address",
+            "fail",
+            20,
+            format!(
+                "{} sent straight to the internet by a routing rule, so {} this machine's address.",
+                if i.direct_by_rule.len() == 1 {
+                    "One relay is"
+                } else {
+                    "Some relays are"
+                },
+                if i.direct_by_rule.len() == 1 {
+                    "it sees"
+                } else {
+                    "they see"
+                }
+            ),
+            i.direct_by_rule.iter().map(|r| format!("direct   {r}")).collect(),
+            Some("Send them through a proxy in Network, Rules."),
+        ));
+    }
     let connected = i.relays.iter().filter(|r| r.connected).count();
     let relays_line = format!("relays connected   {connected} of {}", i.relays.len());
 
@@ -962,8 +988,42 @@ mod tests {
             electrum_transport: "tcp".into(),
             announce: false,
             listening: Some(Listening::default()),
+            direct_by_rule: Vec::new(),
             now: 9,
         }
+    }
+
+    #[test]
+    fn a_rule_that_sends_a_relay_straight_to_the_internet_is_a_finding() {
+        let spec = parse_proxy("socks5://127.0.0.1:9050").unwrap().unwrap();
+        let none = audit(inputs(Some(&spec)));
+        assert!(none.checks.iter().all(|c| c.id != "relays_direct_by_rule"));
+        let one = audit(AuditInputs {
+            direct_by_rule: vec!["wss://relay.example".into()],
+            ..inputs(Some(&spec))
+        });
+        let c = one.checks.iter().find(|c| c.id == "relays_direct_by_rule").unwrap();
+        assert_eq!((c.result.as_str(), c.points), ("fail", 20));
+        assert!(
+            c.summary.starts_with("One relay is") && c.summary.contains("it sees"),
+            "{}",
+            c.summary
+        );
+        assert_eq!(c.evidence, vec!["direct   wss://relay.example".to_string()]);
+        let two = audit(AuditInputs {
+            direct_by_rule: vec!["wss://a.example".into(), "wss://b.example".into()],
+            ..inputs(Some(&spec))
+        });
+        let c = two.checks.iter().find(|c| c.id == "relays_direct_by_rule").unwrap();
+        assert!(c.summary.starts_with("Some relays are") && c.summary.contains("they see"));
+        assert!(one.score < none.score);
+        // A declared transparent proxy is never scored.
+        let t = audit(AuditInputs {
+            transparent: true,
+            direct_by_rule: vec!["wss://a.example".into()],
+            ..inputs(Some(&spec))
+        });
+        assert!(t.checks.iter().all(|c| c.id != "relays_direct_by_rule"));
     }
 
     fn result(a: &PrivacyAudit, id: &str) -> String {

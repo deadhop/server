@@ -28,7 +28,6 @@ use crate::keyholder;
 use crate::keys::{open_identities, Identity, KeyDef, INVOICES};
 use crate::manage::BACKUP_DIR;
 use crate::mcp::PayServer;
-use crate::proxypool::Connection;
 use crate::relay::{parse_proxy, Pool};
 use crate::service::{system_clock, RelayProbe, RelayState, Service};
 use crate::wallet::Wallet;
@@ -248,8 +247,8 @@ impl RelayProbe for PoolProbe {
 /// of them.
 struct Link {
     key: &'static KeyDef,
-    relays: Vec<String>,
-    proxy: String,
+    /// Each relay and the proxy it goes through ("" for straight).
+    routes: Routes,
     pool: Arc<Pool>,
     cancel: CancellationToken,
     /// Cancelled by the request loop when it ends, for whatever reason.
@@ -258,17 +257,21 @@ struct Link {
 }
 
 impl Link {
-    async fn up(id: &Identity, cfg: &Config, relays: Vec<String>, proxy: String, svc: &Arc<Service>) -> Result<Link> {
+    async fn up(id: &Identity, cfg: &Config, routes: Routes, svc: &Arc<Service>) -> Result<Link> {
         let sink: crate::relay::RelaySink = {
             let svc = svc.clone();
             Arc::new(move |relay, ok, ms| svc.record_relay_event(relay, "send", ok, Some(ms)))
         };
-        let pool = Arc::new(Pool::new(id.keys.clone(), parse_proxy(&proxy)?).with_sink(sink));
+        let specs = routes
+            .iter()
+            .map(|(r, p)| Ok((r.clone(), parse_proxy(p)?)))
+            .collect::<Result<Vec<_>>>()?;
+        let pool = Arc::new(Pool::routed(id.keys.clone(), specs).with_sink(sink));
         // The administration key is never announced, whatever the setting:
         // nothing public may lead to it.
         let announce = cfg.announce && id.def.announce;
         let transport_config = NostrServerTransportConfig::default()
-            .with_relay_urls(relays.clone())
+            .with_relay_urls(routes.iter().map(|(r, _)| r.clone()).collect())
             .with_encryption_mode(EncryptionMode::Required)
             .with_gift_wrap_mode(GiftWrapMode::Optional)
             .with_announced_server(announce)
@@ -295,8 +298,7 @@ impl Link {
         svc.set_relay_probe(id.def.id, Some(Arc::new(PoolProbe(pool.clone()))));
         Ok(Link {
             key: id.def,
-            relays,
-            proxy,
+            routes,
             pool,
             cancel,
             ended,
@@ -322,31 +324,34 @@ async fn connects_within(link: &Link, limit: Duration) -> bool {
     tokio::time::timeout(limit, wait).await.is_ok()
 }
 
-/// The proxy url a connection goes through: empty for a straight connection,
-/// `None` when there is to be no connection at all.
-fn proxy_of(c: &Connection) -> Option<String> {
-    match c {
-        Connection::Off => None,
-        Connection::Direct => Some(String::new()),
-        Connection::Via(url) => Some(url.clone()),
-    }
-}
+/// Each relay of a key and the proxy url it goes through ("" for straight).
+type Routes = Vec<(String, String)>;
 
-/// How a key should be connected now: its relays and the proxy, or `None`
-/// when it should not connect at all.
-fn wanted(key: &str, svc: &Service) -> Option<(Vec<String>, String)> {
-    proxy_of(&svc.connection_for(key)).map(|proxy| (svc.settings().relays_for(key), proxy))
+/// How a key should be connected now: each relay that has a route and its
+/// proxy, or `None` when no relay of the key should connect at all (the kill
+/// switch, or every relay blocked or waiting on a proxy that is down).
+fn wanted(key: &str, svc: &Service) -> Option<Routes> {
+    let routes: Routes = svc
+        .routes_for(key)
+        .into_iter()
+        .filter_map(|r| match r.via {
+            crate::routes::Via::Proxy { url, .. } => Some((r.relay, url)),
+            crate::routes::Via::Direct => Some((r.relay, String::new())),
+            crate::routes::Via::Off => None,
+        })
+        .collect();
+    (!routes.is_empty()).then_some(routes)
 }
 
 /// Connect one key the way the service is set to now: through its chosen
 /// proxy, or straight, or (kill switch) not at all.
 async fn connect_key(id: &Identity, cfg: &Config, svc: &Arc<Service>) -> Result<Option<Link>> {
     match wanted(id.def.id, svc) {
-        Some((relays, proxy)) => Ok(Some(Link::up(id, cfg, relays, proxy, svc).await?)),
+        Some(routes) => Ok(Some(Link::up(id, cfg, routes, svc).await?)),
         None => {
             tracing::warn!(
                 key = id.def.id,
-                "no proxy is reachable and the policy is the kill switch: this key is not connected to any relay"
+                "no relay of this key has a route now (kill switch, blocked, or its proxy is down): it is not connected"
             );
             svc.set_relay_probe(id.def.id, None);
             Ok(None)
@@ -533,7 +538,7 @@ async fn supervise(
                     let at = links.iter().position(|l| l.key.id == id.def.id);
                     let same = match (wanted(id.def.id, &svc), at) {
                         (None, None) => true,
-                        (Some((relays, proxy)), Some(i)) => links[i].relays == relays && links[i].proxy == proxy,
+                        (Some(routes), Some(i)) => links[i].routes == routes,
                         _ => false,
                     };
                     if same {
@@ -674,7 +679,7 @@ impl App {
             links = fall_back(&ids, &cfg, &svc, DEAD_AT_START).await?;
         }
         let relays = svc.settings().relays.len();
-        let via_proxy = links.iter().any(|l| !l.proxy.is_empty());
+        let via_proxy = links.iter().any(|l| l.routes.iter().any(|(_, p)| !p.is_empty()));
         let stop = CancellationToken::new();
         let failed = CancellationToken::new();
         let current = Arc::new(std::sync::Mutex::new(
@@ -1942,6 +1947,7 @@ mod tests {
                 name: String::new(),
                 url: "socks5://127.0.0.1:9".into(),
                 keys: Vec::new(),
+                pool: true,
             }];
             st.relays = other.clone();
             app.svc.apply_settings(st);
@@ -1973,7 +1979,9 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(links.len(), 2, "one connection per key");
-        assert!(links.iter().all(|l| l.relays == vec![s.relay_url.clone()]));
+        assert!(links
+            .iter()
+            .all(|l| l.routes.iter().map(|(r, _)| r.clone()).collect::<Vec<_>>() == vec![s.relay_url.clone()]));
         close_all(&mut links).await;
         // A proxy that cannot even be used to start is an error, after the revert.
         app.proxy_probe.abort();
