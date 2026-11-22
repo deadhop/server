@@ -200,6 +200,7 @@ fn load_proxies(get: &dyn Fn(&str) -> Option<String>) -> Result<crate::settings:
             name: String::new(),
             url,
             keys: Vec::new(),
+            pool: true,
         });
     }
     let secs = |key: &str, default: u64| -> Result<u64> {

@@ -90,9 +90,17 @@ pub struct ProxyEntry {
     pub name: String,
     // `socks5://`, `https://` or `http://` url.
     pub url: String,
-    // The keys (by id) whose relay connections may use this proxy; empty is every key.
+    // The keys (by id) whose default route may use this proxy; empty is every key.
     #[serde(default)]
     pub keys: Vec<String>,
+    // Whether this proxy is in the default route (the pool). A proxy left out
+    // is used only by routing rules that name it.
+    #[serde(default = "in_pool")]
+    pub pool: bool,
+}
+
+fn in_pool() -> bool {
+    true
 }
 
 // How the proxies in the list are used.
@@ -139,6 +147,10 @@ pub struct ProxySettings {
     // checked, the list is ignored and privacy warnings about the proxy are
     // not raised.
     pub transparent: bool,
+    // Routing rules, in order: the first that matches a relay decides its
+    // route; a relay none matches takes the default route (the list above).
+    #[serde(default)]
+    pub rules: Vec<crate::routes::Rule>,
 }
 
 impl Default for ProxySettings {
@@ -151,6 +163,7 @@ impl Default for ProxySettings {
             chaos_max_secs: 900,
             offline: OfflinePolicy::KillSwitch,
             transparent: false,
+            rules: Vec::new(),
         }
     }
 }
@@ -168,6 +181,9 @@ pub struct ProxyEntryInput {
     // The keys that may use this proxy; left out or empty is every key.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub keys: Option<Vec<String>>,
+    // In the default route; left out is yes.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pool: Option<bool>,
 }
 
 // Partial update of [`ProxySettings`]; `list` replaces the whole list.
@@ -188,6 +204,9 @@ pub struct ProxyPatch {
     pub offline: Option<OfflinePolicy>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub transparent: Option<bool>,
+    // Replaces the whole rule list.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rules: Option<Vec<crate::routes::Rule>>,
 }
 
 fn new_proxy_id() -> String {
@@ -204,6 +223,7 @@ fn entries_from(list: &[ProxyEntryInput]) -> Vec<ProxyEntry> {
             name: e.name.clone().unwrap_or_default(),
             url: e.url.clone(),
             keys: e.keys.clone().unwrap_or_default(),
+            pool: e.pool.unwrap_or(true),
         })
         .collect()
 }
@@ -219,6 +239,7 @@ impl ProxyPatch {
                         name: Some(e.name.clone()),
                         url: e.url.clone(),
                         keys: Some(e.keys.clone()),
+                        pool: Some(e.pool),
                     })
                     .collect(),
             ),
@@ -262,6 +283,9 @@ impl ProxyPatch {
         take(&mut s.chaos_max_secs, &self.chaos_max_secs);
         take(&mut s.offline, &self.offline);
         take(&mut s.transparent, &self.transparent);
+        if let Some(rules) = &self.rules {
+            s.rules.clone_from(rules);
+        }
     }
 
     fn merge(&mut self, o: &ProxyPatch) {
@@ -272,6 +296,7 @@ impl ProxyPatch {
         keep(&mut self.chaos_max_secs, &o.chaos_max_secs);
         keep(&mut self.offline, &o.offline);
         keep(&mut self.transparent, &o.transparent);
+        keep(&mut self.rules, &o.rules);
     }
 
     fn names(&self, out: &mut Vec<String>) {
@@ -283,6 +308,7 @@ impl ProxyPatch {
             ("chaos_max_secs", self.chaos_max_secs.is_some()),
             ("offline", self.offline.is_some()),
             ("transparent", self.transparent.is_some()),
+            ("rules", self.rules.is_some()),
         ];
         out.extend(fields.iter().filter(|f| f.1).map(|f| format!("proxies.{}", f.0)));
     }
@@ -317,20 +343,6 @@ impl ProxySettings {
             }
             if self.list[..i].iter().any(|o| o.url == e.url) {
                 return Err(Error::InvalidParams("proxy: the same address is listed twice".into()));
-            }
-        }
-        // A key with no proxy would connect straight while the others hide
-        // behind one. That must be chosen by taking the proxies away, not by
-        // forgetting a key.
-        if !self.transparent && !self.list.is_empty() {
-            if let Some(k) = crate::keys::KEYS
-                .iter()
-                .find(|k| !self.list.iter().any(|e| crate::keys::assigned(&e.keys, k.id)))
-            {
-                return Err(Error::InvalidParams(format!(
-                    "no proxy is assigned to the {} key, which would connect without one",
-                    k.label.to_lowercase()
-                )));
             }
         }
         within("proxies.rotate_secs", self.rotate_secs, PROXY_INTERVAL_SECS)?;
@@ -531,6 +543,7 @@ impl SettingsPatch {
                     name: String::new(),
                     url: old.clone(),
                     keys: Vec::new(),
+                    pool: true,
                 }]
             };
         }
@@ -723,6 +736,26 @@ impl Settings {
             )));
         }
         self.proxies.validate()?;
+        crate::routes::check_rules(&self.proxies, self)?;
+        // A key whose relays may take the default route needs a proxy in it:
+        // otherwise those relays would connect straight while the rest hide
+        // behind one. That must be chosen by taking the proxies away, not by
+        // forgetting a key.
+        let proxies = &self.proxies;
+        if !proxies.transparent && !proxies.list.is_empty() {
+            if let Some(k) = crate::keys::KEYS.iter().find(|k| {
+                crate::routes::uses_default(self, k.id)
+                    && !proxies
+                        .list
+                        .iter()
+                        .any(|e| e.pool && crate::keys::assigned(&e.keys, k.id))
+            }) {
+                return Err(Error::InvalidParams(format!(
+                    "no proxy in the default route is assigned to the {} key, which would connect without one",
+                    k.label.to_lowercase()
+                )));
+            }
+        }
         for keys in self.relay_keys.values() {
             crate::keys::check_ids(keys, "relay")?;
         }
@@ -851,6 +884,7 @@ pub(crate) mod tests {
             name: String::new(),
             url: url.into(),
             keys: Vec::new(),
+            pool: true,
         }
     }
 
@@ -868,18 +902,21 @@ pub(crate) mod tests {
                     name: Some("second".into()),
                     url: crate::relay::redact(&current[1].url),
                     keys: None,
+                    pool: None,
                 },
                 ProxyEntryInput {
                     id: Some("one".into()),
                     name: None,
                     url: crate::relay::redact(&current[0].url),
                     keys: None,
+                    pool: None,
                 },
                 ProxyEntryInput {
                     id: None,
                     name: None,
                     url: "socks5://10.0.0.3:9050".into(),
                     keys: None,
+                    pool: None,
                 },
             ]),
             ..ProxyPatch::default()
@@ -906,6 +943,7 @@ pub(crate) mod tests {
             name: None,
             url: crate::relay::redact(&current[0].url),
             keys: None,
+            pool: None,
         }]);
         by_text.resolve(&current).unwrap();
         assert_eq!(by_text.list.as_ref().unwrap()[0].url, current[0].url);
@@ -918,6 +956,7 @@ pub(crate) mod tests {
                 name: None,
                 url: "socks5://u:***@evil.example:1".into(),
                 keys: None,
+                pool: None,
             }]),
             ..ProxyPatch::default()
         };
@@ -1309,9 +1348,28 @@ pub(crate) mod tests {
         s.validate(true).unwrap();
         s.proxies.list.iter_mut().for_each(|e| e.keys = ids(&["admin"]));
         let e = err(&s);
-        assert!(e.contains("no proxy is assigned to the public invoices key"), "{e}");
+        assert!(
+            e.contains("no proxy in the default route is assigned to the public invoices key"),
+            "{e}"
+        );
         s.proxies.list[1].keys = ids(&["invoices"]);
         s.validate(true).unwrap();
+        // A proxy kept out of the pool does not count for the default route...
+        s.proxies.list[1].pool = false;
+        assert!(err(&s).contains("public invoices key"));
+        // ...unless no relay of that key can take the default route anyway.
+        s.proxies.rules = vec![crate::routes::Rule {
+            name: String::new(),
+            patterns: vec!["*".into()],
+            keys: ids(&["invoices"]),
+            to: crate::routes::RouteTo::Proxy("b".into()),
+            fallback: crate::routes::Fallback::Offline,
+        }];
+        s.validate(true).unwrap();
+        s.proxies.rules[0].fallback = crate::routes::Fallback::Pool;
+        assert!(err(&s).contains("public invoices key"));
+        s.proxies.rules.clear();
+        s.proxies.list[1].pool = true;
         s.proxies.list[1].keys = ids(&["invoices", "invoices"]);
         let e = err(&s);
         assert!(e.contains("named twice"), "{e}");
@@ -1333,12 +1391,14 @@ pub(crate) mod tests {
         assert_eq!(entries_from(&[input])[0].keys, Vec::<String>::new());
         let some = ProxyEntryInput {
             keys: Some(ids(&["admin"])),
+            pool: None,
             ..serde_json::from_value(serde_json::json!({ "url": "socks5://h:1" })).unwrap()
         };
         assert_eq!(entries_from(&[some])[0].keys, ids(&["admin"]));
         // The list sent back keeps each proxy's keys.
         let kept = ProxyPatch::with_list(&[ProxyEntry {
             keys: ids(&["admin"]),
+            pool: true,
             ..entry("a", "socks5://h:1")
         }]);
         assert_eq!(kept.list.unwrap()[0].keys, Some(ids(&["admin"])));

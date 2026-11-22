@@ -1090,6 +1090,7 @@ impl Service {
                     name: None,
                     url: old.trim().to_string(),
                     keys: None,
+                    pool: None,
                 }]
             };
             patch.proxies.get_or_insert_with(ProxyPatch::default).list = Some(list);
@@ -1219,6 +1220,7 @@ impl Service {
             chaos_max_secs: Some(previous.chaos_max_secs),
             offline: Some(previous.offline),
             transparent: Some(previous.transparent),
+            rules: Some(previous.rules.clone()),
         });
         let next = stored.apply(&self.cfg.settings());
         let json = serde_json::to_string(&stored).expect("settings always serialize");

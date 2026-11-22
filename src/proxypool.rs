@@ -664,6 +664,7 @@ mod tests {
                     name: String::new(),
                     url: format!("socks5://h:{}", i + 1),
                     keys: Vec::new(),
+                    pool: true,
                 })
                 .collect(),
             mode,
@@ -912,6 +913,7 @@ mod tests {
             name: String::new(),
             url: url.clone(),
             keys: Vec::new(),
+            pool: true,
         }];
         r.svc.apply_settings(s);
         r.svc.refresh_pool().await;
@@ -1132,6 +1134,7 @@ mod tests {
             name: String::new(),
             url: format!("socks5://127.0.0.1:{port}"),
             keys: vec!["admin".into()],
+            pool: true,
         }];
         r.svc.apply_settings(s);
         r.svc.refresh_pool().await;
@@ -1263,12 +1266,14 @@ mod tests {
                 name: "Tor".into(),
                 url: format!("socks5://127.0.0.1:{port}"),
                 keys: Vec::new(),
+                pool: true,
             },
             ProxyEntry {
                 id: "bad".into(),
                 name: String::new(),
                 url: "socks5://127.0.0.1:9".into(),
                 keys: Vec::new(),
+                pool: true,
             },
         ];
         r.svc.apply_settings(s);
@@ -1299,6 +1304,7 @@ mod tests {
             name: String::new(),
             url: format!("socks5://127.0.0.1:{port}"),
             keys: Vec::new(),
+            pool: true,
         }];
         r.svc.apply_settings(s);
         r.svc.refresh_pool().await;

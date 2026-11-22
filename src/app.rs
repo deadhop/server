@@ -1942,6 +1942,7 @@ mod tests {
                 name: String::new(),
                 url: "socks5://127.0.0.1:9".into(),
                 keys: Vec::new(),
+                pool: true,
             }];
             st.relays = other.clone();
             app.svc.apply_settings(st);
