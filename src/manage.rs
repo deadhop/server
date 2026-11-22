@@ -9,7 +9,7 @@
 use std::fs;
 use std::os::unix::fs::{DirBuilderExt, PermissionsExt};
 use std::path::PathBuf;
-use std::sync::atomic::Ordering;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
 use rmcp::schemars::{self, JsonSchema};
@@ -407,6 +407,25 @@ pub struct CheckProxyParams {
     pub id: Option<String>,
 }
 
+/// I2P name lookups allowed per minute, all operators together.
+const I2P_LOOKUPS_PER_MIN: usize = 4;
+
+#[derive(Debug, Clone, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ResolveI2pNameParams {
+    /// A lowercase `.i2p` name such as `example.i2p` (not a `.b32.i2p` address).
+    pub name: String,
+}
+
+/// Clears a busy flag when dropped, so a cancelled call does not leave it set.
+struct Busy<'a>(&'a AtomicBool);
+
+impl Drop for Busy<'_> {
+    fn drop(&mut self) {
+        self.0.store(false, Ordering::SeqCst);
+    }
+}
+
 #[derive(Debug, Clone, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct WipeParams {
@@ -691,6 +710,67 @@ impl Service {
         let target = if shown.is_empty() { "no proxy" } else { shown.as_str() };
         self.record(&actor, "check_proxy", &format!("{target}: {}", result.status))?;
         Ok(result)
+    }
+
+    /// Look an I2P name up (operators only): ask every configured registry,
+    /// through the I2P router proxy and nothing else, for the name's b32
+    /// address. Admitted and recorded like a change, refused while the
+    /// proxies are locked on the host, one at a time, with a per-minute budget.
+    pub async fn resolve_i2p_name(
+        &self,
+        caller: &Caller,
+        p: ResolveI2pNameParams,
+    ) -> Result<crate::i2p::I2pNameLookup> {
+        let actor = self.admit_change(caller)?;
+        if self.cfg.proxy_locked {
+            return Err(Error::InvalidParams(
+                "the proxies are locked on the host (DEADHOP_PROXY_LOCKED), so I2P names cannot be looked up".into(),
+            ));
+        }
+        let name = p.name.trim().to_string();
+        crate::i2p::check_name(&name)?;
+        let cfg = self.settings().proxies.clone();
+        let Some(router) = cfg.list.iter().find(|e| e.i2p) else {
+            return Err(Error::InvalidParams(
+                "there is no I2P router proxy: add the router's http:// proxy as an I2P proxy first".into(),
+            ));
+        };
+        if cfg.i2p_registries.is_empty() {
+            return Err(Error::InvalidParams(
+                "there are no I2P name registries, so lookups are off".into(),
+            ));
+        }
+        let spec = parse_proxy(&router.url)?
+            .ok_or_else(|| Error::InvalidParams("the I2P router proxy has no address".into()))?;
+        let now = (self.clock)();
+        {
+            let mut recent = self
+                .i2p_lookups
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            recent.retain(|t| now.saturating_sub(*t) < 60);
+            if recent.len() >= I2P_LOOKUPS_PER_MIN {
+                return Err(Error::RateLimited);
+            }
+            recent.push(now);
+        }
+        if self.i2p_lookup_busy.swap(true, Ordering::SeqCst) {
+            return Err(Error::RateLimited);
+        }
+        let _busy = Busy(&self.i2p_lookup_busy);
+        let proxy = crate::relay::ProxyTransport::new(spec);
+        let out = crate::i2p::lookup(&proxy, &cfg.i2p_registries, &name, crate::i2p::LOOKUP_SECS).await;
+        let detail = match &out {
+            Ok(l) => format!(
+                "{name}: {} ({} agree, {} disagree)",
+                l.address,
+                l.agreeing.len(),
+                l.disagreeing.len()
+            ),
+            Err(e) => format!("{name}: failed: {e}"),
+        };
+        self.record(&actor, "resolve_i2p_name", &detail)?;
+        out
     }
 
     /// Check every live relay (through the live proxy) and keep the result
@@ -1121,6 +1201,7 @@ impl Service {
                     url: old.trim().to_string(),
                     keys: None,
                     pool: None,
+                    i2p: None,
                 }]
             };
             patch.proxies.get_or_insert_with(ProxyPatch::default).list = Some(list);
@@ -1143,6 +1224,17 @@ impl Service {
         next.validate(self.has_operators())?;
         if p.patch.relays.is_some() {
             check_relays(&next.relays, self.cfg.network)?;
+        }
+        // A name is only for a listed relay.
+        if let Some(names) = &p.patch.relay_names {
+            if let Some(url) = names
+                .keys()
+                .find(|u| !next.relays.iter().any(|r| crate::settings::same_relay(r, u)))
+            {
+                return Err(Error::InvalidParams(format!(
+                    "relay_names: '{url}' is not a listed relay"
+                )));
+            }
         }
         // The relays from the host's configuration are the way back in when a
         // saved relay setup fails, so the administration key keeps one of them
@@ -1251,6 +1343,7 @@ impl Service {
             offline: Some(previous.offline),
             transparent: Some(previous.transparent),
             rules: Some(previous.rules.clone()),
+            i2p_registries: Some(previous.i2p_registries.clone()),
         });
         let next = stored.apply(&self.cfg.settings());
         let json = serde_json::to_string(&stored).expect("settings always serialize");
@@ -2672,6 +2765,189 @@ pub(crate) mod tests {
             .await;
         assert!(msg(out).contains("locked on the host"));
         assert!(r.svc.check_proxy(&r.admin(), try_proxy(None)).await.is_ok());
+    }
+
+    fn lookup(name: &str) -> ResolveI2pNameParams {
+        ResolveI2pNameParams { name: name.into() }
+    }
+
+    /// Point the service at a fake I2P router (as its I2P proxy) and at
+    /// registries on the given hosts.
+    fn use_router(r: &Rig, port: u16, hosts: &[&str]) {
+        let regs: Vec<String> = hosts.iter().map(|h| format!("http://{h}/jump?q={{name}}")).collect();
+        r.svc
+            .update_settings(
+                &r.admin(),
+                patch(serde_json::json!({ "proxies": {
+                    "list": [{ "id": "router", "url": format!("http://127.0.0.1:{port}"), "i2p": true }],
+                    "i2p_registries": regs,
+                } })),
+            )
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn an_i2p_name_is_asked_of_every_registry_through_the_i2p_proxy() {
+        use crate::i2p::tests::{fake_destination, fake_router, page_with};
+        let pages = [
+            ("one.i2p".to_string(), page_with(&fake_destination(1))),
+            ("two.i2p".to_string(), page_with(&fake_destination(1))),
+            ("other.i2p".to_string(), page_with(&fake_destination(2))),
+            ("blank.i2p".to_string(), "HTTP/1.1 404 Not Found\r\n\r\nno".to_string()),
+        ]
+        .into();
+        let (port, _, task) = fake_router(pages).await;
+        let r = rig(|_| {}).await;
+        use_router(&r, port, &["blank.i2p", "one.i2p", "other.i2p", "two.i2p"]);
+        let regs = r.svc.settings().proxies.i2p_registries.clone();
+        let out = r.svc.resolve_i2p_name(&r.admin(), lookup("x.i2p")).await.unwrap();
+        assert_eq!(out.address, crate::i2p::b32_address(&fake_destination(1)).unwrap());
+        assert_eq!(out.registry, regs[1]);
+        assert_eq!(out.agreeing, [regs[1].clone(), regs[3].clone()]);
+        assert_eq!(out.disagreeing.len(), 1);
+        assert_eq!(out.disagreeing[0].registry, regs[2]);
+        assert_eq!(out.unknown, [regs[0].clone()]);
+        let last = r.svc.db.audit_recent(1).unwrap().remove(0);
+        assert_eq!(last.action, "resolve_i2p_name");
+        assert!(last.detail.starts_with(&format!("x.i2p: {}", out.address)));
+
+        // Known nowhere, or no registry reachable: said plainly, and recorded.
+        use_router(&r, port, &["blank.i2p"]);
+        assert!(msg(r.svc.resolve_i2p_name(&r.admin(), lookup("x.i2p")).await).contains("knows x.i2p"));
+        use_router(&r, port, &["gone.i2p"]);
+        assert!(msg(r.svc.resolve_i2p_name(&r.admin(), lookup("x.i2p")).await).contains("could be reached"));
+        assert!(r.svc.db.audit_recent(1).unwrap()[0].detail.contains("failed"));
+
+        // Bad names never leave the machine.
+        for bad in ["x.b32.i2p", "X.i2p", "x.onion", ""] {
+            assert!(
+                msg(r.svc.resolve_i2p_name(&r.admin(), lookup(bad)).await).contains(".i2p name"),
+                "{bad}"
+            );
+        }
+        // Four per minute, all operators together (three used above).
+        use_router(&r, port, &["one.i2p"]);
+        r.svc.resolve_i2p_name(&r.admin(), lookup("x.i2p")).await.unwrap();
+        assert!(matches!(
+            r.svc.resolve_i2p_name(&r.admin(), lookup("x.i2p")).await,
+            Err(Error::RateLimited)
+        ));
+        task.abort();
+    }
+
+    #[tokio::test]
+    async fn an_i2p_lookup_needs_an_i2p_proxy_and_registries() {
+        let r = rig(|_| {}).await;
+        assert_eq!(
+            code(r.svc.resolve_i2p_name(&stranger(), lookup("x.i2p")).await),
+            "unauthorized"
+        );
+        // A plain HTTP proxy is never used for lookups.
+        r.svc
+            .update_settings(
+                &r.admin(),
+                patch(serde_json::json!({ "proxies": { "list": [{ "url": "http://127.0.0.1:4444" }] } })),
+            )
+            .unwrap();
+        assert!(msg(r.svc.resolve_i2p_name(&r.admin(), lookup("x.i2p")).await).contains("no I2P router proxy"));
+        r.svc
+            .update_settings(
+                &r.admin(),
+                patch(serde_json::json!({ "proxies": {
+                    "list": [{ "url": "http://127.0.0.1:4444", "i2p": true }],
+                    "i2p_registries": []
+                } })),
+            )
+            .unwrap();
+        assert!(msg(r.svc.resolve_i2p_name(&r.admin(), lookup("x.i2p")).await).contains("no I2P name registries"));
+        // Nothing was looked up, so nothing was recorded.
+        assert!(r.svc.db.audit_recent(1).unwrap()[0].action != "resolve_i2p_name");
+    }
+
+    #[tokio::test]
+    async fn i2p_proxies_and_registries_are_checked_when_saved() {
+        let r = rig(|_| {}).await;
+        let save = |p: serde_json::Value| {
+            r.svc
+                .update_settings(&r.admin(), patch(serde_json::json!({ "proxies": p })))
+        };
+        assert!(msg(save(
+            serde_json::json!({ "list": [{ "url": "socks5://127.0.0.1:1", "i2p": true }] })
+        ))
+        .contains("http://"));
+        assert!(msg(save(serde_json::json!({ "list": [
+            { "url": "http://127.0.0.1:1", "i2p": true },
+            { "url": "http://127.0.0.1:2", "i2p": true }
+        ] })))
+        .contains("at most one"));
+        assert!(msg(save(
+            serde_json::json!({ "i2p_registries": ["http://example.com/?q={name}"] })
+        ))
+        .contains(".i2p"));
+        assert!(msg(save(serde_json::json!({ "i2p_registries": ["http://a.i2p/?q="] }))).contains("{name}"));
+        let five: Vec<String> = (0..5).map(|i| format!("http://r{i}.i2p/?q={{name}}")).collect();
+        assert!(msg(save(serde_json::json!({ "i2p_registries": five }))).contains("at most 4"));
+        assert!(serde_json::from_value::<ProxyPatch>(serde_json::json!({ "registries": [] })).is_err());
+        let v = save(serde_json::json!({ "list": [{ "id": "i2p", "url": "http://127.0.0.1:4444", "i2p": true }] }))
+            .unwrap();
+        assert!(v.settings.proxies.list[0].i2p);
+        assert_eq!(v.settings.proxies.i2p_registries, crate::i2p::default_registries());
+        assert!(v.overridden.contains(&"proxies.list".to_string()));
+    }
+
+    #[tokio::test]
+    async fn an_i2p_router_can_stay_out_of_the_default_route() {
+        let r = rig(|_| {}).await;
+        let only = serde_json::json!({ "list": [{ "id": "i2p", "url": "http://127.0.0.1:4444", "i2p": true, "pool": false }] });
+        // Alone and out of the pool, the relays would have no default route.
+        let out = r
+            .svc
+            .update_settings(&r.admin(), patch(serde_json::json!({ "proxies": only })));
+        assert!(msg(out).contains("no proxy in the default route"));
+        // With a rule that sends every relay straight, it is accepted.
+        let mut with_rule = only.clone();
+        with_rule["rules"] = serde_json::json!([{ "match": ["*"], "to": "direct" }]);
+        let v = r
+            .svc
+            .update_settings(&r.admin(), patch(serde_json::json!({ "proxies": with_rule })))
+            .unwrap();
+        assert!(v.settings.proxies.list[0].i2p && !v.settings.proxies.list[0].pool);
+    }
+
+    #[tokio::test]
+    async fn locked_proxies_forbid_i2p_lookups() {
+        let r = rig(|c| c.proxy_locked = true).await;
+        assert!(msg(r.svc.resolve_i2p_name(&r.admin(), lookup("x.i2p")).await).contains("locked on the host"));
+        let out = r.svc.update_settings(
+            &r.admin(),
+            patch(serde_json::json!({ "proxies": { "i2p_registries": [] } })),
+        );
+        assert!(msg(out).contains("locked on the host"));
+    }
+
+    #[tokio::test]
+    async fn relays_can_be_given_names_to_show() {
+        let r = rig(|_| {}).await;
+        let relay = r.svc.settings().relays[0].clone();
+        let v = r
+            .svc
+            .update_settings(
+                &r.admin(),
+                patch(serde_json::json!({ "relay_names": { (relay.clone()): "nostr-not.i2p" } })),
+            )
+            .unwrap();
+        assert_eq!(v.settings.relay_names[&relay], "nostr-not.i2p");
+        assert!(v.overridden.contains(&"relay_names".to_string()));
+        // Only for listed relays, and only plain short text.
+        let other = patch(serde_json::json!({ "relay_names": { "wss://gone.example": "x" } }));
+        assert!(msg(r.svc.update_settings(&r.admin(), other)).contains("not a listed relay"));
+        let long = patch(serde_json::json!({ "relay_names": { (relay.clone()): "x".repeat(61) } }));
+        assert!(msg(r.svc.update_settings(&r.admin(), long)).contains("relay names"));
+        let ctl = patch(serde_json::json!({ "relay_names": { (relay.clone()): "a\u{7}b" } }));
+        assert!(msg(r.svc.update_settings(&r.admin(), ctl)).contains("relay names"));
+        assert_eq!(r.svc.settings().relay_names[&relay], "nostr-not.i2p");
+        // A name does not restart the connections.
+        assert!(!r.svc.restart_pending.load(Ordering::SeqCst));
     }
 
     #[tokio::test]

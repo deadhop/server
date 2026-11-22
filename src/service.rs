@@ -238,6 +238,10 @@ pub struct Service {
     pub(crate) pool_switch: tokio::sync::Notify,
     /// When recent proxy checks started (for their per-minute budget).
     pub(crate) proxy_checks: Mutex<Vec<u64>>,
+    /// An I2P name lookup is running.
+    pub(crate) i2p_lookup_busy: AtomicBool,
+    /// When recent I2P name lookups started (for their per-minute budget).
+    pub(crate) i2p_lookups: Mutex<Vec<u64>>,
     /// Where the kernel lists this namespace's sockets (`/proc/net`).
     pub(crate) proc_net: std::path::PathBuf,
     /// Result of the last check of every live relay.
@@ -368,6 +372,8 @@ impl Service {
             pool_wake: tokio::sync::Notify::new(),
             pool_switch: tokio::sync::Notify::new(),
             proxy_checks: Mutex::new(Vec::new()),
+            i2p_lookup_busy: AtomicBool::new(false),
+            i2p_lookups: Mutex::new(Vec::new()),
             proc_net: std::path::PathBuf::from("/proc/net"),
             relay_health: Mutex::new(Vec::new()),
             relay_health_busy: AtomicBool::new(false),

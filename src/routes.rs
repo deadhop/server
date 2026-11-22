@@ -509,6 +509,7 @@ mod tests {
             url: format!("socks5://{id}:1"),
             keys: Vec::new(),
             pool,
+            i2p: false,
         }
     }
 
