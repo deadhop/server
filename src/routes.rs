@@ -453,32 +453,14 @@ mod tests {
 
     #[test]
     fn patterns_match_hosts_as_documented() {
-        let cases: &[(&str, &str, bool)] = &[
-            ("*.onion", "ws://abc.onion/", true),
-            ("*.onion", "ws://ABC.ONION", true),
-            ("*.onion", "ws://a.onion.example", false),
-            ("*.example.com", "wss://example.com", false),
-            ("*.example.com", "wss://a.b.example.com", true),
-            ("relay*.contextvm.org", "wss://relay2.contextvm.org", true),
-            ("relay*.contextvm.org", "wss://bucket.contextvm.org", false),
-            ("*", "wss://anything.example", true),
-            ("*.lan:4869", "ws://relay.lan:4869", true),
-            ("*.lan:4869", "ws://relay.lan:4870", false),
-            ("relay.example:443", "wss://relay.example", true),
-            ("relay.example:80", "wss://relay.example", false),
-            ("[::1]:7777", "ws://[::1]:7777", true),
-            ("[::1]", "ws://[::1]:7777", true),
-            ("127.0.0.1", "ws://127.0.0.1:7777", true),
-            // User info does not make a remote host look like a local one.
-            ("127.0.0.1", "ws://127.0.0.1:80@evil.example", false),
-            ("evil.example", "ws://127.0.0.1:80@evil.example", true),
-            ("wss://relay.example", "wss://relay.example/", true),
-            ("wss://relay.example/", "WSS://Relay.Example", true),
-            ("wss://relay.example", "wss://relay.example.org", false),
-            ("x*", "not a url", false),
-        ];
-        for (pattern, relay, want) in cases {
-            assert_eq!(matches(pattern, relay), *want, "{pattern} vs {relay}");
+        // The same cases run in the dashboard (dashboard/src/lib/routes.test.ts).
+        let fixture: serde_json::Value =
+            serde_json::from_str(include_str!("../../fixtures/route-patterns.json")).unwrap();
+        let cases = fixture["cases"].as_array().unwrap();
+        assert!(cases.len() > 20);
+        for c in cases {
+            let (pattern, relay, want) = (c[0].as_str().unwrap(), c[1].as_str().unwrap(), c[2].as_bool().unwrap());
+            assert_eq!(matches(pattern, relay), want, "{pattern} vs {relay}");
         }
     }
 

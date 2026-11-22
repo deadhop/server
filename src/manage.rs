@@ -659,15 +659,18 @@ impl Service {
         if self.proxy_check_busy.swap(true, Ordering::SeqCst) {
             return Err(Error::RateLimited);
         }
-        // Only the relays of the keys this proxy carries (all of them for an
-        // address that is not in the list).
-        let carried = cfg
-            .list
-            .iter()
-            .find(|e| Some(&e.id) == id.as_ref())
-            .map(|e| e.keys.clone())
-            .unwrap_or_default();
-        let relays = self.settings().relays_through(&carried);
+        // Only the relays this proxy would carry, by the rules or as part of
+        // the default route (all of them for an address that is not in the list).
+        let relays = match &id {
+            Some(id) => crate::routes::relays_through_proxy(&self.settings(), id),
+            None => self.settings().relays.clone(),
+        };
+        if relays.is_empty() {
+            self.proxy_check_busy.store(false, Ordering::SeqCst);
+            return Err(Error::InvalidParams(
+                "no relay goes through this proxy yet: add a rule that uses it, or put it in the default route".into(),
+            ));
+        }
         let shown = redact(&raw);
         let result = crate::privacy::check(spec.as_ref(), &shown, &relays, now).await;
         self.proxy_check_busy.store(false, Ordering::SeqCst);
@@ -696,19 +699,25 @@ impl Service {
         if self.relay_health_busy.swap(true, Ordering::SeqCst) {
             return None;
         }
-        // Each relay is checked the way one of its own keys would reach it
-        // (through that key's proxy), never through another key's. With the
-        // kill switch there is no connection, and a check must not make one
-        // either. Saved proxies were validated when saved.
+        // Each relay is checked the way one of its own keys reaches it now
+        // (its route: a proxy, or straight), never another way. A relay with
+        // no route (blocked, kill switch, its proxy down) is not checked: a
+        // check must not make a connection the routes do not allow. Saved
+        // proxies were validated when saved.
         let settings = self.settings().clone();
         let mut jobs: Vec<(String, Option<crate::relay::ProxySpec>)> = Vec::new();
         for r in &settings.relays {
-            let lane = settings
-                .relay_users(r)
-                .into_iter()
-                .find(|k| self.connection_for(k) != crate::proxypool::Connection::Off);
-            if let Some(k) = lane {
-                let spec = self.active_proxy_for(&k).and_then(|u| parse_proxy(&u).ok().flatten());
+            let route = settings.relay_users(r).into_iter().find_map(|k| {
+                self.routes_for(&k)
+                    .into_iter()
+                    .find(|x| &x.relay == r)
+                    .and_then(|x| match x.via {
+                        crate::routes::Via::Proxy { url, .. } => Some(parse_proxy(&url).ok().flatten()),
+                        crate::routes::Via::Direct => Some(None),
+                        crate::routes::Via::Off => None,
+                    })
+            });
+            if let Some(spec) = route {
                 jobs.push((r.clone(), spec));
             }
         }
@@ -875,8 +884,29 @@ impl Service {
             electrum_transport: self.cfg.electrum_security.label().to_string(),
             announce,
             listening: own_listening(&self.proc_net),
+            direct_by_rule: self.direct_by_rule(),
             now: (self.clock)(),
         }))
+    }
+
+    /// Relays a routing rule sends straight to a host on the internet (not
+    /// this machine, a private network, or Tor, I2P and FIPS), once each.
+    fn direct_by_rule(&self) -> Vec<String> {
+        let mut out: Vec<String> = Vec::new();
+        for k in crate::keys::KEYS {
+            for r in self.routes_for(k.id) {
+                let internet = crate::routes::host_port(&r.relay)
+                    .is_some_and(|(h, _)| !crate::privacy::is_private_host(&h) && !crate::config::is_overlay_host(&h));
+                if r.via == crate::routes::Via::Direct
+                    && r.reason == crate::routes::Reason::Rule
+                    && internet
+                    && !out.contains(&r.relay)
+                {
+                    out.push(r.relay);
+                }
+            }
+        }
+        out
     }
 
     /// Relay, chain, database and process health (operators only).

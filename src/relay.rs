@@ -266,24 +266,91 @@ impl ProxyTransport {
     }
 
     async fn open(&self, url: &Url) -> std::result::Result<(Sink, Stream), TransportError> {
-        let host = url
-            .host_str()
-            .ok_or_else(|| {
-                TransportError::backend(io::Error::new(io::ErrorKind::InvalidInput, "relay url has no host"))
+        open_ws(url, Some(self)).await
+    }
+}
+
+/// Open a websocket to `url`, through `proxy` or straight.
+async fn open_ws(url: &Url, proxy: Option<&ProxyTransport>) -> std::result::Result<(Sink, Stream), TransportError> {
+    let host = url
+        .host_str()
+        .ok_or_else(|| TransportError::backend(io::Error::new(io::ErrorKind::InvalidInput, "relay url has no host")))?
+        .trim_start_matches('[')
+        .trim_end_matches(']')
+        .to_string();
+    let port = url.port_or_known_default().unwrap_or(443);
+    let stream: Box<dyn Io> = match proxy {
+        Some(p) => p.tunnel(&host, port).await.map_err(TransportError::backend)?,
+        None => Box::new(
+            TcpStream::connect((host.as_str(), port))
+                .await
+                .map_err(TransportError::backend)?,
+        ),
+    };
+    let (socket, _) = tokio_tungstenite::client_async_tls_with_config(url.as_str(), stream, None, None)
+        .await
+        .map_err(TransportError::backend)?;
+    use futures_util::{StreamExt, TryStreamExt};
+    let (tx, rx) = socket.split();
+    let sink: Sink = Box::new(WsSink(tx));
+    let stream: Stream = Box::pin(rx.map_ok(from_wire).map_err(TransportError::backend));
+    Ok((sink, stream))
+}
+
+/// Opens each relay's websocket its own way: through the proxy its route
+/// names, or straight. A relay without a route is refused (it is never added
+/// to the pool, so this does not happen in practice).
+#[derive(Debug, Clone)]
+pub struct RoutingTransport {
+    routes: Vec<(String, Option<ProxyTransport>)>,
+}
+
+impl RoutingTransport {
+    /// `routes`: relay address and its proxy (`None`: straight).
+    pub fn new(routes: Vec<(String, Option<ProxySpec>)>) -> Self {
+        RoutingTransport {
+            routes: routes
+                .into_iter()
+                .map(|(relay, spec)| (relay, spec.map(ProxyTransport::new)))
+                .collect(),
+        }
+    }
+
+    fn route(&self, url: &Url) -> Option<Option<&ProxyTransport>> {
+        self.routes
+            .iter()
+            .find(|(relay, _)| same_relay_ci(relay, url.as_str()))
+            .map(|(_, p)| p.as_ref())
+    }
+}
+
+/// Whether two relay addresses name the same relay, ignoring case and a trailing slash.
+fn same_relay_ci(a: &str, b: &str) -> bool {
+    a.trim_end_matches('/').eq_ignore_ascii_case(b.trim_end_matches('/'))
+}
+
+impl WebSocketTransport for RoutingTransport {
+    fn support_ping(&self) -> bool {
+        true
+    }
+
+    fn connect<'a>(
+        &'a self,
+        url: &'a Url,
+        _mode: &'a nostr_sdk::pool::ConnectionMode,
+        timeout: Duration,
+    ) -> BoxedFuture<'a, std::result::Result<(Sink, Stream), TransportError>> {
+        Box::pin(async move {
+            let Some(proxy) = self.route(url) else {
+                return Err(TransportError::backend(io::Error::new(
+                    io::ErrorKind::PermissionDenied,
+                    "this relay has no route",
+                )));
+            };
+            tokio::time::timeout(timeout, open_ws(url, proxy)).await.map_err(|_| {
+                TransportError::backend(io::Error::new(io::ErrorKind::TimedOut, "relay connection timed out"))
             })?
-            .trim_start_matches('[')
-            .trim_end_matches(']')
-            .to_string();
-        let port = url.port_or_known_default().unwrap_or(443);
-        let stream = self.tunnel(&host, port).await.map_err(TransportError::backend)?;
-        let (socket, _) = tokio_tungstenite::client_async_tls_with_config(url.as_str(), stream, None, None)
-            .await
-            .map_err(TransportError::backend)?;
-        use futures_util::{StreamExt, TryStreamExt};
-        let (tx, rx) = socket.split();
-        let sink: Sink = Box::new(WsSink(tx));
-        let stream: Stream = Box::pin(rx.map_ok(from_wire).map_err(TransportError::backend));
-        Ok((sink, stream))
+        })
     }
 }
 
@@ -376,6 +443,18 @@ impl Pool {
             Some(spec) => builder.websocket_transport(ProxyTransport::new(spec)).build(),
             None => builder.build(),
         };
+        Pool {
+            client: Arc::new(client),
+            sink: None,
+        }
+    }
+
+    /// A pool whose relays each go their own way (see [`RoutingTransport`]).
+    pub fn routed(keys: Keys, routes: Vec<(String, Option<ProxySpec>)>) -> Self {
+        let client = Client::builder()
+            .signer(keys)
+            .websocket_transport(RoutingTransport::new(routes))
+            .build();
         Pool {
             client: Arc::new(client),
             sink: None,
@@ -773,7 +852,7 @@ pub(crate) mod tests {
     }
 
     /// Send a subscription through `t` to a mock relay and wait for its EOSE.
-    async fn round_trip(t: &ProxyTransport, relay: &str) {
+    async fn round_trip(t: &impl WebSocketTransport, relay: &str) {
         let url = Url::parse(relay).unwrap();
         let (mut tx, mut rx) = t
             .connect(&url, &nostr_sdk::pool::ConnectionMode::Direct, Duration::from_secs(5))
@@ -786,6 +865,84 @@ pub(crate) mod tests {
         let first = rx.next().await.unwrap().unwrap();
         assert!(matches!(&first, Message::Text(t) if t.contains("EOSE")), "{first:?}");
         tx.close().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn each_relay_takes_its_own_route() {
+        let (a, b) = (MockRelay::run().await.unwrap(), MockRelay::run().await.unwrap());
+        let (a, b) = (a.url().await.to_string(), b.url().await.to_string());
+        let (p, _t) = socks5_proxy(None).await;
+        let dead = TcpListener::bind("127.0.0.1:0")
+            .await
+            .unwrap()
+            .local_addr()
+            .unwrap()
+            .port();
+        // a goes through the proxy (written with another case and no trailing
+        // slash), b straight.
+        let t = RoutingTransport::new(vec![
+            (
+                a.to_uppercase().trim_end_matches('/').to_string(),
+                Some(spec(&format!("socks5://127.0.0.1:{p}"))),
+            ),
+            (b.clone(), None),
+        ]);
+        round_trip(&t, &a).await;
+        round_trip(&t, &b).await;
+        assert!(t.support_ping());
+        // Through a proxy that is not there, a fails although it is reachable
+        // straight: it really goes through its proxy. b is untouched.
+        let t = RoutingTransport::new(vec![
+            (a.clone(), Some(spec(&format!("socks5://127.0.0.1:{dead}")))),
+            (b.clone(), None),
+        ]);
+        let mode = nostr_sdk::pool::ConnectionMode::Direct;
+        assert!(t
+            .connect(&Url::parse(&a).unwrap(), &mode, Duration::from_secs(5))
+            .await
+            .is_err());
+        round_trip(&t, &b).await;
+        // A relay without a route is refused, never connected some other way.
+        let t = RoutingTransport::new(vec![(b.clone(), None)]);
+        let err = t
+            .connect(&Url::parse(&a).unwrap(), &mode, Duration::from_secs(5))
+            .await
+            .err()
+            .unwrap();
+        assert!(err.to_string().contains("no route"), "{err}");
+        // A relay that never answers times out.
+        let silent = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("ws://127.0.0.1:{}", silent.local_addr().unwrap().port());
+        let t = RoutingTransport::new(vec![(url.clone(), None)]);
+        let err = t
+            .connect(&Url::parse(&url).unwrap(), &mode, Duration::from_millis(200))
+            .await
+            .err()
+            .unwrap();
+        assert!(err.to_string().contains("timed out"), "{err}");
+        drop(silent);
+        // Straight to a port nobody listens on fails at once.
+        let t = RoutingTransport::new(vec![(format!("ws://127.0.0.1:{dead}"), None)]);
+        let url = Url::parse(&format!("ws://127.0.0.1:{dead}")).unwrap();
+        assert!(t.connect(&url, &mode, Duration::from_secs(5)).await.is_err());
+    }
+
+    #[tokio::test]
+    async fn a_routed_pool_connects_its_relays() {
+        let relay = MockRelay::run().await.unwrap();
+        let url = relay.url().await.to_string();
+        let pool = Pool::routed(Keys::generate(), vec![(url.clone(), None)]);
+        pool.connect(std::slice::from_ref(&url)).await.unwrap();
+        let connected = async {
+            loop {
+                if pool.client().relays().await.values().any(|r| r.is_connected()) {
+                    return;
+                }
+                tokio::time::sleep(Duration::from_millis(50)).await;
+            }
+        };
+        tokio::time::timeout(Duration::from_secs(10), connected).await.unwrap();
+        pool.disconnect().await.unwrap();
     }
 
     #[tokio::test]
