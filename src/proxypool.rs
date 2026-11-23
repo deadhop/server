@@ -44,7 +44,8 @@ pub enum PoolState {
     Active,
     // Rotation needs two reachable proxies and only one is: it stays in use.
     Suspended,
-    // Proxies are configured and none is reachable: the offline policy applies.
+    // Proxies are configured and none it may use is reachable (with the
+    // strategy off: the first is down): the offline policy applies.
     Offline,
 }
 
@@ -677,6 +678,31 @@ impl Service {
                 })
             })
             .collect()
+    }
+
+    /// The label of a key that turning the strategy off would cut off now:
+    /// one whose relays take the default route, whose first proxy there was
+    /// down at its last probe while another of its proxies was up.
+    pub fn stranded_by_off(&self, next: &crate::settings::Settings) -> Option<&'static str> {
+        if next.proxies.transparent {
+            return None;
+        }
+        let pool = self.pool.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let up = |e: &&crate::settings::ProxyEntry| pool.probes.get(&e.id).map(|p| p.up);
+        crate::keys::KEYS
+            .iter()
+            .find(|k| {
+                let lane: Vec<_> = next
+                    .proxies
+                    .list
+                    .iter()
+                    .filter(|e| e.pool && crate::keys::assigned(&e.keys, k.id))
+                    .collect();
+                crate::routes::uses_default(next, k.id)
+                    && lane.first().map(up) == Some(Some(false))
+                    && lane.iter().skip(1).any(|e| up(e) == Some(true))
+            })
+            .map(|k| k.label)
     }
 
     /// One key's default route now, as the routing rules see it.
@@ -1747,6 +1773,53 @@ mod tests {
         let stored = r.svc.stored_patch().unwrap();
         assert!(stored.proxy.is_none());
         assert_eq!(stored.proxies.unwrap().list.unwrap()[0].id.as_deref(), Some("a"));
+    }
+
+    #[tokio::test]
+    async fn the_strategy_cannot_be_turned_off_while_the_first_proxy_is_down() {
+        let r = rig(|_| {}).await;
+        let save = |v: serde_json::Value| {
+            let patch = serde_json::from_value(v).unwrap();
+            r.svc
+                .update_settings(&r.admin(), crate::manage::UpdateSettingsParams { patch })
+        };
+        save(serde_json::json!({ "proxies": { "mode": "failover", "list": [
+            { "id": "p0", "url": "socks5://h:1" }, { "id": "p1", "url": "socks5://h:2" }
+        ] } }))
+        .unwrap();
+        r.svc.pool.lock().unwrap().probation = None;
+        probe(&r, "p0", false);
+        probe(&r, "p1", true);
+        r.svc.replan();
+        assert_eq!(r.svc.pool_health().active.as_deref(), Some("p1"));
+        // Off would leave every key offline now, the operators' included.
+        let e = save(serde_json::json!({ "proxies": { "mode": "off" } })).unwrap_err();
+        assert!(e.to_string().contains("first proxy"), "{e}");
+        assert_eq!(r.svc.settings().proxies.mode, ProxyMode::Failover);
+        // With a reachable proxy first, it is taken.
+        save(serde_json::json!({ "proxies": { "mode": "off", "list": [
+            { "id": "p1", "url": "socks5://h:2" }, { "id": "p0", "url": "socks5://h:1" }
+        ] } }))
+        .unwrap();
+        r.svc.pool.lock().unwrap().probation = None;
+        r.svc.replan();
+        assert_eq!(
+            (r.svc.pool_health().active.as_deref(), r.svc.posture()),
+            (Some("p1"), Posture::Normal)
+        );
+        // Off means it: the first going down cuts the key off, though p0 is up.
+        probe(&r, "p1", false);
+        probe(&r, "p0", true);
+        r.svc.replan();
+        let h = r.svc.pool_health();
+        assert_eq!(
+            (h.state, h.reachable, r.svc.posture()),
+            (PoolState::Offline, 1, Posture::Off)
+        );
+        // A transparent proxy does the work: nothing here can strand a key.
+        save(serde_json::json!({ "proxies": { "mode": "failover" } })).unwrap();
+        save(serde_json::json!({ "proxies": { "mode": "off", "transparent": true } })).unwrap();
+        assert_eq!(r.svc.settings().proxies.mode, ProxyMode::Off);
     }
 
     #[tokio::test]
