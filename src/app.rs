@@ -1196,6 +1196,7 @@ mod tests {
                 "get_info",
                 "get_invoice",
                 "get_metrics",
+                "get_network",
                 "get_payment_series",
                 "get_privacy_audit",
                 "get_relay_history",
@@ -1206,6 +1207,7 @@ mod tests {
                 "remove_operator",
                 "reset_settings",
                 "resolve_i2p_name",
+                "update_network",
                 "update_settings",
                 "wipe_database"
             ]
@@ -1496,6 +1498,12 @@ mod tests {
         );
         assert!(hist["relays"][0]["sends"].as_u64().unwrap() >= 1, "{hist}");
         assert_eq!(hist["relays"][0]["send_failures"], 0, "{hist}");
+        let n = call(&admin, "get_network", json!({})).await.unwrap();
+        assert_eq!(n["chain"], "regtest");
+        let n = call(&admin, "update_network", json!({ "patch": { "relay_names": {} } }))
+            .await
+            .unwrap();
+        assert_eq!(n["keys"].as_array().unwrap().len(), 2);
         let a = call(&admin, "get_privacy_audit", json!({})).await.unwrap();
         assert!(a["checks"]
             .as_array()

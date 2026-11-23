@@ -2037,6 +2037,331 @@
     }
   },
   {
+    "description": "Operators only: the network settings (relays, which keys use them, relay names, proxies, routing rules, I2P registries) with their environment defaults, the keys they are assigned to and the bitcoin network.",
+    "inputSchema": {
+      "properties": {},
+      "type": "object"
+    },
+    "name": "get_network",
+    "outputSchema": {
+      "$defs": {
+        "Fallback": {
+          "enum": [
+            "offline",
+            "pool"
+          ],
+          "type": "string"
+        },
+        "KeyInfo": {
+          "description": "One of the service's keys and what it is for.",
+          "properties": {
+            "id": {
+              "description": "`invoices` or `admin`.",
+              "type": "string"
+            },
+            "label": {
+              "description": "What the dashboard calls it.",
+              "type": "string"
+            },
+            "operators_only": {
+              "description": "Only operators are served on this key.",
+              "type": "boolean"
+            },
+            "pubkey": {
+              "description": "Hex public key; empty until the service has loaded it.",
+              "type": "string"
+            },
+            "relays": {
+              "description": "The relays it connects to now.",
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "tools": {
+              "description": "The tools this key serves (`*`: all of them).",
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            }
+          },
+          "required": [
+            "id",
+            "label",
+            "pubkey",
+            "tools",
+            "operators_only",
+            "relays"
+          ],
+          "type": "object"
+        },
+        "NetworkSettings": {
+          "description": "The network settings of a service: what is stored and shown.",
+          "properties": {
+            "proxies": {
+              "$ref": "#/$defs/ProxySettings",
+              "description": "Proxies for relay connections only."
+            },
+            "relay_keys": {
+              "additionalProperties": {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "default": {},
+              "description": "Relays that only some lanes use: relay url to lane ids. A relay not\nlisted here is used by every lane.",
+              "type": "object"
+            },
+            "relay_names": {
+              "additionalProperties": {
+                "type": "string"
+              },
+              "default": {},
+              "description": "Names shown for relays (such as the I2P name behind a b32 address):\nrelay url to name. Connections always use the url.",
+              "type": "object"
+            },
+            "relays": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            }
+          },
+          "required": [
+            "relays",
+            "proxies"
+          ],
+          "type": "object"
+        },
+        "OfflinePolicy": {
+          "enum": [
+            "kill_switch",
+            "admin_only",
+            "invoicing_only",
+            "open"
+          ],
+          "type": "string"
+        },
+        "ProxyEntry": {
+          "properties": {
+            "i2p": {
+              "default": false,
+              "type": "boolean"
+            },
+            "id": {
+              "type": "string"
+            },
+            "keys": {
+              "default": [],
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "name": {
+              "type": "string"
+            },
+            "pool": {
+              "default": true,
+              "type": "boolean"
+            },
+            "url": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "id",
+            "name",
+            "url"
+          ],
+          "type": "object"
+        },
+        "ProxyMode": {
+          "enum": [
+            "off",
+            "failover",
+            "round_robin",
+            "chaos"
+          ],
+          "type": "string"
+        },
+        "ProxySettings": {
+          "properties": {
+            "chaos_max_secs": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "chaos_min_secs": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "i2p_registries": {
+              "default": [
+                "http://notbob.i2p/cgi-bin/jump.cgi?q={name}",
+                "http://stats.i2p/cgi-bin/jump.cgi?a={name}"
+              ],
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "list": {
+              "items": {
+                "$ref": "#/$defs/ProxyEntry"
+              },
+              "type": "array"
+            },
+            "mode": {
+              "$ref": "#/$defs/ProxyMode"
+            },
+            "offline": {
+              "$ref": "#/$defs/OfflinePolicy"
+            },
+            "rotate_secs": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "rules": {
+              "default": [],
+              "items": {
+                "$ref": "#/$defs/Rule"
+              },
+              "type": "array"
+            },
+            "transparent": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "list",
+            "mode",
+            "rotate_secs",
+            "chaos_min_secs",
+            "chaos_max_secs",
+            "offline",
+            "transparent"
+          ],
+          "type": "object"
+        },
+        "RouteTo": {
+          "oneOf": [
+            {
+              "enum": [
+                "pool",
+                "direct",
+                "block"
+              ],
+              "type": "string"
+            },
+            {
+              "additionalProperties": false,
+              "properties": {
+                "proxy": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "proxy"
+              ],
+              "type": "object"
+            }
+          ]
+        },
+        "Rule": {
+          "additionalProperties": false,
+          "properties": {
+            "fallback": {
+              "$ref": "#/$defs/Fallback",
+              "default": "offline"
+            },
+            "keys": {
+              "default": [],
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "match": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "name": {
+              "default": "",
+              "type": "string"
+            },
+            "to": {
+              "$ref": "#/$defs/RouteTo"
+            }
+          },
+          "required": [
+            "match",
+            "to"
+          ],
+          "type": "object"
+        }
+      },
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "chain": {
+          "description": "The bitcoin network (`bitcoin`, `testnet`, `signet` or `regtest`): on\n`bitcoin` a relay must use TLS unless it is on this machine or an overlay network.",
+          "type": "string"
+        },
+        "defaults": {
+          "$ref": "#/$defs/NetworkSettings",
+          "description": "Values from the environment, used where nothing is overridden."
+        },
+        "keys": {
+          "description": "The lanes (this service's keys) that relays and proxies are assigned to.",
+          "items": {
+            "$ref": "#/$defs/KeyInfo"
+          },
+          "type": "array"
+        },
+        "overridden": {
+          "description": "Names of the network settings changed from a dashboard.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "proxy_locked": {
+          "type": "boolean"
+        },
+        "restart_pending": {
+          "type": "boolean"
+        },
+        "settings": {
+          "$ref": "#/$defs/NetworkSettings",
+          "description": "Live values (proxy passwords hidden)."
+        },
+        "warnings": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "settings",
+        "defaults",
+        "overridden",
+        "chain",
+        "keys",
+        "proxy_locked",
+        "restart_pending",
+        "warnings"
+      ],
+      "type": "object"
+    }
+  },
+  {
     "description": "Operators only: confirmed payments per hour, day or week for a line chart.",
     "inputSchema": {
       "$defs": {
@@ -4466,6 +4791,607 @@
         "disagreeing",
         "unknown",
         "unreachable"
+      ],
+      "type": "object"
+    }
+  },
+  {
+    "description": "Operators only: change the network settings; anything left out stays as it is. Checked, stored and applied exactly like update_settings.",
+    "inputSchema": {
+      "$defs": {
+        "Fallback": {
+          "enum": [
+            "offline",
+            "pool"
+          ],
+          "type": "string"
+        },
+        "NetworkPatch": {
+          "additionalProperties": false,
+          "description": "Changes to the network settings; anything left out stays as it is.",
+          "properties": {
+            "proxies": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/ProxyPatch"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null
+            },
+            "relay_keys": {
+              "additionalProperties": {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "default": null,
+              "description": "Replaces the whole map of relays used by only some keys.",
+              "type": [
+                "object",
+                "null"
+              ]
+            },
+            "relay_names": {
+              "additionalProperties": {
+                "type": "string"
+              },
+              "default": null,
+              "description": "Replaces the whole map of relay names.",
+              "type": [
+                "object",
+                "null"
+              ]
+            },
+            "relays": {
+              "default": null,
+              "items": {
+                "type": "string"
+              },
+              "type": [
+                "array",
+                "null"
+              ]
+            }
+          },
+          "type": "object"
+        },
+        "OfflinePolicy": {
+          "enum": [
+            "kill_switch",
+            "admin_only",
+            "invoicing_only",
+            "open"
+          ],
+          "type": "string"
+        },
+        "ProxyEntryInput": {
+          "additionalProperties": false,
+          "properties": {
+            "i2p": {
+              "type": [
+                "boolean",
+                "null"
+              ]
+            },
+            "id": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "keys": {
+              "items": {
+                "type": "string"
+              },
+              "type": [
+                "array",
+                "null"
+              ]
+            },
+            "name": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "pool": {
+              "type": [
+                "boolean",
+                "null"
+              ]
+            },
+            "url": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "url"
+          ],
+          "type": "object"
+        },
+        "ProxyMode": {
+          "enum": [
+            "off",
+            "failover",
+            "round_robin",
+            "chaos"
+          ],
+          "type": "string"
+        },
+        "ProxyPatch": {
+          "additionalProperties": false,
+          "properties": {
+            "chaos_max_secs": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "chaos_min_secs": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "i2p_registries": {
+              "items": {
+                "type": "string"
+              },
+              "type": [
+                "array",
+                "null"
+              ]
+            },
+            "list": {
+              "items": {
+                "$ref": "#/$defs/ProxyEntryInput"
+              },
+              "type": [
+                "array",
+                "null"
+              ]
+            },
+            "mode": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/ProxyMode"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "offline": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/OfflinePolicy"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "rotate_secs": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "rules": {
+              "items": {
+                "$ref": "#/$defs/Rule"
+              },
+              "type": [
+                "array",
+                "null"
+              ]
+            },
+            "transparent": {
+              "type": [
+                "boolean",
+                "null"
+              ]
+            }
+          },
+          "type": "object"
+        },
+        "RouteTo": {
+          "oneOf": [
+            {
+              "enum": [
+                "pool",
+                "direct",
+                "block"
+              ],
+              "type": "string"
+            },
+            {
+              "additionalProperties": false,
+              "properties": {
+                "proxy": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "proxy"
+              ],
+              "type": "object"
+            }
+          ]
+        },
+        "Rule": {
+          "additionalProperties": false,
+          "properties": {
+            "fallback": {
+              "$ref": "#/$defs/Fallback",
+              "default": "offline"
+            },
+            "keys": {
+              "default": [],
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "match": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "name": {
+              "default": "",
+              "type": "string"
+            },
+            "to": {
+              "$ref": "#/$defs/RouteTo"
+            }
+          },
+          "required": [
+            "match",
+            "to"
+          ],
+          "type": "object"
+        }
+      },
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "patch": {
+          "$ref": "#/$defs/NetworkPatch",
+          "description": "Only the network settings to change."
+        }
+      },
+      "required": [
+        "patch"
+      ],
+      "type": "object"
+    },
+    "name": "update_network",
+    "outputSchema": {
+      "$defs": {
+        "Fallback": {
+          "enum": [
+            "offline",
+            "pool"
+          ],
+          "type": "string"
+        },
+        "KeyInfo": {
+          "description": "One of the service's keys and what it is for.",
+          "properties": {
+            "id": {
+              "description": "`invoices` or `admin`.",
+              "type": "string"
+            },
+            "label": {
+              "description": "What the dashboard calls it.",
+              "type": "string"
+            },
+            "operators_only": {
+              "description": "Only operators are served on this key.",
+              "type": "boolean"
+            },
+            "pubkey": {
+              "description": "Hex public key; empty until the service has loaded it.",
+              "type": "string"
+            },
+            "relays": {
+              "description": "The relays it connects to now.",
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "tools": {
+              "description": "The tools this key serves (`*`: all of them).",
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            }
+          },
+          "required": [
+            "id",
+            "label",
+            "pubkey",
+            "tools",
+            "operators_only",
+            "relays"
+          ],
+          "type": "object"
+        },
+        "NetworkSettings": {
+          "description": "The network settings of a service: what is stored and shown.",
+          "properties": {
+            "proxies": {
+              "$ref": "#/$defs/ProxySettings",
+              "description": "Proxies for relay connections only."
+            },
+            "relay_keys": {
+              "additionalProperties": {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "default": {},
+              "description": "Relays that only some lanes use: relay url to lane ids. A relay not\nlisted here is used by every lane.",
+              "type": "object"
+            },
+            "relay_names": {
+              "additionalProperties": {
+                "type": "string"
+              },
+              "default": {},
+              "description": "Names shown for relays (such as the I2P name behind a b32 address):\nrelay url to name. Connections always use the url.",
+              "type": "object"
+            },
+            "relays": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            }
+          },
+          "required": [
+            "relays",
+            "proxies"
+          ],
+          "type": "object"
+        },
+        "OfflinePolicy": {
+          "enum": [
+            "kill_switch",
+            "admin_only",
+            "invoicing_only",
+            "open"
+          ],
+          "type": "string"
+        },
+        "ProxyEntry": {
+          "properties": {
+            "i2p": {
+              "default": false,
+              "type": "boolean"
+            },
+            "id": {
+              "type": "string"
+            },
+            "keys": {
+              "default": [],
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "name": {
+              "type": "string"
+            },
+            "pool": {
+              "default": true,
+              "type": "boolean"
+            },
+            "url": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "id",
+            "name",
+            "url"
+          ],
+          "type": "object"
+        },
+        "ProxyMode": {
+          "enum": [
+            "off",
+            "failover",
+            "round_robin",
+            "chaos"
+          ],
+          "type": "string"
+        },
+        "ProxySettings": {
+          "properties": {
+            "chaos_max_secs": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "chaos_min_secs": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "i2p_registries": {
+              "default": [
+                "http://notbob.i2p/cgi-bin/jump.cgi?q={name}",
+                "http://stats.i2p/cgi-bin/jump.cgi?a={name}"
+              ],
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "list": {
+              "items": {
+                "$ref": "#/$defs/ProxyEntry"
+              },
+              "type": "array"
+            },
+            "mode": {
+              "$ref": "#/$defs/ProxyMode"
+            },
+            "offline": {
+              "$ref": "#/$defs/OfflinePolicy"
+            },
+            "rotate_secs": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "rules": {
+              "default": [],
+              "items": {
+                "$ref": "#/$defs/Rule"
+              },
+              "type": "array"
+            },
+            "transparent": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "list",
+            "mode",
+            "rotate_secs",
+            "chaos_min_secs",
+            "chaos_max_secs",
+            "offline",
+            "transparent"
+          ],
+          "type": "object"
+        },
+        "RouteTo": {
+          "oneOf": [
+            {
+              "enum": [
+                "pool",
+                "direct",
+                "block"
+              ],
+              "type": "string"
+            },
+            {
+              "additionalProperties": false,
+              "properties": {
+                "proxy": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "proxy"
+              ],
+              "type": "object"
+            }
+          ]
+        },
+        "Rule": {
+          "additionalProperties": false,
+          "properties": {
+            "fallback": {
+              "$ref": "#/$defs/Fallback",
+              "default": "offline"
+            },
+            "keys": {
+              "default": [],
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "match": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "name": {
+              "default": "",
+              "type": "string"
+            },
+            "to": {
+              "$ref": "#/$defs/RouteTo"
+            }
+          },
+          "required": [
+            "match",
+            "to"
+          ],
+          "type": "object"
+        }
+      },
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "chain": {
+          "description": "The bitcoin network (`bitcoin`, `testnet`, `signet` or `regtest`): on\n`bitcoin` a relay must use TLS unless it is on this machine or an overlay network.",
+          "type": "string"
+        },
+        "defaults": {
+          "$ref": "#/$defs/NetworkSettings",
+          "description": "Values from the environment, used where nothing is overridden."
+        },
+        "keys": {
+          "description": "The lanes (this service's keys) that relays and proxies are assigned to.",
+          "items": {
+            "$ref": "#/$defs/KeyInfo"
+          },
+          "type": "array"
+        },
+        "overridden": {
+          "description": "Names of the network settings changed from a dashboard.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "proxy_locked": {
+          "type": "boolean"
+        },
+        "restart_pending": {
+          "type": "boolean"
+        },
+        "settings": {
+          "$ref": "#/$defs/NetworkSettings",
+          "description": "Live values (proxy passwords hidden)."
+        },
+        "warnings": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "settings",
+        "defaults",
+        "overridden",
+        "chain",
+        "keys",
+        "proxy_locked",
+        "restart_pending",
+        "warnings"
       ],
       "type": "object"
     }
