@@ -80,7 +80,7 @@ pub fn lanes() -> Vec<crate::network::Lane> {
 
 /// Check that every id names a key, and none is named twice.
 pub fn check_ids(keys: &[String], what: &str) -> Result<()> {
-    crate::network::check_ids(&lanes(), keys, what)
+    Ok(crate::network::check_ids(&lanes(), keys, what)?)
 }
 
 /// A key and what it is for.

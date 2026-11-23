@@ -405,6 +405,7 @@ dependencies = [
  "deadhop-cvm",
  "deadhop-electrum",
  "deadhop-net",
+ "deadhop-netengine",
  "deadhop-tlspin",
  "futures-util",
  "getrandom 0.2.17",
@@ -484,6 +485,29 @@ dependencies = [
  "tokio-socks",
  "tokio-tungstenite",
  "webpki-roots 0.26.11",
+]
+
+[[package]]
+name = "deadhop-netengine"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "base64",
+ "bitcoin",
+ "deadhop-cvm",
+ "deadhop-net",
+ "futures-util",
+ "getrandom 0.2.17",
+ "hex",
+ "nostr-sdk",
+ "rmcp",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.21",
+ "tokio",
+ "tokio-socks",
+ "tokio-util",
+ "tracing",
 ]
 
 [[package]]
