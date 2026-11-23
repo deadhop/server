@@ -24,6 +24,10 @@ pub struct Config {
     pub relays: Vec<String>,
     /// Directory holding the database and the server's nostr key.
     pub data_dir: PathBuf,
+    /// Directory shared with the dashboard (`DEADHOP_PUBLIC_DIR`), where the
+    /// service publishes the relays each key listens on. Nothing secret goes
+    /// there.
+    pub public_dir: Option<PathBuf>,
     /// Bitcoin network.
     pub network: Network,
     /// Account-level extended public key (watch-only).
@@ -368,6 +372,7 @@ impl Config {
             name,
             relays,
             data_dir: PathBuf::from(get("DEADHOP_DATA_DIR").unwrap_or_else(|| "data".into())),
+            public_dir: get("DEADHOP_PUBLIC_DIR").map(PathBuf::from),
             network: parse_network(&get("DEADHOP_NETWORK").unwrap_or_else(|| "bitcoin".into()))?,
             xpub,
             xpub_file,
@@ -535,6 +540,7 @@ pub(crate) mod tests {
         assert_eq!(c.relays, vec!["ws://127.0.0.1:7777", "wss://relay.example"]);
         assert_eq!(c.network, Network::Regtest);
         assert_eq!(c.data_dir, PathBuf::from("data"));
+        assert_eq!(c.public_dir, None);
         assert!(c.admins.contains(ADMIN_HEX));
         assert!(!c.public_invoicing);
         assert!(!c.announce);
@@ -782,6 +788,7 @@ pub(crate) mod tests {
         let mut m = base();
         m.insert("DEADHOP_NAME", "shop".into());
         m.insert("DEADHOP_DATA_DIR", "/var/lib/deadhop".into());
+        m.insert("DEADHOP_PUBLIC_DIR", "/public".into());
         m.insert("DEADHOP_NETWORK", "mainnet".into());
         m.insert("DEADHOP_PUBLIC_INVOICING", "yes".into());
         m.insert("DEADHOP_ANNOUNCE", "1".into());
@@ -793,6 +800,7 @@ pub(crate) mod tests {
         let c = load(&m).unwrap();
         assert_eq!(c.name, "shop");
         assert_eq!(c.data_dir, PathBuf::from("/var/lib/deadhop"));
+        assert_eq!(c.public_dir, Some(PathBuf::from("/public")));
         assert_eq!(c.network, Network::Bitcoin);
         assert!(c.public_invoicing && c.announce);
         assert_eq!(c.pow_bits, 8);
