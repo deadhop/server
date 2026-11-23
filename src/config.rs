@@ -208,7 +208,7 @@ fn load_proxies(get: &dyn Fn(&str) -> Option<String>) -> Result<crate::settings:
     if let Some(v) = get("DEADHOP_TRANSPARENT_PROXY") {
         out.transparent = parse_bool("DEADHOP_TRANSPARENT_PROXY", &v)?;
     }
-    out.validate()
+    out.validate(&crate::keys::lanes())
         .map_err(|e| Error::Config(format!("DEADHOP_PROXIES: {e}")))?;
     Ok(out)
 }

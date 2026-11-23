@@ -8,7 +8,7 @@ use std::path::Path;
 
 use nostr_sdk::Keys;
 
-use crate::error::{Error, Result};
+use crate::error::Result;
 
 /// The key the public reaches: invoices and nothing else.
 pub const INVOICES: &str = "invoices";
@@ -65,23 +65,22 @@ pub fn def(id: &str) -> Option<&'static KeyDef> {
     KEYS.iter().find(|k| k.id == id)
 }
 
-/// Whether a list of key ids assigns something to `id`. An empty list is
-/// every key.
-pub fn assigned(keys: &[String], id: &str) -> bool {
-    keys.is_empty() || keys.iter().any(|k| k == id)
+// Assigning things to keys lives with the network settings; kept at its old path.
+pub use crate::network::assigned;
+
+/// The keys as the network settings see them: one lane each.
+pub fn lanes() -> Vec<crate::network::Lane> {
+    KEYS.iter()
+        .map(|k| crate::network::Lane {
+            id: k.id.to_string(),
+            label: k.label.to_string(),
+        })
+        .collect()
 }
 
 /// Check that every id names a key, and none is named twice.
 pub fn check_ids(keys: &[String], what: &str) -> Result<()> {
-    for (i, k) in keys.iter().enumerate() {
-        if def(k).is_none() {
-            return Err(Error::InvalidParams(format!("{what}: there is no key '{k}'")));
-        }
-        if keys[..i].contains(k) {
-            return Err(Error::InvalidParams(format!("{what}: key '{k}' is named twice")));
-        }
-    }
-    Ok(())
+    crate::network::check_ids(&lanes(), keys, what)
 }
 
 /// A key and what it is for.

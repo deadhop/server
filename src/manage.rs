@@ -380,10 +380,8 @@ pub struct RelayHistory {
     pub relays: Vec<RelayStats>,
 }
 
-/// A relay address without a trailing slash, so `wss://a` and `wss://a/` are one relay.
-pub(crate) fn relay_key(url: &str) -> String {
-    url.trim_end_matches('/').to_string()
-}
+// Lives with the network settings; kept at its old path.
+pub(crate) use crate::network::relay_key;
 
 /// Result of `check_relays`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
@@ -681,7 +679,7 @@ impl Service {
         // Only the relays this proxy would carry, by the rules or as part of
         // the default route (all of them for an address that is not in the list).
         let relays = match &id {
-            Some(id) => crate::routes::relays_through_proxy(&self.settings(), id),
+            Some(id) => crate::routes::relays_through_proxy(&self.settings().topology(), id),
             None => self.settings().relays.clone(),
         };
         if relays.is_empty() {
@@ -3638,7 +3636,7 @@ pub(crate) mod tests {
         for (name, patch_json) in [("full", full_patch()), ("keyed", keyed_patch())] {
             let r = rig(|_| {}).await;
             r.svc.update_settings(&r.admin(), patch(patch_json)).unwrap();
-            let s = r.svc.settings().clone();
+            let s = r.svc.settings().topology();
             let tor = DefaultRoute::Proxy {
                 id: "tor".into(),
                 url: "socks5://127.0.0.1:9050".into(),
