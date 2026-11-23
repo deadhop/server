@@ -1,0 +1,5566 @@
+[
+  {
+    "description": "Operators only: let another Nostr key (hex, npub or nprofile) operate the service.",
+    "inputSchema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "label": {
+          "default": null,
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "pubkey": {
+          "description": "Hex, `npub` or `nprofile`.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "pubkey"
+      ],
+      "type": "object"
+    },
+    "name": "add_operator",
+    "outputSchema": {
+      "$defs": {
+        "Fallback": {
+          "enum": [
+            "offline",
+            "pool"
+          ],
+          "type": "string"
+        },
+        "FixedSettings": {
+          "description": "What can only be changed on the host.",
+          "properties": {
+            "announce": {
+              "type": "boolean"
+            },
+            "electrum": {
+              "type": "string"
+            },
+            "electrum_transport": {
+              "description": "`tcp`, `tls` (public authorities) or `tls-pinned`.",
+              "type": "string"
+            },
+            "first_address": {
+              "description": "Receive address at index 0, to compare with the wallet.",
+              "type": "string"
+            },
+            "keys": {
+              "description": "The keys and what each is for.",
+              "items": {
+                "$ref": "#/$defs/KeyInfo"
+              },
+              "type": "array"
+            },
+            "network": {
+              "type": "string"
+            },
+            "proxy_locked": {
+              "description": "DEADHOP_PROXY_LOCKED: the proxy can only be changed on the host.",
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "network",
+            "electrum",
+            "electrum_transport",
+            "first_address",
+            "announce",
+            "keys",
+            "proxy_locked"
+          ],
+          "type": "object"
+        },
+        "KeyInfo": {
+          "description": "One of the service's keys and what it is for.",
+          "properties": {
+            "id": {
+              "description": "`invoices` or `admin`.",
+              "type": "string"
+            },
+            "label": {
+              "description": "What the dashboard calls it.",
+              "type": "string"
+            },
+            "operators_only": {
+              "description": "Only operators are served on this key.",
+              "type": "boolean"
+            },
+            "pubkey": {
+              "description": "Hex public key; empty until the service has loaded it.",
+              "type": "string"
+            },
+            "relays": {
+              "description": "The relays it connects to now.",
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "tools": {
+              "description": "The tools this key serves (`*`: all of them).",
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            }
+          },
+          "required": [
+            "id",
+            "label",
+            "pubkey",
+            "tools",
+            "operators_only",
+            "relays"
+          ],
+          "type": "object"
+        },
+        "OfflinePolicy": {
+          "enum": [
+            "kill_switch",
+            "admin_only",
+            "invoicing_only",
+            "open"
+          ],
+          "type": "string"
+        },
+        "Operator": {
+          "description": "An operator key.",
+          "properties": {
+            "added_at": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "label": {
+              "type": "string"
+            },
+            "pubkey": {
+              "description": "Hex public key.",
+              "type": "string"
+            },
+            "source": {
+              "description": "`environment` keys come from DEADHOP_ADMINS and cannot be removed remotely.",
+              "type": "string"
+            }
+          },
+          "required": [
+            "pubkey",
+            "label",
+            "source"
+          ],
+          "type": "object"
+        },
+        "ProxyEntry": {
+          "properties": {
+            "i2p": {
+              "default": false,
+              "type": "boolean"
+            },
+            "id": {
+              "type": "string"
+            },
+            "keys": {
+              "default": [],
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "name": {
+              "type": "string"
+            },
+            "pool": {
+              "default": true,
+              "type": "boolean"
+            },
+            "url": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "id",
+            "name",
+            "url"
+          ],
+          "type": "object"
+        },
+        "ProxyMode": {
+          "enum": [
+            "off",
+            "failover",
+            "round_robin",
+            "chaos"
+          ],
+          "type": "string"
+        },
+        "ProxySettings": {
+          "properties": {
+            "chaos_max_secs": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "chaos_min_secs": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "i2p_registries": {
+              "default": [
+                "http://notbob.i2p/cgi-bin/jump.cgi?q={name}",
+                "http://stats.i2p/cgi-bin/jump.cgi?a={name}"
+              ],
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "list": {
+              "items": {
+                "$ref": "#/$defs/ProxyEntry"
+              },
+              "type": "array"
+            },
+            "mode": {
+              "$ref": "#/$defs/ProxyMode"
+            },
+            "offline": {
+              "$ref": "#/$defs/OfflinePolicy"
+            },
+            "rotate_secs": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "rules": {
+              "default": [],
+              "items": {
+                "$ref": "#/$defs/Rule"
+              },
+              "type": "array"
+            },
+            "transparent": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "list",
+            "mode",
+            "rotate_secs",
+            "chaos_min_secs",
+            "chaos_max_secs",
+            "offline",
+            "transparent"
+          ],
+          "type": "object"
+        },
+        "RouteTo": {
+          "oneOf": [
+            {
+              "enum": [
+                "pool",
+                "direct",
+                "block"
+              ],
+              "type": "string"
+            },
+            {
+              "additionalProperties": false,
+              "properties": {
+                "proxy": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "proxy"
+              ],
+              "type": "object"
+            }
+          ]
+        },
+        "Rule": {
+          "additionalProperties": false,
+          "properties": {
+            "fallback": {
+              "$ref": "#/$defs/Fallback",
+              "default": "offline"
+            },
+            "keys": {
+              "default": [],
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "match": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "name": {
+              "default": "",
+              "type": "string"
+            },
+            "to": {
+              "$ref": "#/$defs/RouteTo"
+            }
+          },
+          "required": [
+            "match",
+            "to"
+          ],
+          "type": "object"
+        },
+        "Settings": {
+          "description": "Every setting that can change while the service runs.",
+          "properties": {
+            "default_expiry_secs": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "late_grace_secs": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "max_amount_sat": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "max_expiry_secs": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "max_invoices_per_day": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "max_open_invoices": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "min_amount_sat": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "min_confirmations": {
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "name": {
+              "type": "string"
+            },
+            "poll_secs": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "pow_bits": {
+              "format": "uint8",
+              "maximum": 255,
+              "minimum": 0,
+              "type": "integer"
+            },
+            "pow_window_secs": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "proxies": {
+              "$ref": "#/$defs/ProxySettings",
+              "description": "Proxies for relay connections only."
+            },
+            "public_invoicing": {
+              "type": "boolean"
+            },
+            "rate_global_per_min": {
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "rate_per_key_per_min": {
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "rate_requests_per_key_per_min": {
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "rate_requests_per_min": {
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "relay_keys": {
+              "additionalProperties": {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "default": {},
+              "description": "Relays that only some keys use: relay url to key ids. A relay not\nlisted here is used by every key.",
+              "type": "object"
+            },
+            "relay_names": {
+              "additionalProperties": {
+                "type": "string"
+              },
+              "default": {},
+              "description": "Names shown for relays (such as the I2P name behind a b32 address):\nrelay url to name. Connections always use the url.",
+              "type": "object"
+            },
+            "relays": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "sweep": {
+              "$ref": "#/$defs/Sweep"
+            }
+          },
+          "required": [
+            "name",
+            "relays",
+            "public_invoicing",
+            "pow_bits",
+            "pow_window_secs",
+            "min_confirmations",
+            "default_expiry_secs",
+            "max_expiry_secs",
+            "min_amount_sat",
+            "max_amount_sat",
+            "max_open_invoices",
+            "max_invoices_per_day",
+            "rate_global_per_min",
+            "rate_per_key_per_min",
+            "rate_requests_per_min",
+            "rate_requests_per_key_per_min",
+            "poll_secs",
+            "late_grace_secs",
+            "proxies",
+            "sweep"
+          ],
+          "type": "object"
+        },
+        "Sweep": {
+          "description": "Policy for moving funds out once they pile up. Stored and reported only:\nthis service holds no spending keys, so a separate signer must carry it\nout. There is intentionally no destination field; the signer owns that.",
+          "properties": {
+            "enabled": {
+              "description": "Whether the policy is active.",
+              "type": "boolean"
+            },
+            "max_fee_rate_sat_vb": {
+              "description": "Highest fee rate a sweep may pay, in sat/vB.",
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "min_anonymity_set": {
+              "description": "Smallest acceptable CoinJoin anonymity set.",
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "mode": {
+              "$ref": "#/$defs/SweepMode",
+              "description": "PayJoin or CoinJoin."
+            },
+            "threshold_sat": {
+              "description": "Confirmed balance (satoshis) that triggers a sweep.",
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "enabled",
+            "mode",
+            "threshold_sat",
+            "max_fee_rate_sat_vb",
+            "min_anonymity_set"
+          ],
+          "type": "object"
+        },
+        "SweepMode": {
+          "description": "How a future sweep would leave this wallet.",
+          "enum": [
+            "payjoin",
+            "coinjoin"
+          ],
+          "type": "string"
+        }
+      },
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "defaults": {
+          "$ref": "#/$defs/Settings",
+          "description": "Values from the environment, used where nothing is overridden."
+        },
+        "fixed": {
+          "$ref": "#/$defs/FixedSettings"
+        },
+        "operators": {
+          "items": {
+            "$ref": "#/$defs/Operator"
+          },
+          "type": "array"
+        },
+        "overridden": {
+          "description": "Names of the settings changed from the dashboard.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "restart_pending": {
+          "type": "boolean"
+        },
+        "settings": {
+          "$ref": "#/$defs/Settings",
+          "description": "Live values."
+        },
+        "warnings": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "settings",
+        "defaults",
+        "overridden",
+        "fixed",
+        "operators",
+        "restart_pending",
+        "warnings"
+      ],
+      "type": "object"
+    }
+  },
+  {
+    "description": "Operators only: write a consistent backup of the database on the service host.",
+    "inputSchema": {
+      "properties": {},
+      "type": "object"
+    },
+    "name": "backup_database",
+    "outputSchema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "created_at": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "file": {
+          "description": "File name inside `<data dir>/backups`.",
+          "type": "string"
+        },
+        "size_bytes": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "file",
+        "size_bytes",
+        "created_at"
+      ],
+      "type": "object"
+    }
+  },
+  {
+    "description": "Operators only: open a tunnel through a proxy (default: the current one) to each live relay and report, per relay, whether it worked and why not.",
+    "inputSchema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "default": null,
+          "description": "Test the listed proxy with this id (its saved password is used).\nWith neither `id` nor `proxy`, the proxy in use is tested.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "proxy": {
+          "default": null,
+          "description": "The proxy to test (`socks5://`, `http://` or `https://`, optional\n`user:password@`); empty for none.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "type": "object"
+    },
+    "name": "check_proxy",
+    "outputSchema": {
+      "$defs": {
+        "RelayCheck": {
+          "description": "One relay reached (or not) through the proxy.",
+          "properties": {
+            "code": {
+              "description": "Machine-readable outcome: `SOCKS5 00`, `SOCKS5 04`, `HTTP 407`,\n`ECONNREFUSED`, `ETIMEDOUT`, `DNS`, `TLS`, ...",
+              "type": "string"
+            },
+            "ms": {
+              "description": "Time to open the tunnel, when it opened.",
+              "format": "uint64",
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "ok": {
+              "type": "boolean"
+            },
+            "reason": {
+              "description": "What it means, in a sentence.",
+              "type": "string"
+            },
+            "relay": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "relay",
+            "ok",
+            "code",
+            "reason"
+          ],
+          "type": "object"
+        }
+      },
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "checked_at": {
+          "description": "Unix seconds.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "proxy": {
+          "description": "The proxy that was checked, password hidden; empty for none.",
+          "type": "string"
+        },
+        "relays": {
+          "items": {
+            "$ref": "#/$defs/RelayCheck"
+          },
+          "type": "array"
+        },
+        "status": {
+          "description": "`connected` (every relay), `partial`, `failed` or `direct` (no proxy).",
+          "type": "string"
+        }
+      },
+      "required": [
+        "proxy",
+        "status",
+        "checked_at",
+        "relays"
+      ],
+      "type": "object"
+    }
+  },
+  {
+    "description": "Operators only: check every live relay now: does it connect, does it carry ContextVM events from one connection to another, and is it rate-limiting us.",
+    "inputSchema": {
+      "properties": {},
+      "type": "object"
+    },
+    "name": "check_relays",
+    "outputSchema": {
+      "$defs": {
+        "RelayHealth": {
+          "description": "One relay's health.",
+          "properties": {
+            "checked_at": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "connects": {
+              "type": "boolean"
+            },
+            "detail": {
+              "description": "What went wrong, in one sentence; empty when nothing did.",
+              "type": "string"
+            },
+            "forwards": {
+              "description": "Whether a ContextVM event sent through the relay came back to a second\nconnection; `None` when it could not be tried.",
+              "type": [
+                "boolean",
+                "null"
+              ]
+            },
+            "ms": {
+              "description": "Round trip of the test event, in milliseconds.",
+              "format": "uint64",
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "rate_limited": {
+              "type": "boolean"
+            },
+            "relay": {
+              "type": "string"
+            },
+            "status": {
+              "description": "`ok` (every check passed), `degraded` (connects, but something failed)\nor `down` (cannot connect).",
+              "type": "string"
+            }
+          },
+          "required": [
+            "relay",
+            "status",
+            "connects",
+            "rate_limited",
+            "detail",
+            "checked_at"
+          ],
+          "type": "object"
+        }
+      },
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "relays": {
+          "items": {
+            "$ref": "#/$defs/RelayHealth"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "relays"
+      ],
+      "type": "object"
+    }
+  },
+  {
+    "description": "Operators only: stop or start invoicing, or restart the relay connections.",
+    "inputSchema": {
+      "$defs": {
+        "ControlAction": {
+          "description": "What `control_service` should do.",
+          "oneOf": [
+            {
+              "const": "stop",
+              "description": "Refuse new invoices. Payments keep being watched; operators can still connect.",
+              "type": "string"
+            },
+            {
+              "const": "start",
+              "description": "Accept new invoices again.",
+              "type": "string"
+            },
+            {
+              "const": "restart",
+              "description": "Reconnect to the relays and reload settings, in-process.",
+              "type": "string"
+            }
+          ]
+        }
+      },
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "action": {
+          "$ref": "#/$defs/ControlAction"
+        }
+      },
+      "required": [
+        "action"
+      ],
+      "type": "object"
+    },
+    "name": "control_service",
+    "outputSchema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "paused": {
+          "type": "boolean"
+        },
+        "restart_pending": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "paused",
+        "restart_pending"
+      ],
+      "type": "object"
+    }
+  },
+  {
+    "description": "Create an on-chain invoice with a fresh address. Non-operators must mine NIP-13 proof of work into the request event.",
+    "inputSchema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "amount_sat": {
+          "description": "Amount to request, in satoshis.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "expiry_secs": {
+          "default": null,
+          "description": "Optional lifetime in seconds.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "memo": {
+          "default": null,
+          "description": "Optional note stored with the invoice (max 200 characters).",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "amount_sat"
+      ],
+      "type": "object"
+    },
+    "name": "create_invoice",
+    "outputSchema": {
+      "$defs": {
+        "Status": {
+          "description": "Invoice lifecycle state.",
+          "oneOf": [
+            {
+              "const": "pending",
+              "description": "Waiting for payment.",
+              "type": "string"
+            },
+            {
+              "const": "detected",
+              "description": "Full amount seen, not yet sufficiently confirmed.",
+              "type": "string"
+            },
+            {
+              "const": "confirmed",
+              "description": "Full amount confirmed. Terminal.",
+              "type": "string"
+            },
+            {
+              "const": "expired",
+              "description": "Lifetime ended without full payment.",
+              "type": "string"
+            }
+          ]
+        }
+      },
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "address": {
+          "type": "string"
+        },
+        "amount_sat": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "bip21": {
+          "type": "string"
+        },
+        "confirmations_required": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "confirmed_sat": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "created_at": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "expires_at": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "id": {
+          "type": "string"
+        },
+        "memo": {
+          "type": "string"
+        },
+        "received_sat": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "settled_at": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "status": {
+          "$ref": "#/$defs/Status"
+        }
+      },
+      "required": [
+        "id",
+        "address",
+        "amount_sat",
+        "memo",
+        "status",
+        "received_sat",
+        "confirmed_sat",
+        "created_at",
+        "expires_at",
+        "bip21",
+        "confirmations_required"
+      ],
+      "type": "object"
+    }
+  },
+  {
+    "description": "Operators only: recent operator actions.",
+    "inputSchema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "limit": {
+          "default": null,
+          "description": "1 to 200, default 50.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        }
+      },
+      "type": "object"
+    },
+    "name": "get_audit_log",
+    "outputSchema": {
+      "$defs": {
+        "AuditEntry": {
+          "properties": {
+            "action": {
+              "type": "string"
+            },
+            "actor": {
+              "description": "Hex key of the operator, or `service`.",
+              "type": "string"
+            },
+            "at": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "detail": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "at",
+            "actor",
+            "action",
+            "detail"
+          ],
+          "type": "object"
+        }
+      },
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "entries": {
+          "items": {
+            "$ref": "#/$defs/AuditEntry"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "entries"
+      ],
+      "type": "object"
+    }
+  },
+  {
+    "description": "Operators only: relay connections, chain backend, database integrity and process uptime.",
+    "inputSchema": {
+      "properties": {},
+      "type": "object"
+    },
+    "name": "get_health",
+    "outputSchema": {
+      "$defs": {
+        "ChainHealth": {
+          "properties": {
+            "backend_local": {
+              "description": "Whether the Electrum server is on this machine.",
+              "type": "boolean"
+            },
+            "last_poll_at": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "ok": {
+              "type": "boolean"
+            },
+            "poll_secs": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "tip_height": {
+              "format": "uint32",
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "transport": {
+              "description": "`tcp`, `tls` (public authorities) or `tls-pinned`.",
+              "type": "string"
+            },
+            "watch_errors": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "ok",
+            "poll_secs",
+            "watch_errors",
+            "backend_local",
+            "transport"
+          ],
+          "type": "object"
+        },
+        "DatabaseHealth": {
+          "properties": {
+            "backups": {
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "invoices": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "last_backup_at": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "ok": {
+              "description": "SQLite quick integrity check passed.",
+              "type": "boolean"
+            },
+            "size_bytes": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "ok",
+            "size_bytes",
+            "invoices",
+            "backups"
+          ],
+          "type": "object"
+        },
+        "KeyInfo": {
+          "description": "One of the service's keys and what it is for.",
+          "properties": {
+            "id": {
+              "description": "`invoices` or `admin`.",
+              "type": "string"
+            },
+            "label": {
+              "description": "What the dashboard calls it.",
+              "type": "string"
+            },
+            "operators_only": {
+              "description": "Only operators are served on this key.",
+              "type": "boolean"
+            },
+            "pubkey": {
+              "description": "Hex public key; empty until the service has loaded it.",
+              "type": "string"
+            },
+            "relays": {
+              "description": "The relays it connects to now.",
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "tools": {
+              "description": "The tools this key serves (`*`: all of them).",
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            }
+          },
+          "required": [
+            "id",
+            "label",
+            "pubkey",
+            "tools",
+            "operators_only",
+            "relays"
+          ],
+          "type": "object"
+        },
+        "LaneHealth": {
+          "properties": {
+            "active": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "key": {
+              "type": "string"
+            },
+            "next_switch_at": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "reachable": {
+              "format": "uint",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "state": {
+              "$ref": "#/$defs/PoolState"
+            },
+            "uses_default": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "key",
+            "state",
+            "reachable",
+            "uses_default"
+          ],
+          "type": "object"
+        },
+        "OfflinePolicy": {
+          "enum": [
+            "kill_switch",
+            "admin_only",
+            "invoicing_only",
+            "open"
+          ],
+          "type": "string"
+        },
+        "PoolHealth": {
+          "properties": {
+            "active": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "lanes": {
+              "items": {
+                "$ref": "#/$defs/LaneHealth"
+              },
+              "type": "array"
+            },
+            "mode": {
+              "$ref": "#/$defs/ProxyMode"
+            },
+            "next_switch_at": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "offline": {
+              "$ref": "#/$defs/OfflinePolicy"
+            },
+            "posture": {
+              "$ref": "#/$defs/Posture"
+            },
+            "proxies": {
+              "items": {
+                "$ref": "#/$defs/ProxyHealth"
+              },
+              "type": "array"
+            },
+            "reachable": {
+              "format": "uint",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "routes": {
+              "items": {
+                "$ref": "#/$defs/RouteHealth"
+              },
+              "type": "array"
+            },
+            "state": {
+              "$ref": "#/$defs/PoolState"
+            },
+            "total": {
+              "format": "uint",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "transparent": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "state",
+            "posture",
+            "mode",
+            "offline",
+            "transparent",
+            "reachable",
+            "total",
+            "proxies",
+            "lanes",
+            "routes"
+          ],
+          "type": "object"
+        },
+        "PoolState": {
+          "enum": [
+            "transparent",
+            "direct",
+            "active",
+            "suspended",
+            "offline"
+          ],
+          "type": "string"
+        },
+        "Posture": {
+          "enum": [
+            "normal",
+            "off",
+            "admin_only",
+            "invoicing_only",
+            "open"
+          ],
+          "type": "string"
+        },
+        "ProxyCheck": {
+          "description": "Result of `check_proxy`.",
+          "properties": {
+            "checked_at": {
+              "description": "Unix seconds.",
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "proxy": {
+              "description": "The proxy that was checked, password hidden; empty for none.",
+              "type": "string"
+            },
+            "relays": {
+              "items": {
+                "$ref": "#/$defs/RelayCheck"
+              },
+              "type": "array"
+            },
+            "status": {
+              "description": "`connected` (every relay), `partial`, `failed` or `direct` (no proxy).",
+              "type": "string"
+            }
+          },
+          "required": [
+            "proxy",
+            "status",
+            "checked_at",
+            "relays"
+          ],
+          "type": "object"
+        },
+        "ProxyHealth": {
+          "properties": {
+            "checked_at": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "id": {
+              "type": "string"
+            },
+            "keys": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "name": {
+              "type": "string"
+            },
+            "pool": {
+              "type": "boolean"
+            },
+            "reachable": {
+              "type": [
+                "boolean",
+                "null"
+              ]
+            },
+            "reason": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "status": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "url": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "id",
+            "name",
+            "url",
+            "keys",
+            "pool"
+          ],
+          "type": "object"
+        },
+        "ProxyMode": {
+          "enum": [
+            "off",
+            "failover",
+            "round_robin",
+            "chaos"
+          ],
+          "type": "string"
+        },
+        "Reason": {
+          "description": "Why a relay goes the way it does.",
+          "enum": [
+            "rule",
+            "default",
+            "fallback",
+            "proxy_down",
+            "blocked",
+            "pool_offline",
+            "never_direct",
+            "transparent"
+          ],
+          "type": "string"
+        },
+        "RelayCheck": {
+          "description": "One relay reached (or not) through the proxy.",
+          "properties": {
+            "code": {
+              "description": "Machine-readable outcome: `SOCKS5 00`, `SOCKS5 04`, `HTTP 407`,\n`ECONNREFUSED`, `ETIMEDOUT`, `DNS`, `TLS`, ...",
+              "type": "string"
+            },
+            "ms": {
+              "description": "Time to open the tunnel, when it opened.",
+              "format": "uint64",
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "ok": {
+              "type": "boolean"
+            },
+            "reason": {
+              "description": "What it means, in a sentence.",
+              "type": "string"
+            },
+            "relay": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "relay",
+            "ok",
+            "code",
+            "reason"
+          ],
+          "type": "object"
+        },
+        "RelayHealth": {
+          "description": "One relay's health.",
+          "properties": {
+            "checked_at": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "connects": {
+              "type": "boolean"
+            },
+            "detail": {
+              "description": "What went wrong, in one sentence; empty when nothing did.",
+              "type": "string"
+            },
+            "forwards": {
+              "description": "Whether a ContextVM event sent through the relay came back to a second\nconnection; `None` when it could not be tried.",
+              "type": [
+                "boolean",
+                "null"
+              ]
+            },
+            "ms": {
+              "description": "Round trip of the test event, in milliseconds.",
+              "format": "uint64",
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "rate_limited": {
+              "type": "boolean"
+            },
+            "relay": {
+              "type": "string"
+            },
+            "status": {
+              "description": "`ok` (every check passed), `degraded` (connects, but something failed)\nor `down` (cannot connect).",
+              "type": "string"
+            }
+          },
+          "required": [
+            "relay",
+            "status",
+            "connects",
+            "rate_limited",
+            "detail",
+            "checked_at"
+          ],
+          "type": "object"
+        },
+        "RelayState": {
+          "description": "Connection state of one relay, as reported by the transport.",
+          "properties": {
+            "connected": {
+              "type": "boolean"
+            },
+            "keys": {
+              "description": "The keys (by id) that use this relay.",
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "status": {
+              "description": "Transport status, for example `connected`, `connecting` or `disconnected`.",
+              "type": "string"
+            },
+            "url": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "url",
+            "status",
+            "connected",
+            "keys"
+          ],
+          "type": "object"
+        },
+        "RouteHealth": {
+          "properties": {
+            "key": {
+              "type": "string"
+            },
+            "proxy": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "reason": {
+              "$ref": "#/$defs/Reason"
+            },
+            "relay": {
+              "type": "string"
+            },
+            "rule": {
+              "format": "uint",
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "via": {
+              "$ref": "#/$defs/RouteVia"
+            }
+          },
+          "required": [
+            "key",
+            "relay",
+            "via",
+            "reason"
+          ],
+          "type": "object"
+        },
+        "RouteVia": {
+          "enum": [
+            "proxy",
+            "direct",
+            "off"
+          ],
+          "type": "string"
+        },
+        "ServiceHealth": {
+          "properties": {
+            "online_since": {
+              "description": "When this service first ran with this database.",
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "paused": {
+              "description": "Invoicing stopped by an operator.",
+              "type": "boolean"
+            },
+            "restart_pending": {
+              "type": "boolean"
+            },
+            "restarts": {
+              "description": "In-process restarts since the process started.",
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "started_at": {
+              "description": "When this process started (unix seconds).",
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "uptime_secs": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "version": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "version",
+            "started_at",
+            "uptime_secs",
+            "online_since",
+            "paused",
+            "restarts",
+            "restart_pending"
+          ],
+          "type": "object"
+        }
+      },
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "chain": {
+          "$ref": "#/$defs/ChainHealth"
+        },
+        "database": {
+          "$ref": "#/$defs/DatabaseHealth"
+        },
+        "keys": {
+          "description": "The keys, each with its own relays.",
+          "items": {
+            "$ref": "#/$defs/KeyInfo"
+          },
+          "type": "array"
+        },
+        "proxy": {
+          "description": "Proxy used for relay connections now (password hidden), empty if direct.",
+          "type": "string"
+        },
+        "proxy_check": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ProxyCheck"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The last test of that proxy, if one ran."
+        },
+        "proxy_pool": {
+          "$ref": "#/$defs/PoolHealth",
+          "description": "Every proxy, which one is in use and what happens when none works."
+        },
+        "relay_health": {
+          "description": "The last health check of every live relay (empty until the first ran).",
+          "items": {
+            "$ref": "#/$defs/RelayHealth"
+          },
+          "type": "array"
+        },
+        "relays": {
+          "items": {
+            "$ref": "#/$defs/RelayState"
+          },
+          "type": "array"
+        },
+        "service": {
+          "$ref": "#/$defs/ServiceHealth"
+        },
+        "warnings": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "service",
+        "keys",
+        "relays",
+        "proxy",
+        "proxy_pool",
+        "relay_health",
+        "chain",
+        "database",
+        "warnings"
+      ],
+      "type": "object"
+    }
+  },
+  {
+    "description": "Service parameters: network, limits, required proof of work, and whether the caller is an operator.",
+    "inputSchema": {
+      "properties": {},
+      "type": "object"
+    },
+    "name": "get_info",
+    "outputSchema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "default_expiry_secs": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "is_admin": {
+          "description": "Whether the caller is an operator.",
+          "type": "boolean"
+        },
+        "max_amount_sat": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "max_expiry_secs": {
+          "description": "Longest lifetime this caller may request.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "min_amount_sat": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "min_confirmations": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "name": {
+          "type": "string"
+        },
+        "network": {
+          "type": "string"
+        },
+        "pow_bits": {
+          "format": "uint8",
+          "maximum": 255,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "pow_window_secs": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "public_invoicing": {
+          "type": "boolean"
+        },
+        "version": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "version",
+        "network",
+        "public_invoicing",
+        "pow_bits",
+        "pow_window_secs",
+        "min_confirmations",
+        "default_expiry_secs",
+        "max_expiry_secs",
+        "min_amount_sat",
+        "max_amount_sat",
+        "is_admin"
+      ],
+      "type": "object"
+    }
+  },
+  {
+    "description": "Look up an invoice and its payment status by id.",
+    "inputSchema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "description": "Invoice id: 32 lowercase hex characters.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id"
+      ],
+      "type": "object"
+    },
+    "name": "get_invoice",
+    "outputSchema": {
+      "$defs": {
+        "Status": {
+          "description": "Invoice lifecycle state.",
+          "oneOf": [
+            {
+              "const": "pending",
+              "description": "Waiting for payment.",
+              "type": "string"
+            },
+            {
+              "const": "detected",
+              "description": "Full amount seen, not yet sufficiently confirmed.",
+              "type": "string"
+            },
+            {
+              "const": "confirmed",
+              "description": "Full amount confirmed. Terminal.",
+              "type": "string"
+            },
+            {
+              "const": "expired",
+              "description": "Lifetime ended without full payment.",
+              "type": "string"
+            }
+          ]
+        }
+      },
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "address": {
+          "type": "string"
+        },
+        "amount_sat": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "bip21": {
+          "type": "string"
+        },
+        "confirmations_required": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "confirmed_sat": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "created_at": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "expires_at": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "id": {
+          "type": "string"
+        },
+        "memo": {
+          "type": "string"
+        },
+        "received_sat": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "settled_at": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "status": {
+          "$ref": "#/$defs/Status"
+        }
+      },
+      "required": [
+        "id",
+        "address",
+        "amount_sat",
+        "memo",
+        "status",
+        "received_sat",
+        "confirmed_sat",
+        "created_at",
+        "expires_at",
+        "bip21",
+        "confirmations_required"
+      ],
+      "type": "object"
+    }
+  },
+  {
+    "description": "Operators only: addresses created, invoices, payments and payments within 24h, 7d, 30d and 365d.",
+    "inputSchema": {
+      "properties": {},
+      "type": "object"
+    },
+    "name": "get_metrics",
+    "outputSchema": {
+      "$defs": {
+        "PaymentWindow": {
+          "description": "Payments within one trailing window.",
+          "properties": {
+            "available": {
+              "description": "False while the service has been online for less than the window; the\nfigures then cover only the time it has been online.",
+              "type": "boolean"
+            },
+            "count": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "label": {
+              "description": "`24h`, `7d`, `30d` or `365d`.",
+              "type": "string"
+            },
+            "sat": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "secs": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "label",
+            "secs",
+            "available",
+            "count",
+            "sat"
+          ],
+          "type": "object"
+        },
+        "SweepMode": {
+          "description": "How a future sweep would leave this wallet.",
+          "enum": [
+            "payjoin",
+            "coinjoin"
+          ],
+          "type": "string"
+        },
+        "SweepStatus": {
+          "description": "What the sweep policy would do now. Nothing is executed by this service.",
+          "properties": {
+            "due": {
+              "description": "Enabled and at or above the threshold.",
+              "type": "boolean"
+            },
+            "enabled": {
+              "type": "boolean"
+            },
+            "mode": {
+              "$ref": "#/$defs/SweepMode"
+            },
+            "received_sat": {
+              "description": "Confirmed satoshis received (spends are not visible to a watch-only service).",
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "threshold_sat": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "enabled",
+            "mode",
+            "threshold_sat",
+            "received_sat",
+            "due"
+          ],
+          "type": "object"
+        }
+      },
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "addresses_created": {
+          "description": "Addresses handed out so far (the next derivation index).",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "invoices": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "now": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "online_since": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "payments": {
+          "description": "Invoices paid in full and confirmed.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "received_sat": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "sweep": {
+          "$ref": "#/$defs/SweepStatus"
+        },
+        "windows": {
+          "items": {
+            "$ref": "#/$defs/PaymentWindow"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "now",
+        "online_since",
+        "addresses_created",
+        "invoices",
+        "payments",
+        "received_sat",
+        "windows",
+        "sweep"
+      ],
+      "type": "object"
+    }
+  },
+  {
+    "description": "Operators only: confirmed payments per hour, day or week for a line chart.",
+    "inputSchema": {
+      "$defs": {
+        "Range": {
+          "description": "Span of a payment series.",
+          "oneOf": [
+            {
+              "const": "day",
+              "description": "24 hourly buckets.",
+              "type": "string"
+            },
+            {
+              "const": "week",
+              "description": "7 daily buckets.",
+              "type": "string"
+            },
+            {
+              "const": "month",
+              "description": "30 daily buckets.",
+              "type": "string"
+            },
+            {
+              "const": "year",
+              "description": "52 weekly buckets.",
+              "type": "string"
+            }
+          ]
+        }
+      },
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "range": {
+          "$ref": "#/$defs/Range"
+        }
+      },
+      "required": [
+        "range"
+      ],
+      "type": "object"
+    },
+    "name": "get_payment_series",
+    "outputSchema": {
+      "$defs": {
+        "Range": {
+          "description": "Span of a payment series.",
+          "oneOf": [
+            {
+              "const": "day",
+              "description": "24 hourly buckets.",
+              "type": "string"
+            },
+            {
+              "const": "week",
+              "description": "7 daily buckets.",
+              "type": "string"
+            },
+            {
+              "const": "month",
+              "description": "30 daily buckets.",
+              "type": "string"
+            },
+            {
+              "const": "year",
+              "description": "52 weekly buckets.",
+              "type": "string"
+            }
+          ]
+        },
+        "SeriesPoint": {
+          "properties": {
+            "count": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "sat": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "start": {
+              "description": "Bucket start (unix seconds, UTC-aligned).",
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "start",
+            "count",
+            "sat"
+          ],
+          "type": "object"
+        }
+      },
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "bucket_secs": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "online_since": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "points": {
+          "items": {
+            "$ref": "#/$defs/SeriesPoint"
+          },
+          "type": "array"
+        },
+        "range": {
+          "$ref": "#/$defs/Range"
+        }
+      },
+      "required": [
+        "range",
+        "bucket_secs",
+        "online_since",
+        "points"
+      ],
+      "type": "object"
+    }
+  },
+  {
+    "description": "Operators only: what can be learned about where this service runs, scored from the checks it can make.",
+    "inputSchema": {
+      "properties": {},
+      "type": "object"
+    },
+    "name": "get_privacy_audit",
+    "outputSchema": {
+      "$defs": {
+        "PrivacyCheck": {
+          "description": "One finding of the privacy audit.",
+          "properties": {
+            "area": {
+              "description": "`network`, `ports` or `exposure`.",
+              "type": "string"
+            },
+            "evidence": {
+              "description": "Facts the result is based on, one per line.",
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "fix": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "id": {
+              "type": "string"
+            },
+            "points": {
+              "description": "Points taken off the score.",
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "result": {
+              "description": "`pass`, `to_fix`, `fail`, `note` or `not_checked`.",
+              "type": "string"
+            },
+            "summary": {
+              "type": "string"
+            },
+            "title": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "id",
+            "area",
+            "title",
+            "result",
+            "points",
+            "summary",
+            "evidence"
+          ],
+          "type": "object"
+        }
+      },
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "checked": {
+          "description": "Checks that ran (everything but `not_checked`).",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "checks": {
+          "items": {
+            "$ref": "#/$defs/PrivacyCheck"
+          },
+          "type": "array"
+        },
+        "ran_at": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "score": {
+          "description": "100 minus the points of the checks that ran.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "total": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "score",
+        "checked",
+        "total",
+        "ran_at",
+        "checks"
+      ],
+      "type": "object"
+    }
+  },
+  {
+    "description": "Operators only: how each relay did over a window (15m, 1h, 12h, 1d or 1w): health checks and replies sent, how many failed, and a series of buckets to plot.",
+    "inputSchema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "window": {
+          "default": null,
+          "description": "`15m`, `1h`, `12h`, `1d` or `1w`; default `1h`.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "type": "object"
+    },
+    "name": "get_relay_history",
+    "outputSchema": {
+      "$defs": {
+        "RelayPoint": {
+          "description": "Relay results in one bucket of time.",
+          "properties": {
+            "fail": {
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "ok": {
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "start": {
+              "description": "Start of the bucket (unix seconds).",
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "start",
+            "ok",
+            "fail"
+          ],
+          "type": "object"
+        },
+        "RelayStats": {
+          "description": "One relay over a window.",
+          "properties": {
+            "avg_ms": {
+              "description": "Mean round trip of the results that carry one, in milliseconds.",
+              "format": "uint64",
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "check_failures": {
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "checks": {
+              "description": "End-to-end health checks, and how many of them failed.",
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "points": {
+              "items": {
+                "$ref": "#/$defs/RelayPoint"
+              },
+              "type": "array"
+            },
+            "relay": {
+              "type": "string"
+            },
+            "send_failures": {
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "sends": {
+              "description": "Replies sent through this relay, and how many it did not accept.",
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "relay",
+            "checks",
+            "check_failures",
+            "sends",
+            "send_failures",
+            "points"
+          ],
+          "type": "object"
+        }
+      },
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "bucket_secs": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "relays": {
+          "items": {
+            "$ref": "#/$defs/RelayStats"
+          },
+          "type": "array"
+        },
+        "since": {
+          "description": "Start of the first bucket and end of the last (unix seconds).",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "until": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "window": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "window",
+        "bucket_secs",
+        "since",
+        "until",
+        "relays"
+      ],
+      "type": "object"
+    }
+  },
+  {
+    "description": "Operators only: live settings, environment defaults, overrides and operator keys.",
+    "inputSchema": {
+      "properties": {},
+      "type": "object"
+    },
+    "name": "get_settings",
+    "outputSchema": {
+      "$defs": {
+        "Fallback": {
+          "enum": [
+            "offline",
+            "pool"
+          ],
+          "type": "string"
+        },
+        "FixedSettings": {
+          "description": "What can only be changed on the host.",
+          "properties": {
+            "announce": {
+              "type": "boolean"
+            },
+            "electrum": {
+              "type": "string"
+            },
+            "electrum_transport": {
+              "description": "`tcp`, `tls` (public authorities) or `tls-pinned`.",
+              "type": "string"
+            },
+            "first_address": {
+              "description": "Receive address at index 0, to compare with the wallet.",
+              "type": "string"
+            },
+            "keys": {
+              "description": "The keys and what each is for.",
+              "items": {
+                "$ref": "#/$defs/KeyInfo"
+              },
+              "type": "array"
+            },
+            "network": {
+              "type": "string"
+            },
+            "proxy_locked": {
+              "description": "DEADHOP_PROXY_LOCKED: the proxy can only be changed on the host.",
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "network",
+            "electrum",
+            "electrum_transport",
+            "first_address",
+            "announce",
+            "keys",
+            "proxy_locked"
+          ],
+          "type": "object"
+        },
+        "KeyInfo": {
+          "description": "One of the service's keys and what it is for.",
+          "properties": {
+            "id": {
+              "description": "`invoices` or `admin`.",
+              "type": "string"
+            },
+            "label": {
+              "description": "What the dashboard calls it.",
+              "type": "string"
+            },
+            "operators_only": {
+              "description": "Only operators are served on this key.",
+              "type": "boolean"
+            },
+            "pubkey": {
+              "description": "Hex public key; empty until the service has loaded it.",
+              "type": "string"
+            },
+            "relays": {
+              "description": "The relays it connects to now.",
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "tools": {
+              "description": "The tools this key serves (`*`: all of them).",
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            }
+          },
+          "required": [
+            "id",
+            "label",
+            "pubkey",
+            "tools",
+            "operators_only",
+            "relays"
+          ],
+          "type": "object"
+        },
+        "OfflinePolicy": {
+          "enum": [
+            "kill_switch",
+            "admin_only",
+            "invoicing_only",
+            "open"
+          ],
+          "type": "string"
+        },
+        "Operator": {
+          "description": "An operator key.",
+          "properties": {
+            "added_at": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "label": {
+              "type": "string"
+            },
+            "pubkey": {
+              "description": "Hex public key.",
+              "type": "string"
+            },
+            "source": {
+              "description": "`environment` keys come from DEADHOP_ADMINS and cannot be removed remotely.",
+              "type": "string"
+            }
+          },
+          "required": [
+            "pubkey",
+            "label",
+            "source"
+          ],
+          "type": "object"
+        },
+        "ProxyEntry": {
+          "properties": {
+            "i2p": {
+              "default": false,
+              "type": "boolean"
+            },
+            "id": {
+              "type": "string"
+            },
+            "keys": {
+              "default": [],
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "name": {
+              "type": "string"
+            },
+            "pool": {
+              "default": true,
+              "type": "boolean"
+            },
+            "url": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "id",
+            "name",
+            "url"
+          ],
+          "type": "object"
+        },
+        "ProxyMode": {
+          "enum": [
+            "off",
+            "failover",
+            "round_robin",
+            "chaos"
+          ],
+          "type": "string"
+        },
+        "ProxySettings": {
+          "properties": {
+            "chaos_max_secs": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "chaos_min_secs": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "i2p_registries": {
+              "default": [
+                "http://notbob.i2p/cgi-bin/jump.cgi?q={name}",
+                "http://stats.i2p/cgi-bin/jump.cgi?a={name}"
+              ],
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "list": {
+              "items": {
+                "$ref": "#/$defs/ProxyEntry"
+              },
+              "type": "array"
+            },
+            "mode": {
+              "$ref": "#/$defs/ProxyMode"
+            },
+            "offline": {
+              "$ref": "#/$defs/OfflinePolicy"
+            },
+            "rotate_secs": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "rules": {
+              "default": [],
+              "items": {
+                "$ref": "#/$defs/Rule"
+              },
+              "type": "array"
+            },
+            "transparent": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "list",
+            "mode",
+            "rotate_secs",
+            "chaos_min_secs",
+            "chaos_max_secs",
+            "offline",
+            "transparent"
+          ],
+          "type": "object"
+        },
+        "RouteTo": {
+          "oneOf": [
+            {
+              "enum": [
+                "pool",
+                "direct",
+                "block"
+              ],
+              "type": "string"
+            },
+            {
+              "additionalProperties": false,
+              "properties": {
+                "proxy": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "proxy"
+              ],
+              "type": "object"
+            }
+          ]
+        },
+        "Rule": {
+          "additionalProperties": false,
+          "properties": {
+            "fallback": {
+              "$ref": "#/$defs/Fallback",
+              "default": "offline"
+            },
+            "keys": {
+              "default": [],
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "match": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "name": {
+              "default": "",
+              "type": "string"
+            },
+            "to": {
+              "$ref": "#/$defs/RouteTo"
+            }
+          },
+          "required": [
+            "match",
+            "to"
+          ],
+          "type": "object"
+        },
+        "Settings": {
+          "description": "Every setting that can change while the service runs.",
+          "properties": {
+            "default_expiry_secs": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "late_grace_secs": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "max_amount_sat": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "max_expiry_secs": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "max_invoices_per_day": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "max_open_invoices": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "min_amount_sat": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "min_confirmations": {
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "name": {
+              "type": "string"
+            },
+            "poll_secs": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "pow_bits": {
+              "format": "uint8",
+              "maximum": 255,
+              "minimum": 0,
+              "type": "integer"
+            },
+            "pow_window_secs": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "proxies": {
+              "$ref": "#/$defs/ProxySettings",
+              "description": "Proxies for relay connections only."
+            },
+            "public_invoicing": {
+              "type": "boolean"
+            },
+            "rate_global_per_min": {
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "rate_per_key_per_min": {
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "rate_requests_per_key_per_min": {
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "rate_requests_per_min": {
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "relay_keys": {
+              "additionalProperties": {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "default": {},
+              "description": "Relays that only some keys use: relay url to key ids. A relay not\nlisted here is used by every key.",
+              "type": "object"
+            },
+            "relay_names": {
+              "additionalProperties": {
+                "type": "string"
+              },
+              "default": {},
+              "description": "Names shown for relays (such as the I2P name behind a b32 address):\nrelay url to name. Connections always use the url.",
+              "type": "object"
+            },
+            "relays": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "sweep": {
+              "$ref": "#/$defs/Sweep"
+            }
+          },
+          "required": [
+            "name",
+            "relays",
+            "public_invoicing",
+            "pow_bits",
+            "pow_window_secs",
+            "min_confirmations",
+            "default_expiry_secs",
+            "max_expiry_secs",
+            "min_amount_sat",
+            "max_amount_sat",
+            "max_open_invoices",
+            "max_invoices_per_day",
+            "rate_global_per_min",
+            "rate_per_key_per_min",
+            "rate_requests_per_min",
+            "rate_requests_per_key_per_min",
+            "poll_secs",
+            "late_grace_secs",
+            "proxies",
+            "sweep"
+          ],
+          "type": "object"
+        },
+        "Sweep": {
+          "description": "Policy for moving funds out once they pile up. Stored and reported only:\nthis service holds no spending keys, so a separate signer must carry it\nout. There is intentionally no destination field; the signer owns that.",
+          "properties": {
+            "enabled": {
+              "description": "Whether the policy is active.",
+              "type": "boolean"
+            },
+            "max_fee_rate_sat_vb": {
+              "description": "Highest fee rate a sweep may pay, in sat/vB.",
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "min_anonymity_set": {
+              "description": "Smallest acceptable CoinJoin anonymity set.",
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "mode": {
+              "$ref": "#/$defs/SweepMode",
+              "description": "PayJoin or CoinJoin."
+            },
+            "threshold_sat": {
+              "description": "Confirmed balance (satoshis) that triggers a sweep.",
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "enabled",
+            "mode",
+            "threshold_sat",
+            "max_fee_rate_sat_vb",
+            "min_anonymity_set"
+          ],
+          "type": "object"
+        },
+        "SweepMode": {
+          "description": "How a future sweep would leave this wallet.",
+          "enum": [
+            "payjoin",
+            "coinjoin"
+          ],
+          "type": "string"
+        }
+      },
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "defaults": {
+          "$ref": "#/$defs/Settings",
+          "description": "Values from the environment, used where nothing is overridden."
+        },
+        "fixed": {
+          "$ref": "#/$defs/FixedSettings"
+        },
+        "operators": {
+          "items": {
+            "$ref": "#/$defs/Operator"
+          },
+          "type": "array"
+        },
+        "overridden": {
+          "description": "Names of the settings changed from the dashboard.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "restart_pending": {
+          "type": "boolean"
+        },
+        "settings": {
+          "$ref": "#/$defs/Settings",
+          "description": "Live values."
+        },
+        "warnings": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "settings",
+        "defaults",
+        "overridden",
+        "fixed",
+        "operators",
+        "restart_pending",
+        "warnings"
+      ],
+      "type": "object"
+    }
+  },
+  {
+    "description": "Operators only: totals per status and chain backend health.",
+    "inputSchema": {
+      "properties": {},
+      "type": "object"
+    },
+    "name": "get_stats",
+    "outputSchema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "chain_ok": {
+          "type": "boolean"
+        },
+        "confirmed": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "confirmed_sat": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "detected": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "detected_sat": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "expired": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "last_poll_at": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "next_index": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "pending": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "tip_height": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "watch_errors": {
+          "description": "Invoices whose payments could not be read in the last poll and need a look.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "pending",
+        "detected",
+        "confirmed",
+        "expired",
+        "confirmed_sat",
+        "detected_sat",
+        "next_index",
+        "chain_ok",
+        "watch_errors"
+      ],
+      "type": "object"
+    }
+  },
+  {
+    "description": "Operators only: the database backups kept on the service host, newest first.",
+    "inputSchema": {
+      "properties": {},
+      "type": "object"
+    },
+    "name": "list_backups",
+    "outputSchema": {
+      "$defs": {
+        "Backup": {
+          "description": "A database backup on the service host.",
+          "properties": {
+            "created_at": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "file": {
+              "description": "File name inside `<data dir>/backups`.",
+              "type": "string"
+            },
+            "size_bytes": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "file",
+            "size_bytes",
+            "created_at"
+          ],
+          "type": "object"
+        }
+      },
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "backups": {
+          "items": {
+            "$ref": "#/$defs/Backup"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "backups"
+      ],
+      "type": "object"
+    }
+  },
+  {
+    "description": "Operators only: page through invoices, newest first.",
+    "inputSchema": {
+      "$defs": {
+        "Status": {
+          "description": "Invoice lifecycle state.",
+          "oneOf": [
+            {
+              "const": "pending",
+              "description": "Waiting for payment.",
+              "type": "string"
+            },
+            {
+              "const": "detected",
+              "description": "Full amount seen, not yet sufficiently confirmed.",
+              "type": "string"
+            },
+            {
+              "const": "confirmed",
+              "description": "Full amount confirmed. Terminal.",
+              "type": "string"
+            },
+            {
+              "const": "expired",
+              "description": "Lifetime ended without full payment.",
+              "type": "string"
+            }
+          ]
+        }
+      },
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "before": {
+          "default": null,
+          "description": "Only invoices with a derivation index below this (pagination cursor).",
+          "format": "uint32",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "limit": {
+          "default": null,
+          "description": "Page size, 1 to 200 (default 50).",
+          "format": "uint32",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "status": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Status"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Only invoices in this state."
+        }
+      },
+      "type": "object"
+    },
+    "name": "list_invoices",
+    "outputSchema": {
+      "$defs": {
+        "AdminInvoice": {
+          "description": "An invoice with the fields only the operator may see.",
+          "properties": {
+            "address": {
+              "type": "string"
+            },
+            "amount_sat": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "bip21": {
+              "type": "string"
+            },
+            "confirmations_required": {
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "confirmed_sat": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "created_at": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "creator": {
+              "type": "string"
+            },
+            "expires_at": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "id": {
+              "type": "string"
+            },
+            "index": {
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "memo": {
+              "type": "string"
+            },
+            "received_sat": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "settled_at": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "status": {
+              "$ref": "#/$defs/Status"
+            }
+          },
+          "required": [
+            "id",
+            "address",
+            "amount_sat",
+            "memo",
+            "status",
+            "received_sat",
+            "confirmed_sat",
+            "created_at",
+            "expires_at",
+            "bip21",
+            "confirmations_required",
+            "index",
+            "creator"
+          ],
+          "type": "object"
+        },
+        "Status": {
+          "description": "Invoice lifecycle state.",
+          "oneOf": [
+            {
+              "const": "pending",
+              "description": "Waiting for payment.",
+              "type": "string"
+            },
+            {
+              "const": "detected",
+              "description": "Full amount seen, not yet sufficiently confirmed.",
+              "type": "string"
+            },
+            {
+              "const": "confirmed",
+              "description": "Full amount confirmed. Terminal.",
+              "type": "string"
+            },
+            {
+              "const": "expired",
+              "description": "Lifetime ended without full payment.",
+              "type": "string"
+            }
+          ]
+        }
+      },
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "invoices": {
+          "items": {
+            "$ref": "#/$defs/AdminInvoice"
+          },
+          "type": "array"
+        },
+        "next_before": {
+          "description": "Pass as `before` to fetch the next page; absent on the last page.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "invoices"
+      ],
+      "type": "object"
+    }
+  },
+  {
+    "description": "Operators only: revoke an operator key added from the dashboard.",
+    "inputSchema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "pubkey": {
+          "description": "Hex, `npub` or `nprofile`.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "pubkey"
+      ],
+      "type": "object"
+    },
+    "name": "remove_operator",
+    "outputSchema": {
+      "$defs": {
+        "Fallback": {
+          "enum": [
+            "offline",
+            "pool"
+          ],
+          "type": "string"
+        },
+        "FixedSettings": {
+          "description": "What can only be changed on the host.",
+          "properties": {
+            "announce": {
+              "type": "boolean"
+            },
+            "electrum": {
+              "type": "string"
+            },
+            "electrum_transport": {
+              "description": "`tcp`, `tls` (public authorities) or `tls-pinned`.",
+              "type": "string"
+            },
+            "first_address": {
+              "description": "Receive address at index 0, to compare with the wallet.",
+              "type": "string"
+            },
+            "keys": {
+              "description": "The keys and what each is for.",
+              "items": {
+                "$ref": "#/$defs/KeyInfo"
+              },
+              "type": "array"
+            },
+            "network": {
+              "type": "string"
+            },
+            "proxy_locked": {
+              "description": "DEADHOP_PROXY_LOCKED: the proxy can only be changed on the host.",
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "network",
+            "electrum",
+            "electrum_transport",
+            "first_address",
+            "announce",
+            "keys",
+            "proxy_locked"
+          ],
+          "type": "object"
+        },
+        "KeyInfo": {
+          "description": "One of the service's keys and what it is for.",
+          "properties": {
+            "id": {
+              "description": "`invoices` or `admin`.",
+              "type": "string"
+            },
+            "label": {
+              "description": "What the dashboard calls it.",
+              "type": "string"
+            },
+            "operators_only": {
+              "description": "Only operators are served on this key.",
+              "type": "boolean"
+            },
+            "pubkey": {
+              "description": "Hex public key; empty until the service has loaded it.",
+              "type": "string"
+            },
+            "relays": {
+              "description": "The relays it connects to now.",
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "tools": {
+              "description": "The tools this key serves (`*`: all of them).",
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            }
+          },
+          "required": [
+            "id",
+            "label",
+            "pubkey",
+            "tools",
+            "operators_only",
+            "relays"
+          ],
+          "type": "object"
+        },
+        "OfflinePolicy": {
+          "enum": [
+            "kill_switch",
+            "admin_only",
+            "invoicing_only",
+            "open"
+          ],
+          "type": "string"
+        },
+        "Operator": {
+          "description": "An operator key.",
+          "properties": {
+            "added_at": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "label": {
+              "type": "string"
+            },
+            "pubkey": {
+              "description": "Hex public key.",
+              "type": "string"
+            },
+            "source": {
+              "description": "`environment` keys come from DEADHOP_ADMINS and cannot be removed remotely.",
+              "type": "string"
+            }
+          },
+          "required": [
+            "pubkey",
+            "label",
+            "source"
+          ],
+          "type": "object"
+        },
+        "ProxyEntry": {
+          "properties": {
+            "i2p": {
+              "default": false,
+              "type": "boolean"
+            },
+            "id": {
+              "type": "string"
+            },
+            "keys": {
+              "default": [],
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "name": {
+              "type": "string"
+            },
+            "pool": {
+              "default": true,
+              "type": "boolean"
+            },
+            "url": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "id",
+            "name",
+            "url"
+          ],
+          "type": "object"
+        },
+        "ProxyMode": {
+          "enum": [
+            "off",
+            "failover",
+            "round_robin",
+            "chaos"
+          ],
+          "type": "string"
+        },
+        "ProxySettings": {
+          "properties": {
+            "chaos_max_secs": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "chaos_min_secs": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "i2p_registries": {
+              "default": [
+                "http://notbob.i2p/cgi-bin/jump.cgi?q={name}",
+                "http://stats.i2p/cgi-bin/jump.cgi?a={name}"
+              ],
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "list": {
+              "items": {
+                "$ref": "#/$defs/ProxyEntry"
+              },
+              "type": "array"
+            },
+            "mode": {
+              "$ref": "#/$defs/ProxyMode"
+            },
+            "offline": {
+              "$ref": "#/$defs/OfflinePolicy"
+            },
+            "rotate_secs": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "rules": {
+              "default": [],
+              "items": {
+                "$ref": "#/$defs/Rule"
+              },
+              "type": "array"
+            },
+            "transparent": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "list",
+            "mode",
+            "rotate_secs",
+            "chaos_min_secs",
+            "chaos_max_secs",
+            "offline",
+            "transparent"
+          ],
+          "type": "object"
+        },
+        "RouteTo": {
+          "oneOf": [
+            {
+              "enum": [
+                "pool",
+                "direct",
+                "block"
+              ],
+              "type": "string"
+            },
+            {
+              "additionalProperties": false,
+              "properties": {
+                "proxy": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "proxy"
+              ],
+              "type": "object"
+            }
+          ]
+        },
+        "Rule": {
+          "additionalProperties": false,
+          "properties": {
+            "fallback": {
+              "$ref": "#/$defs/Fallback",
+              "default": "offline"
+            },
+            "keys": {
+              "default": [],
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "match": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "name": {
+              "default": "",
+              "type": "string"
+            },
+            "to": {
+              "$ref": "#/$defs/RouteTo"
+            }
+          },
+          "required": [
+            "match",
+            "to"
+          ],
+          "type": "object"
+        },
+        "Settings": {
+          "description": "Every setting that can change while the service runs.",
+          "properties": {
+            "default_expiry_secs": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "late_grace_secs": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "max_amount_sat": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "max_expiry_secs": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "max_invoices_per_day": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "max_open_invoices": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "min_amount_sat": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "min_confirmations": {
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "name": {
+              "type": "string"
+            },
+            "poll_secs": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "pow_bits": {
+              "format": "uint8",
+              "maximum": 255,
+              "minimum": 0,
+              "type": "integer"
+            },
+            "pow_window_secs": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "proxies": {
+              "$ref": "#/$defs/ProxySettings",
+              "description": "Proxies for relay connections only."
+            },
+            "public_invoicing": {
+              "type": "boolean"
+            },
+            "rate_global_per_min": {
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "rate_per_key_per_min": {
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "rate_requests_per_key_per_min": {
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "rate_requests_per_min": {
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "relay_keys": {
+              "additionalProperties": {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "default": {},
+              "description": "Relays that only some keys use: relay url to key ids. A relay not\nlisted here is used by every key.",
+              "type": "object"
+            },
+            "relay_names": {
+              "additionalProperties": {
+                "type": "string"
+              },
+              "default": {},
+              "description": "Names shown for relays (such as the I2P name behind a b32 address):\nrelay url to name. Connections always use the url.",
+              "type": "object"
+            },
+            "relays": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "sweep": {
+              "$ref": "#/$defs/Sweep"
+            }
+          },
+          "required": [
+            "name",
+            "relays",
+            "public_invoicing",
+            "pow_bits",
+            "pow_window_secs",
+            "min_confirmations",
+            "default_expiry_secs",
+            "max_expiry_secs",
+            "min_amount_sat",
+            "max_amount_sat",
+            "max_open_invoices",
+            "max_invoices_per_day",
+            "rate_global_per_min",
+            "rate_per_key_per_min",
+            "rate_requests_per_min",
+            "rate_requests_per_key_per_min",
+            "poll_secs",
+            "late_grace_secs",
+            "proxies",
+            "sweep"
+          ],
+          "type": "object"
+        },
+        "Sweep": {
+          "description": "Policy for moving funds out once they pile up. Stored and reported only:\nthis service holds no spending keys, so a separate signer must carry it\nout. There is intentionally no destination field; the signer owns that.",
+          "properties": {
+            "enabled": {
+              "description": "Whether the policy is active.",
+              "type": "boolean"
+            },
+            "max_fee_rate_sat_vb": {
+              "description": "Highest fee rate a sweep may pay, in sat/vB.",
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "min_anonymity_set": {
+              "description": "Smallest acceptable CoinJoin anonymity set.",
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "mode": {
+              "$ref": "#/$defs/SweepMode",
+              "description": "PayJoin or CoinJoin."
+            },
+            "threshold_sat": {
+              "description": "Confirmed balance (satoshis) that triggers a sweep.",
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "enabled",
+            "mode",
+            "threshold_sat",
+            "max_fee_rate_sat_vb",
+            "min_anonymity_set"
+          ],
+          "type": "object"
+        },
+        "SweepMode": {
+          "description": "How a future sweep would leave this wallet.",
+          "enum": [
+            "payjoin",
+            "coinjoin"
+          ],
+          "type": "string"
+        }
+      },
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "defaults": {
+          "$ref": "#/$defs/Settings",
+          "description": "Values from the environment, used where nothing is overridden."
+        },
+        "fixed": {
+          "$ref": "#/$defs/FixedSettings"
+        },
+        "operators": {
+          "items": {
+            "$ref": "#/$defs/Operator"
+          },
+          "type": "array"
+        },
+        "overridden": {
+          "description": "Names of the settings changed from the dashboard.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "restart_pending": {
+          "type": "boolean"
+        },
+        "settings": {
+          "$ref": "#/$defs/Settings",
+          "description": "Live values."
+        },
+        "warnings": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "settings",
+        "defaults",
+        "overridden",
+        "fixed",
+        "operators",
+        "restart_pending",
+        "warnings"
+      ],
+      "type": "object"
+    }
+  },
+  {
+    "description": "Operators only: forget settings changed from the dashboard and use the environment values.",
+    "inputSchema": {
+      "properties": {},
+      "type": "object"
+    },
+    "name": "reset_settings",
+    "outputSchema": {
+      "$defs": {
+        "Fallback": {
+          "enum": [
+            "offline",
+            "pool"
+          ],
+          "type": "string"
+        },
+        "FixedSettings": {
+          "description": "What can only be changed on the host.",
+          "properties": {
+            "announce": {
+              "type": "boolean"
+            },
+            "electrum": {
+              "type": "string"
+            },
+            "electrum_transport": {
+              "description": "`tcp`, `tls` (public authorities) or `tls-pinned`.",
+              "type": "string"
+            },
+            "first_address": {
+              "description": "Receive address at index 0, to compare with the wallet.",
+              "type": "string"
+            },
+            "keys": {
+              "description": "The keys and what each is for.",
+              "items": {
+                "$ref": "#/$defs/KeyInfo"
+              },
+              "type": "array"
+            },
+            "network": {
+              "type": "string"
+            },
+            "proxy_locked": {
+              "description": "DEADHOP_PROXY_LOCKED: the proxy can only be changed on the host.",
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "network",
+            "electrum",
+            "electrum_transport",
+            "first_address",
+            "announce",
+            "keys",
+            "proxy_locked"
+          ],
+          "type": "object"
+        },
+        "KeyInfo": {
+          "description": "One of the service's keys and what it is for.",
+          "properties": {
+            "id": {
+              "description": "`invoices` or `admin`.",
+              "type": "string"
+            },
+            "label": {
+              "description": "What the dashboard calls it.",
+              "type": "string"
+            },
+            "operators_only": {
+              "description": "Only operators are served on this key.",
+              "type": "boolean"
+            },
+            "pubkey": {
+              "description": "Hex public key; empty until the service has loaded it.",
+              "type": "string"
+            },
+            "relays": {
+              "description": "The relays it connects to now.",
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "tools": {
+              "description": "The tools this key serves (`*`: all of them).",
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            }
+          },
+          "required": [
+            "id",
+            "label",
+            "pubkey",
+            "tools",
+            "operators_only",
+            "relays"
+          ],
+          "type": "object"
+        },
+        "OfflinePolicy": {
+          "enum": [
+            "kill_switch",
+            "admin_only",
+            "invoicing_only",
+            "open"
+          ],
+          "type": "string"
+        },
+        "Operator": {
+          "description": "An operator key.",
+          "properties": {
+            "added_at": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "label": {
+              "type": "string"
+            },
+            "pubkey": {
+              "description": "Hex public key.",
+              "type": "string"
+            },
+            "source": {
+              "description": "`environment` keys come from DEADHOP_ADMINS and cannot be removed remotely.",
+              "type": "string"
+            }
+          },
+          "required": [
+            "pubkey",
+            "label",
+            "source"
+          ],
+          "type": "object"
+        },
+        "ProxyEntry": {
+          "properties": {
+            "i2p": {
+              "default": false,
+              "type": "boolean"
+            },
+            "id": {
+              "type": "string"
+            },
+            "keys": {
+              "default": [],
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "name": {
+              "type": "string"
+            },
+            "pool": {
+              "default": true,
+              "type": "boolean"
+            },
+            "url": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "id",
+            "name",
+            "url"
+          ],
+          "type": "object"
+        },
+        "ProxyMode": {
+          "enum": [
+            "off",
+            "failover",
+            "round_robin",
+            "chaos"
+          ],
+          "type": "string"
+        },
+        "ProxySettings": {
+          "properties": {
+            "chaos_max_secs": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "chaos_min_secs": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "i2p_registries": {
+              "default": [
+                "http://notbob.i2p/cgi-bin/jump.cgi?q={name}",
+                "http://stats.i2p/cgi-bin/jump.cgi?a={name}"
+              ],
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "list": {
+              "items": {
+                "$ref": "#/$defs/ProxyEntry"
+              },
+              "type": "array"
+            },
+            "mode": {
+              "$ref": "#/$defs/ProxyMode"
+            },
+            "offline": {
+              "$ref": "#/$defs/OfflinePolicy"
+            },
+            "rotate_secs": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "rules": {
+              "default": [],
+              "items": {
+                "$ref": "#/$defs/Rule"
+              },
+              "type": "array"
+            },
+            "transparent": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "list",
+            "mode",
+            "rotate_secs",
+            "chaos_min_secs",
+            "chaos_max_secs",
+            "offline",
+            "transparent"
+          ],
+          "type": "object"
+        },
+        "RouteTo": {
+          "oneOf": [
+            {
+              "enum": [
+                "pool",
+                "direct",
+                "block"
+              ],
+              "type": "string"
+            },
+            {
+              "additionalProperties": false,
+              "properties": {
+                "proxy": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "proxy"
+              ],
+              "type": "object"
+            }
+          ]
+        },
+        "Rule": {
+          "additionalProperties": false,
+          "properties": {
+            "fallback": {
+              "$ref": "#/$defs/Fallback",
+              "default": "offline"
+            },
+            "keys": {
+              "default": [],
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "match": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "name": {
+              "default": "",
+              "type": "string"
+            },
+            "to": {
+              "$ref": "#/$defs/RouteTo"
+            }
+          },
+          "required": [
+            "match",
+            "to"
+          ],
+          "type": "object"
+        },
+        "Settings": {
+          "description": "Every setting that can change while the service runs.",
+          "properties": {
+            "default_expiry_secs": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "late_grace_secs": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "max_amount_sat": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "max_expiry_secs": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "max_invoices_per_day": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "max_open_invoices": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "min_amount_sat": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "min_confirmations": {
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "name": {
+              "type": "string"
+            },
+            "poll_secs": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "pow_bits": {
+              "format": "uint8",
+              "maximum": 255,
+              "minimum": 0,
+              "type": "integer"
+            },
+            "pow_window_secs": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "proxies": {
+              "$ref": "#/$defs/ProxySettings",
+              "description": "Proxies for relay connections only."
+            },
+            "public_invoicing": {
+              "type": "boolean"
+            },
+            "rate_global_per_min": {
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "rate_per_key_per_min": {
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "rate_requests_per_key_per_min": {
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "rate_requests_per_min": {
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "relay_keys": {
+              "additionalProperties": {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "default": {},
+              "description": "Relays that only some keys use: relay url to key ids. A relay not\nlisted here is used by every key.",
+              "type": "object"
+            },
+            "relay_names": {
+              "additionalProperties": {
+                "type": "string"
+              },
+              "default": {},
+              "description": "Names shown for relays (such as the I2P name behind a b32 address):\nrelay url to name. Connections always use the url.",
+              "type": "object"
+            },
+            "relays": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "sweep": {
+              "$ref": "#/$defs/Sweep"
+            }
+          },
+          "required": [
+            "name",
+            "relays",
+            "public_invoicing",
+            "pow_bits",
+            "pow_window_secs",
+            "min_confirmations",
+            "default_expiry_secs",
+            "max_expiry_secs",
+            "min_amount_sat",
+            "max_amount_sat",
+            "max_open_invoices",
+            "max_invoices_per_day",
+            "rate_global_per_min",
+            "rate_per_key_per_min",
+            "rate_requests_per_min",
+            "rate_requests_per_key_per_min",
+            "poll_secs",
+            "late_grace_secs",
+            "proxies",
+            "sweep"
+          ],
+          "type": "object"
+        },
+        "Sweep": {
+          "description": "Policy for moving funds out once they pile up. Stored and reported only:\nthis service holds no spending keys, so a separate signer must carry it\nout. There is intentionally no destination field; the signer owns that.",
+          "properties": {
+            "enabled": {
+              "description": "Whether the policy is active.",
+              "type": "boolean"
+            },
+            "max_fee_rate_sat_vb": {
+              "description": "Highest fee rate a sweep may pay, in sat/vB.",
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "min_anonymity_set": {
+              "description": "Smallest acceptable CoinJoin anonymity set.",
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "mode": {
+              "$ref": "#/$defs/SweepMode",
+              "description": "PayJoin or CoinJoin."
+            },
+            "threshold_sat": {
+              "description": "Confirmed balance (satoshis) that triggers a sweep.",
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "enabled",
+            "mode",
+            "threshold_sat",
+            "max_fee_rate_sat_vb",
+            "min_anonymity_set"
+          ],
+          "type": "object"
+        },
+        "SweepMode": {
+          "description": "How a future sweep would leave this wallet.",
+          "enum": [
+            "payjoin",
+            "coinjoin"
+          ],
+          "type": "string"
+        }
+      },
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "defaults": {
+          "$ref": "#/$defs/Settings",
+          "description": "Values from the environment, used where nothing is overridden."
+        },
+        "fixed": {
+          "$ref": "#/$defs/FixedSettings"
+        },
+        "operators": {
+          "items": {
+            "$ref": "#/$defs/Operator"
+          },
+          "type": "array"
+        },
+        "overridden": {
+          "description": "Names of the settings changed from the dashboard.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "restart_pending": {
+          "type": "boolean"
+        },
+        "settings": {
+          "$ref": "#/$defs/Settings",
+          "description": "Live values."
+        },
+        "warnings": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "settings",
+        "defaults",
+        "overridden",
+        "fixed",
+        "operators",
+        "restart_pending",
+        "warnings"
+      ],
+      "type": "object"
+    }
+  },
+  {
+    "description": "Operators only: look up an I2P name (such as example.i2p) by asking every configured I2P name registry through the I2P router proxy; returns its .b32.i2p address and which registries agree, disagree or do not know it.",
+    "inputSchema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "description": "A lowercase `.i2p` name such as `example.i2p` (not a `.b32.i2p` address).",
+          "type": "string"
+        }
+      },
+      "required": [
+        "name"
+      ],
+      "type": "object"
+    },
+    "name": "resolve_i2p_name",
+    "outputSchema": {
+      "$defs": {
+        "Disagreement": {
+          "description": "A registry that gave another address than the chosen one.",
+          "properties": {
+            "address": {
+              "type": "string"
+            },
+            "registry": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "registry",
+            "address"
+          ],
+          "type": "object"
+        }
+      },
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "address": {
+          "description": "The `.b32.i2p` address, from the first registry (in list order) that knew the name.",
+          "type": "string"
+        },
+        "agreeing": {
+          "description": "Every registry that gave this address, `registry` included.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "disagreeing": {
+          "description": "Registries that gave another address.",
+          "items": {
+            "$ref": "#/$defs/Disagreement"
+          },
+          "type": "array"
+        },
+        "name": {
+          "type": "string"
+        },
+        "registry": {
+          "description": "That registry.",
+          "type": "string"
+        },
+        "unknown": {
+          "description": "Registries that answered without an address.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "unreachable": {
+          "description": "Registries that could not be reached or did not answer in time.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "name",
+        "address",
+        "registry",
+        "agreeing",
+        "disagreeing",
+        "unknown",
+        "unreachable"
+      ],
+      "type": "object"
+    }
+  },
+  {
+    "description": "Operators only: change settings at runtime. A new relay list restarts the relay connections.",
+    "inputSchema": {
+      "$defs": {
+        "Fallback": {
+          "enum": [
+            "offline",
+            "pool"
+          ],
+          "type": "string"
+        },
+        "OfflinePolicy": {
+          "enum": [
+            "kill_switch",
+            "admin_only",
+            "invoicing_only",
+            "open"
+          ],
+          "type": "string"
+        },
+        "ProxyEntryInput": {
+          "additionalProperties": false,
+          "properties": {
+            "i2p": {
+              "type": [
+                "boolean",
+                "null"
+              ]
+            },
+            "id": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "keys": {
+              "items": {
+                "type": "string"
+              },
+              "type": [
+                "array",
+                "null"
+              ]
+            },
+            "name": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "pool": {
+              "type": [
+                "boolean",
+                "null"
+              ]
+            },
+            "url": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "url"
+          ],
+          "type": "object"
+        },
+        "ProxyMode": {
+          "enum": [
+            "off",
+            "failover",
+            "round_robin",
+            "chaos"
+          ],
+          "type": "string"
+        },
+        "ProxyPatch": {
+          "additionalProperties": false,
+          "properties": {
+            "chaos_max_secs": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "chaos_min_secs": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "i2p_registries": {
+              "items": {
+                "type": "string"
+              },
+              "type": [
+                "array",
+                "null"
+              ]
+            },
+            "list": {
+              "items": {
+                "$ref": "#/$defs/ProxyEntryInput"
+              },
+              "type": [
+                "array",
+                "null"
+              ]
+            },
+            "mode": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/ProxyMode"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "offline": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/OfflinePolicy"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "rotate_secs": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "rules": {
+              "items": {
+                "$ref": "#/$defs/Rule"
+              },
+              "type": [
+                "array",
+                "null"
+              ]
+            },
+            "transparent": {
+              "type": [
+                "boolean",
+                "null"
+              ]
+            }
+          },
+          "type": "object"
+        },
+        "RouteTo": {
+          "oneOf": [
+            {
+              "enum": [
+                "pool",
+                "direct",
+                "block"
+              ],
+              "type": "string"
+            },
+            {
+              "additionalProperties": false,
+              "properties": {
+                "proxy": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "proxy"
+              ],
+              "type": "object"
+            }
+          ]
+        },
+        "Rule": {
+          "additionalProperties": false,
+          "properties": {
+            "fallback": {
+              "$ref": "#/$defs/Fallback",
+              "default": "offline"
+            },
+            "keys": {
+              "default": [],
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "match": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "name": {
+              "default": "",
+              "type": "string"
+            },
+            "to": {
+              "$ref": "#/$defs/RouteTo"
+            }
+          },
+          "required": [
+            "match",
+            "to"
+          ],
+          "type": "object"
+        },
+        "SettingsPatch": {
+          "additionalProperties": false,
+          "description": "Partial update of [`Settings`]; also the stored form of the overrides.",
+          "properties": {
+            "default_expiry_secs": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "late_grace_secs": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "max_amount_sat": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "max_expiry_secs": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "max_invoices_per_day": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "max_open_invoices": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "min_amount_sat": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "min_confirmations": {
+              "format": "uint32",
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "name": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "poll_secs": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "pow_bits": {
+              "format": "uint8",
+              "maximum": 255,
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "pow_window_secs": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "proxies": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/ProxyPatch"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "proxy": {
+              "description": "Old form of a single proxy url (empty turns it off); read for\nsettings saved before there was a list, and turned into one entry.",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "public_invoicing": {
+              "type": [
+                "boolean",
+                "null"
+              ]
+            },
+            "rate_global_per_min": {
+              "format": "uint32",
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "rate_per_key_per_min": {
+              "format": "uint32",
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "rate_requests_per_key_per_min": {
+              "format": "uint32",
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "rate_requests_per_min": {
+              "format": "uint32",
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "relay_keys": {
+              "additionalProperties": {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "description": "Replaces the whole map of relays used by only some keys.",
+              "type": [
+                "object",
+                "null"
+              ]
+            },
+            "relay_names": {
+              "additionalProperties": {
+                "type": "string"
+              },
+              "description": "Replaces the whole map of relay names.",
+              "type": [
+                "object",
+                "null"
+              ]
+            },
+            "relays": {
+              "items": {
+                "type": "string"
+              },
+              "type": [
+                "array",
+                "null"
+              ]
+            },
+            "sweep": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/SweepPatch"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "type": "object"
+        },
+        "SweepMode": {
+          "description": "How a future sweep would leave this wallet.",
+          "enum": [
+            "payjoin",
+            "coinjoin"
+          ],
+          "type": "string"
+        },
+        "SweepPatch": {
+          "additionalProperties": false,
+          "description": "Partial update of [`Sweep`].",
+          "properties": {
+            "enabled": {
+              "type": [
+                "boolean",
+                "null"
+              ]
+            },
+            "max_fee_rate_sat_vb": {
+              "format": "uint32",
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "min_anonymity_set": {
+              "format": "uint32",
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "mode": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/SweepMode"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "threshold_sat": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            }
+          },
+          "type": "object"
+        }
+      },
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "patch": {
+          "$ref": "#/$defs/SettingsPatch",
+          "description": "Only the settings to change."
+        }
+      },
+      "required": [
+        "patch"
+      ],
+      "type": "object"
+    },
+    "name": "update_settings",
+    "outputSchema": {
+      "$defs": {
+        "Fallback": {
+          "enum": [
+            "offline",
+            "pool"
+          ],
+          "type": "string"
+        },
+        "FixedSettings": {
+          "description": "What can only be changed on the host.",
+          "properties": {
+            "announce": {
+              "type": "boolean"
+            },
+            "electrum": {
+              "type": "string"
+            },
+            "electrum_transport": {
+              "description": "`tcp`, `tls` (public authorities) or `tls-pinned`.",
+              "type": "string"
+            },
+            "first_address": {
+              "description": "Receive address at index 0, to compare with the wallet.",
+              "type": "string"
+            },
+            "keys": {
+              "description": "The keys and what each is for.",
+              "items": {
+                "$ref": "#/$defs/KeyInfo"
+              },
+              "type": "array"
+            },
+            "network": {
+              "type": "string"
+            },
+            "proxy_locked": {
+              "description": "DEADHOP_PROXY_LOCKED: the proxy can only be changed on the host.",
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "network",
+            "electrum",
+            "electrum_transport",
+            "first_address",
+            "announce",
+            "keys",
+            "proxy_locked"
+          ],
+          "type": "object"
+        },
+        "KeyInfo": {
+          "description": "One of the service's keys and what it is for.",
+          "properties": {
+            "id": {
+              "description": "`invoices` or `admin`.",
+              "type": "string"
+            },
+            "label": {
+              "description": "What the dashboard calls it.",
+              "type": "string"
+            },
+            "operators_only": {
+              "description": "Only operators are served on this key.",
+              "type": "boolean"
+            },
+            "pubkey": {
+              "description": "Hex public key; empty until the service has loaded it.",
+              "type": "string"
+            },
+            "relays": {
+              "description": "The relays it connects to now.",
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "tools": {
+              "description": "The tools this key serves (`*`: all of them).",
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            }
+          },
+          "required": [
+            "id",
+            "label",
+            "pubkey",
+            "tools",
+            "operators_only",
+            "relays"
+          ],
+          "type": "object"
+        },
+        "OfflinePolicy": {
+          "enum": [
+            "kill_switch",
+            "admin_only",
+            "invoicing_only",
+            "open"
+          ],
+          "type": "string"
+        },
+        "Operator": {
+          "description": "An operator key.",
+          "properties": {
+            "added_at": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "label": {
+              "type": "string"
+            },
+            "pubkey": {
+              "description": "Hex public key.",
+              "type": "string"
+            },
+            "source": {
+              "description": "`environment` keys come from DEADHOP_ADMINS and cannot be removed remotely.",
+              "type": "string"
+            }
+          },
+          "required": [
+            "pubkey",
+            "label",
+            "source"
+          ],
+          "type": "object"
+        },
+        "ProxyEntry": {
+          "properties": {
+            "i2p": {
+              "default": false,
+              "type": "boolean"
+            },
+            "id": {
+              "type": "string"
+            },
+            "keys": {
+              "default": [],
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "name": {
+              "type": "string"
+            },
+            "pool": {
+              "default": true,
+              "type": "boolean"
+            },
+            "url": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "id",
+            "name",
+            "url"
+          ],
+          "type": "object"
+        },
+        "ProxyMode": {
+          "enum": [
+            "off",
+            "failover",
+            "round_robin",
+            "chaos"
+          ],
+          "type": "string"
+        },
+        "ProxySettings": {
+          "properties": {
+            "chaos_max_secs": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "chaos_min_secs": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "i2p_registries": {
+              "default": [
+                "http://notbob.i2p/cgi-bin/jump.cgi?q={name}",
+                "http://stats.i2p/cgi-bin/jump.cgi?a={name}"
+              ],
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "list": {
+              "items": {
+                "$ref": "#/$defs/ProxyEntry"
+              },
+              "type": "array"
+            },
+            "mode": {
+              "$ref": "#/$defs/ProxyMode"
+            },
+            "offline": {
+              "$ref": "#/$defs/OfflinePolicy"
+            },
+            "rotate_secs": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "rules": {
+              "default": [],
+              "items": {
+                "$ref": "#/$defs/Rule"
+              },
+              "type": "array"
+            },
+            "transparent": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "list",
+            "mode",
+            "rotate_secs",
+            "chaos_min_secs",
+            "chaos_max_secs",
+            "offline",
+            "transparent"
+          ],
+          "type": "object"
+        },
+        "RouteTo": {
+          "oneOf": [
+            {
+              "enum": [
+                "pool",
+                "direct",
+                "block"
+              ],
+              "type": "string"
+            },
+            {
+              "additionalProperties": false,
+              "properties": {
+                "proxy": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "proxy"
+              ],
+              "type": "object"
+            }
+          ]
+        },
+        "Rule": {
+          "additionalProperties": false,
+          "properties": {
+            "fallback": {
+              "$ref": "#/$defs/Fallback",
+              "default": "offline"
+            },
+            "keys": {
+              "default": [],
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "match": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "name": {
+              "default": "",
+              "type": "string"
+            },
+            "to": {
+              "$ref": "#/$defs/RouteTo"
+            }
+          },
+          "required": [
+            "match",
+            "to"
+          ],
+          "type": "object"
+        },
+        "Settings": {
+          "description": "Every setting that can change while the service runs.",
+          "properties": {
+            "default_expiry_secs": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "late_grace_secs": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "max_amount_sat": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "max_expiry_secs": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "max_invoices_per_day": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "max_open_invoices": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "min_amount_sat": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "min_confirmations": {
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "name": {
+              "type": "string"
+            },
+            "poll_secs": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "pow_bits": {
+              "format": "uint8",
+              "maximum": 255,
+              "minimum": 0,
+              "type": "integer"
+            },
+            "pow_window_secs": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "proxies": {
+              "$ref": "#/$defs/ProxySettings",
+              "description": "Proxies for relay connections only."
+            },
+            "public_invoicing": {
+              "type": "boolean"
+            },
+            "rate_global_per_min": {
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "rate_per_key_per_min": {
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "rate_requests_per_key_per_min": {
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "rate_requests_per_min": {
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "relay_keys": {
+              "additionalProperties": {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "default": {},
+              "description": "Relays that only some keys use: relay url to key ids. A relay not\nlisted here is used by every key.",
+              "type": "object"
+            },
+            "relay_names": {
+              "additionalProperties": {
+                "type": "string"
+              },
+              "default": {},
+              "description": "Names shown for relays (such as the I2P name behind a b32 address):\nrelay url to name. Connections always use the url.",
+              "type": "object"
+            },
+            "relays": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "sweep": {
+              "$ref": "#/$defs/Sweep"
+            }
+          },
+          "required": [
+            "name",
+            "relays",
+            "public_invoicing",
+            "pow_bits",
+            "pow_window_secs",
+            "min_confirmations",
+            "default_expiry_secs",
+            "max_expiry_secs",
+            "min_amount_sat",
+            "max_amount_sat",
+            "max_open_invoices",
+            "max_invoices_per_day",
+            "rate_global_per_min",
+            "rate_per_key_per_min",
+            "rate_requests_per_min",
+            "rate_requests_per_key_per_min",
+            "poll_secs",
+            "late_grace_secs",
+            "proxies",
+            "sweep"
+          ],
+          "type": "object"
+        },
+        "Sweep": {
+          "description": "Policy for moving funds out once they pile up. Stored and reported only:\nthis service holds no spending keys, so a separate signer must carry it\nout. There is intentionally no destination field; the signer owns that.",
+          "properties": {
+            "enabled": {
+              "description": "Whether the policy is active.",
+              "type": "boolean"
+            },
+            "max_fee_rate_sat_vb": {
+              "description": "Highest fee rate a sweep may pay, in sat/vB.",
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "min_anonymity_set": {
+              "description": "Smallest acceptable CoinJoin anonymity set.",
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "mode": {
+              "$ref": "#/$defs/SweepMode",
+              "description": "PayJoin or CoinJoin."
+            },
+            "threshold_sat": {
+              "description": "Confirmed balance (satoshis) that triggers a sweep.",
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "enabled",
+            "mode",
+            "threshold_sat",
+            "max_fee_rate_sat_vb",
+            "min_anonymity_set"
+          ],
+          "type": "object"
+        },
+        "SweepMode": {
+          "description": "How a future sweep would leave this wallet.",
+          "enum": [
+            "payjoin",
+            "coinjoin"
+          ],
+          "type": "string"
+        }
+      },
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "defaults": {
+          "$ref": "#/$defs/Settings",
+          "description": "Values from the environment, used where nothing is overridden."
+        },
+        "fixed": {
+          "$ref": "#/$defs/FixedSettings"
+        },
+        "operators": {
+          "items": {
+            "$ref": "#/$defs/Operator"
+          },
+          "type": "array"
+        },
+        "overridden": {
+          "description": "Names of the settings changed from the dashboard.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "restart_pending": {
+          "type": "boolean"
+        },
+        "settings": {
+          "$ref": "#/$defs/Settings",
+          "description": "Live values."
+        },
+        "warnings": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "settings",
+        "defaults",
+        "overridden",
+        "fixed",
+        "operators",
+        "restart_pending",
+        "warnings"
+      ],
+      "type": "object"
+    }
+  },
+  {
+    "description": "Operators only: delete every invoice after taking a backup. Requires confirm = WIPE.",
+    "inputSchema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "confirm": {
+          "description": "Must be exactly `WIPE`.",
+          "type": "string"
+        },
+        "force": {
+          "default": false,
+          "description": "Wipe even though customers may still pay some invoices.",
+          "type": "boolean"
+        },
+        "include_settings": {
+          "default": false,
+          "description": "Also forget settings changed from the dashboard.",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "confirm"
+      ],
+      "type": "object"
+    },
+    "name": "wipe_database",
+    "outputSchema": {
+      "$defs": {
+        "Backup": {
+          "description": "A database backup on the service host.",
+          "properties": {
+            "created_at": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "file": {
+              "description": "File name inside `<data dir>/backups`.",
+              "type": "string"
+            },
+            "size_bytes": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "file",
+            "size_bytes",
+            "created_at"
+          ],
+          "type": "object"
+        }
+      },
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "backup": {
+          "$ref": "#/$defs/Backup",
+          "description": "Backup taken just before wiping."
+        },
+        "deleted": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "deleted",
+        "backup"
+      ],
+      "type": "object"
+    }
+  }
+]

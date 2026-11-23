@@ -87,9 +87,6 @@ pub fn host_port(relay: &str) -> Option<(String, u16)> {
         .trim_start_matches('[')
         .trim_end_matches(']')
         .to_ascii_lowercase();
-    if host.is_empty() {
-        return None;
-    }
     Some((host, url.port_or_known_default()?))
 }
 
@@ -466,6 +463,15 @@ mod tests {
             let (pattern, relay, want) = (c[0].as_str().unwrap(), c[1].as_str().unwrap(), c[2].as_bool().unwrap());
             assert_eq!(matches(pattern, relay), want, "{pattern} vs {relay}");
         }
+    }
+
+    #[test]
+    fn odd_addresses_give_no_host_and_unclosed_brackets_no_port() {
+        // The url crate gives no host at all, never an empty one.
+        assert_eq!(host_port("foo:///x"), None);
+        assert_eq!(host_port("[::1]:80"), None);
+        assert_eq!(host_port("ws://[::1]:80"), Some(("::1".into(), 80)));
+        assert_eq!(split_port("[::1"), ("[::1", None));
     }
 
     #[test]

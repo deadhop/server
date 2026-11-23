@@ -243,6 +243,16 @@ pub enum Answer {
     Unreachable(String),
 }
 
+impl Answer {
+    /// Why a registry gave no address; `None` if it did.
+    fn why(&self) -> Option<&str> {
+        match self {
+            Answer::Found(_) => None,
+            Answer::Unknown(w) | Answer::Unreachable(w) => Some(w),
+        }
+    }
+}
+
 /// Ask one registry, through the I2P router, for `name`.
 pub async fn ask(proxy: &ProxyTransport, template: &str, name: &str, secs: u64) -> Answer {
     let url = fill(template, name);
@@ -334,10 +344,7 @@ pub fn summarize(name: &str, registries: &[String], answers: &[Answer]) -> Resul
         let why: Vec<String> = registries
             .iter()
             .zip(answers)
-            .map(|(r, a)| match a {
-                Answer::Unknown(w) | Answer::Unreachable(w) => format!("{r}: {w}"),
-                Answer::Found(_) => unreachable!("no registry found the name"),
-            })
+            .filter_map(|(r, a)| a.why().map(|w| format!("{r}: {w}")))
             .collect();
         let all_unreachable = answers.iter().all(|a| matches!(a, Answer::Unreachable(_)));
         let lead = if all_unreachable {
@@ -569,11 +576,8 @@ pub(crate) mod tests {
 
     async fn read_head(s: &mut tokio::net::TcpStream) -> String {
         let mut head = Vec::new();
-        while !head.ends_with(b"\r\n\r\n") {
-            let mut b = [0u8; 1];
-            if s.read(&mut b).await.unwrap_or(0) == 0 {
-                break;
-            }
+        let mut b = [0u8; 1];
+        while !head.ends_with(b"\r\n\r\n") && s.read(&mut b).await.unwrap_or(0) == 1 {
             head.push(b[0]);
         }
         String::from_utf8_lossy(&head).into_owned()
@@ -638,22 +642,77 @@ pub(crate) mod tests {
         task.abort();
     }
 
-    /// Look a real name up through a real I2P router, with the default
-    /// registries: `DEADHOP_TEST_I2P_PROXY=http://host:4444 cargo test
-    /// live_i2p_lookup -- --ignored --nocapture`.
+    #[test]
+    fn percent_escapes_and_chunks_are_undone() {
+        assert_eq!(helper_value(b"i2paddresshelper=a%3Db%7E").as_deref(), Some("a=b~"));
+        assert_eq!(helper_value(b"i2paddresshelper=ab%3"), None);
+        // A chunk that claims more than arrives is kept as far as it goes.
+        assert_eq!(dechunk(b"a\r\nabcd"), b"abcd");
+        assert_eq!(dechunk(b"4\r\nabcd\r\n0\r\n\r\n"), b"abcd");
+        // What cannot be parsed is kept as is.
+        assert_eq!(dechunk(b"zz\r\nabcd"), b"zz\r\nabcd");
+    }
+
+    #[test]
+    fn a_failed_answer_says_why() {
+        assert_eq!(Answer::Found("a".into()).why(), None);
+        assert_eq!(Answer::Unknown("u".into()).why(), Some("u"));
+        assert_eq!(Answer::Unreachable("x".into()).why(), Some("x"));
+    }
+
     #[tokio::test]
-    #[ignore]
-    async fn live_i2p_lookup() {
-        let url = std::env::var("DEADHOP_TEST_I2P_PROXY").expect("DEADHOP_TEST_I2P_PROXY is set");
-        let proxy = ProxyTransport::new(crate::relay::parse_proxy(&url).unwrap().unwrap());
-        let regs = default_registries();
-        let answers =
-            futures_util::future::join_all(regs.iter().map(|r| ask(&proxy, r, "nostr-not.i2p", LOOKUP_SECS))).await;
-        for (r, a) in regs.iter().zip(&answers) {
-            println!("{r}: {a:?}");
-        }
-        let out = summarize("nostr-not.i2p", &regs, &answers).unwrap();
-        println!("{}", serde_json::to_string_pretty(&out).unwrap());
-        assert_eq!(out.address, NOSTR_NOT_B32);
+    async fn odd_registry_replies_are_told_apart() {
+        let pages: HashMap<String, String> = [
+            (
+                "bad.i2p".to_string(),
+                "HTTP/1.1 200 OK\r\n\r\n?i2paddresshelper=AAAA".to_string(),
+            ),
+            ("empty.i2p".to_string(), String::new()),
+        ]
+        .into();
+        let (port, _seen, task) = fake_router(pages).await;
+        let proxy = ProxyTransport::new(
+            crate::relay::parse_proxy(&format!("http://127.0.0.1:{port}"))
+                .unwrap()
+                .unwrap(),
+        );
+        assert_eq!(
+            ask(&proxy, "ftp://x.i2p/{name}", "x.i2p", 5).await,
+            Answer::Unreachable("not an http:// url".into())
+        );
+        let bad = ask(&proxy, "http://bad.i2p", "x.i2p", 5).await;
+        assert!(
+            matches!(&bad, Answer::Unknown(why) if why.starts_with("bad address helper")),
+            "{bad:?}"
+        );
+        assert_eq!(
+            ask(&proxy, "http://empty.i2p", "x.i2p", 5).await,
+            Answer::Unreachable("empty reply".into())
+        );
+        task.abort();
+    }
+
+    #[tokio::test]
+    async fn a_silent_registry_times_out() {
+        let l = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = l.local_addr().unwrap().port();
+        // Answers the CONNECT, then says nothing until the client gives up.
+        let router = tokio::spawn(async move {
+            let (mut s, _) = l.accept().await.unwrap();
+            let _ = read_head(&mut s).await;
+            let _ = s.write_all(b"HTTP/1.1 200 Connection established\r\n\r\n").await;
+            let mut rest = Vec::new();
+            let _ = s.read_to_end(&mut rest).await;
+        });
+        let proxy = ProxyTransport::new(
+            crate::relay::parse_proxy(&format!("http://127.0.0.1:{port}"))
+                .unwrap()
+                .unwrap(),
+        );
+        assert_eq!(
+            ask(&proxy, "http://slow.i2p/{name}", "x.i2p", 1).await,
+            Answer::Unreachable("no answer within 1 s".into())
+        );
+        router.await.unwrap();
     }
 }

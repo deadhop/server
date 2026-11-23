@@ -496,4 +496,14 @@ mod tests {
             assert!(!e.message.contains("10.1.2.3"));
         }
     }
+
+    #[test]
+    fn tools_list_snapshot() {
+        let mut tools = serde_json::to_value(PayServer::tool_router().list_all()).unwrap();
+        tools
+            .as_array_mut()
+            .unwrap()
+            .sort_by_key(|t| t["name"].as_str().unwrap().to_string());
+        crate::snapshot::check("tools_list", &tools);
+    }
 }

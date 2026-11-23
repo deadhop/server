@@ -1,0 +1,166 @@
+{
+  "check_proxy: bad address": {
+    "code": "invalid_params",
+    "public_message": "invalid parameters: proxy: scheme must be socks5://, https:// or http://"
+  },
+  "check_proxy: id and proxy": {
+    "code": "invalid_params",
+    "public_message": "invalid parameters: give either id or proxy, not both"
+  },
+  "check_proxy: locked, address not listed": {
+    "code": "invalid_params",
+    "public_message": "invalid parameters: the proxies are locked on the host (DEADHOP_PROXY_LOCKED); only the listed ones can be tested"
+  },
+  "check_proxy: no relay goes through it": {
+    "code": "invalid_params",
+    "public_message": "invalid parameters: no relay goes through this proxy yet: add a rule that uses it, or put it in the default route"
+  },
+  "check_proxy: not an operator": {
+    "code": "unauthorized",
+    "public_message": "not authorized"
+  },
+  "check_proxy: one at a time": {
+    "code": "rate_limited",
+    "public_message": "rate limit exceeded"
+  },
+  "check_proxy: per-minute budget": {
+    "code": "rate_limited",
+    "public_message": "rate limit exceeded"
+  },
+  "check_proxy: unknown id": {
+    "code": "invalid_params",
+    "public_message": "invalid parameters: there is no proxy with that id"
+  },
+  "check_relays: not an operator": {
+    "code": "unauthorized",
+    "public_message": "not authorized"
+  },
+  "check_relays: per-minute budget": {
+    "code": "rate_limited",
+    "public_message": "rate limit exceeded"
+  },
+  "get_privacy_audit: not an operator": {
+    "code": "unauthorized",
+    "public_message": "not authorized"
+  },
+  "get_relay_history: bad window": {
+    "code": "invalid_params",
+    "public_message": "invalid parameters: window must be 15m, 1h, 12h, 1d or 1w"
+  },
+  "get_relay_history: not an operator": {
+    "code": "unauthorized",
+    "public_message": "not authorized"
+  },
+  "resolve_i2p_name: bad name": {
+    "code": "invalid_params",
+    "public_message": "invalid parameters: the name must be a lowercase .i2p name (not a .b32.i2p address) of at most 100 characters"
+  },
+  "resolve_i2p_name: locked": {
+    "code": "invalid_params",
+    "public_message": "invalid parameters: the proxies are locked on the host (DEADHOP_PROXY_LOCKED), so I2P names cannot be looked up"
+  },
+  "resolve_i2p_name: no I2P router": {
+    "code": "invalid_params",
+    "public_message": "invalid parameters: there is no I2P router proxy: add the router's http:// proxy as an I2P proxy first"
+  },
+  "resolve_i2p_name: no registries": {
+    "code": "invalid_params",
+    "public_message": "invalid parameters: there are no I2P name registries, so lookups are off"
+  },
+  "resolve_i2p_name: not an operator": {
+    "code": "unauthorized",
+    "public_message": "not authorized"
+  },
+  "resolve_i2p_name: one at a time": {
+    "code": "rate_limited",
+    "public_message": "rate limit exceeded"
+  },
+  "update_settings: bad registry": {
+    "code": "invalid_params",
+    "public_message": "invalid parameters: I2P registry 'http://example.com/?q={name}' must name a lowercase .i2p host with no port or user name"
+  },
+  "update_settings: i2p proxy not http": {
+    "code": "invalid_params",
+    "public_message": "invalid parameters: proxy: an I2P router proxy must be its http:// proxy"
+  },
+  "update_settings: no relays": {
+    "code": "invalid_params",
+    "public_message": "invalid parameters: no relay is assigned to the public invoices key, which could then not be reached"
+  },
+  "update_settings: not an operator": {
+    "code": "unauthorized",
+    "public_message": "not authorized"
+  },
+  "update_settings: proxy address twice": {
+    "code": "invalid_params",
+    "public_message": "invalid parameters: proxy: the same address is listed twice"
+  },
+  "update_settings: proxy bad id": {
+    "code": "invalid_params",
+    "public_message": "invalid parameters: proxy: bad id"
+  },
+  "update_settings: proxy bad scheme": {
+    "code": "invalid_params",
+    "public_message": "invalid parameters: proxy: scheme must be socks5://, https:// or http://"
+  },
+  "update_settings: proxy empty address": {
+    "code": "invalid_params",
+    "public_message": "invalid parameters: proxy: must be a short url without spaces"
+  },
+  "update_settings: proxy id twice": {
+    "code": "invalid_params",
+    "public_message": "invalid parameters: proxy: the same id is used twice"
+  },
+  "update_settings: proxy name too long": {
+    "code": "invalid_params",
+    "public_message": "invalid parameters: proxy name must be at most 60 visible characters"
+  },
+  "update_settings: registry twice": {
+    "code": "invalid_params",
+    "public_message": "invalid parameters: I2P registry: listed twice"
+  },
+  "update_settings: relay name for an unlisted relay": {
+    "code": "invalid_params",
+    "public_message": "invalid parameters: relay_names: 'wss://' is not a listed relay"
+  },
+  "update_settings: relay not ws": {
+    "code": "invalid_params",
+    "public_message": "invalid parameters: relay 'https://relay.example' must be a ws:// or wss:// url"
+  },
+  "update_settings: relay with a password": {
+    "code": "invalid_params",
+    "public_message": "invalid parameters: relay 'wss://user:pw@relay.example' must not contain a user name or password"
+  },
+  "update_settings: relay with spaces": {
+    "code": "invalid_params",
+    "public_message": "invalid parameters: relay urls must be short and contain no spaces"
+  },
+  "update_settings: rotate interval out of range": {
+    "code": "invalid_params",
+    "public_message": "invalid parameters: proxies.rotate_secs must be between 60 and 604800"
+  },
+  "update_settings: rule names no proxy": {
+    "code": "invalid_params",
+    "public_message": "invalid parameters: rule 1 points at a proxy that is not in the list; change the rule first"
+  },
+  "update_settings: rule pattern empty": {
+    "code": "invalid_params",
+    "public_message": "invalid parameters: rule 1: a pattern is empty"
+  },
+  "update_settings: too many proxies": {
+    "code": "invalid_params",
+    "public_message": "invalid parameters: at most 8 proxies"
+  },
+  "update_settings: too many registries": {
+    "code": "invalid_params",
+    "public_message": "invalid parameters: at most 4 I2P name registries"
+  },
+  "update_settings: too many relays": {
+    "code": "invalid_params",
+    "public_message": "invalid parameters: between 1 and 8 relays are required"
+  },
+  "update_settings: two i2p proxies": {
+    "code": "invalid_params",
+    "public_message": "invalid parameters: proxy: at most one I2P router proxy"
+  }
+}

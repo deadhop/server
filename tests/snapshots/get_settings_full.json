@@ -1,0 +1,241 @@
+{
+  "defaults": {
+    "default_expiry_secs": 3600,
+    "late_grace_secs": 86400,
+    "max_amount_sat": 100000000,
+    "max_expiry_secs": 86400,
+    "max_invoices_per_day": 2000,
+    "max_open_invoices": 500,
+    "min_amount_sat": 1000,
+    "min_confirmations": 2,
+    "name": "deadhop",
+    "poll_secs": 10,
+    "pow_bits": 4,
+    "pow_window_secs": 600,
+    "proxies": {
+      "chaos_max_secs": 900,
+      "chaos_min_secs": 300,
+      "i2p_registries": [
+        "http://notbob.i2p/cgi-bin/jump.cgi?q={name}",
+        "http://stats.i2p/cgi-bin/jump.cgi?a={name}"
+      ],
+      "list": [],
+      "mode": "off",
+      "offline": "kill_switch",
+      "rotate_secs": 3600,
+      "rules": [],
+      "transparent": false
+    },
+    "public_invoicing": true,
+    "rate_global_per_min": 30,
+    "rate_per_key_per_min": 6,
+    "rate_requests_per_key_per_min": 120,
+    "rate_requests_per_min": 1200,
+    "relay_keys": {},
+    "relay_names": {},
+    "relays": [
+      "ws://127.0.0.1:7777",
+      "wss://relay.example"
+    ],
+    "sweep": {
+      "enabled": false,
+      "max_fee_rate_sat_vb": 20,
+      "min_anonymity_set": 5,
+      "mode": "payjoin",
+      "threshold_sat": 1000000
+    }
+  },
+  "fixed": {
+    "announce": false,
+    "electrum": "127.0.0.1:50001",
+    "electrum_transport": "tcp",
+    "first_address": "bcrt1qp5wfcq48h6d63wyy9qz0awtpfqwwv4sm4gc9mc",
+    "keys": [
+      {
+        "id": "invoices",
+        "label": "Public invoices",
+        "operators_only": false,
+        "pubkey": "",
+        "relays": [
+          "wss://relay-a.example",
+          "wss://relay-b.example",
+          "ws://abcdefghij.onion",
+          "ws://nostr-not.i2p"
+        ],
+        "tools": [
+          "get_info",
+          "create_invoice",
+          "get_invoice"
+        ]
+      },
+      {
+        "id": "admin",
+        "label": "Administration",
+        "operators_only": true,
+        "pubkey": "",
+        "relays": [
+          "wss://relay-a.example",
+          "wss://relay-b.example",
+          "ws://abcdefghij.onion",
+          "ws://nostr-not.i2p"
+        ],
+        "tools": [
+          "*"
+        ]
+      }
+    ],
+    "network": "regtest",
+    "proxy_locked": false
+  },
+  "operators": [
+    {
+      "added_at": null,
+      "label": "",
+      "pubkey": "<operator>",
+      "source": "environment"
+    }
+  ],
+  "overridden": [
+    "name",
+    "relays",
+    "relay_names",
+    "proxies.list",
+    "proxies.mode",
+    "proxies.rotate_secs",
+    "proxies.chaos_min_secs",
+    "proxies.chaos_max_secs",
+    "proxies.offline",
+    "proxies.rules",
+    "proxies.i2p_registries"
+  ],
+  "restart_pending": true,
+  "settings": {
+    "default_expiry_secs": 3600,
+    "late_grace_secs": 86400,
+    "max_amount_sat": 100000000,
+    "max_expiry_secs": 86400,
+    "max_invoices_per_day": 2000,
+    "max_open_invoices": 500,
+    "min_amount_sat": 1000,
+    "min_confirmations": 2,
+    "name": "snapshot service",
+    "poll_secs": 10,
+    "pow_bits": 4,
+    "pow_window_secs": 600,
+    "proxies": {
+      "chaos_max_secs": 600,
+      "chaos_min_secs": 120,
+      "i2p_registries": [
+        "http://notbob.i2p/cgi-bin/jump.cgi?q={name}",
+        "http://reg.i2p/?a={name}"
+      ],
+      "list": [
+        {
+          "i2p": false,
+          "id": "tor",
+          "keys": [],
+          "name": "Tor",
+          "pool": true,
+          "url": "socks5://127.0.0.1:9050"
+        },
+        {
+          "i2p": false,
+          "id": "vpn",
+          "keys": [],
+          "name": "VPN",
+          "pool": false,
+          "url": "socks5://user:***@10.8.0.1:1080"
+        },
+        {
+          "i2p": true,
+          "id": "i2p",
+          "keys": [],
+          "name": "I2P router",
+          "pool": false,
+          "url": "http://127.0.0.1:4444"
+        }
+      ],
+      "mode": "round_robin",
+      "offline": "kill_switch",
+      "rotate_secs": 1800,
+      "rules": [
+        {
+          "fallback": "offline",
+          "keys": [],
+          "match": [
+            "*.onion"
+          ],
+          "name": "onions",
+          "to": {
+            "proxy": "tor"
+          }
+        },
+        {
+          "fallback": "offline",
+          "keys": [],
+          "match": [
+            "*.i2p"
+          ],
+          "name": "i2p",
+          "to": {
+            "proxy": "i2p"
+          }
+        },
+        {
+          "fallback": "offline",
+          "keys": [],
+          "match": [
+            "wss://relay-b.example"
+          ],
+          "name": "",
+          "to": "direct"
+        },
+        {
+          "fallback": "offline",
+          "keys": [],
+          "match": [
+            "relay-c.example:7777"
+          ],
+          "name": "never",
+          "to": "block"
+        },
+        {
+          "fallback": "offline",
+          "keys": [],
+          "match": [
+            "relay-a.example"
+          ],
+          "name": "",
+          "to": "pool"
+        }
+      ],
+      "transparent": false
+    },
+    "public_invoicing": true,
+    "rate_global_per_min": 30,
+    "rate_per_key_per_min": 6,
+    "rate_requests_per_key_per_min": 120,
+    "rate_requests_per_min": 1200,
+    "relay_keys": {},
+    "relay_names": {
+      "ws://nostr-not.i2p": "nostr-not.i2p",
+      "wss://relay-a.example": "Relay A"
+    },
+    "relays": [
+      "wss://relay-a.example",
+      "wss://relay-b.example",
+      "ws://abcdefghij.onion",
+      "ws://nostr-not.i2p"
+    ],
+    "sweep": {
+      "enabled": false,
+      "max_fee_rate_sat_vb": 20,
+      "min_anonymity_set": 5,
+      "mode": "payjoin",
+      "threshold_sat": 1000000
+    }
+  },
+  "warnings": [
+    "public invoicing with only 4 bits of proof of work: anyone can create invoices almost for free"
+  ]
+}
