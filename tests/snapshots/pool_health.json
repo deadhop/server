@@ -1,0 +1,796 @@
+{
+  "full / all up": {
+    "active": "tor",
+    "lanes": [
+      {
+        "active": "tor",
+        "key": "invoices",
+        "next_switch_at": null,
+        "reachable": 1,
+        "state": "active",
+        "uses_default": true
+      },
+      {
+        "active": "tor",
+        "key": "admin",
+        "next_switch_at": null,
+        "reachable": 1,
+        "state": "active",
+        "uses_default": true
+      }
+    ],
+    "mode": "round_robin",
+    "next_switch_at": null,
+    "offline": "kill_switch",
+    "posture": "normal",
+    "proxies": [
+      {
+        "checked_at": 1700000000,
+        "id": "tor",
+        "keys": [],
+        "name": "Tor",
+        "pool": true,
+        "reachable": true,
+        "reason": null,
+        "status": "connected",
+        "url": "socks5://127.0.0.1:9050"
+      },
+      {
+        "checked_at": 1700000000,
+        "id": "vpn",
+        "keys": [],
+        "name": "VPN",
+        "pool": false,
+        "reachable": true,
+        "reason": null,
+        "status": "connected",
+        "url": "socks5://user:***@10.8.0.1:1080"
+      },
+      {
+        "checked_at": 1700000000,
+        "id": "i2p",
+        "keys": [],
+        "name": "I2P router",
+        "pool": false,
+        "reachable": true,
+        "reason": null,
+        "status": "connected",
+        "url": "http://127.0.0.1:4444"
+      }
+    ],
+    "reachable": 1,
+    "routes": [
+      {
+        "key": "invoices",
+        "proxy": "tor",
+        "reason": "rule",
+        "relay": "wss://relay-a.example",
+        "rule": 5,
+        "via": "proxy"
+      },
+      {
+        "key": "invoices",
+        "proxy": null,
+        "reason": "rule",
+        "relay": "wss://relay-b.example",
+        "rule": 3,
+        "via": "direct"
+      },
+      {
+        "key": "invoices",
+        "proxy": "tor",
+        "reason": "rule",
+        "relay": "ws://abcdefghij.onion",
+        "rule": 1,
+        "via": "proxy"
+      },
+      {
+        "key": "invoices",
+        "proxy": "i2p",
+        "reason": "rule",
+        "relay": "ws://nostr-not.i2p",
+        "rule": 2,
+        "via": "proxy"
+      },
+      {
+        "key": "admin",
+        "proxy": "tor",
+        "reason": "rule",
+        "relay": "wss://relay-a.example",
+        "rule": 5,
+        "via": "proxy"
+      },
+      {
+        "key": "admin",
+        "proxy": null,
+        "reason": "rule",
+        "relay": "wss://relay-b.example",
+        "rule": 3,
+        "via": "direct"
+      },
+      {
+        "key": "admin",
+        "proxy": "tor",
+        "reason": "rule",
+        "relay": "ws://abcdefghij.onion",
+        "rule": 1,
+        "via": "proxy"
+      },
+      {
+        "key": "admin",
+        "proxy": "i2p",
+        "reason": "rule",
+        "relay": "ws://nostr-not.i2p",
+        "rule": 2,
+        "via": "proxy"
+      }
+    ],
+    "state": "active",
+    "total": 3,
+    "transparent": false
+  },
+  "full / nothing probed": {
+    "active": null,
+    "lanes": [
+      {
+        "active": null,
+        "key": "invoices",
+        "next_switch_at": null,
+        "reachable": 0,
+        "state": "offline",
+        "uses_default": true
+      },
+      {
+        "active": null,
+        "key": "admin",
+        "next_switch_at": null,
+        "reachable": 0,
+        "state": "offline",
+        "uses_default": true
+      }
+    ],
+    "mode": "round_robin",
+    "next_switch_at": null,
+    "offline": "kill_switch",
+    "posture": "off",
+    "proxies": [
+      {
+        "checked_at": null,
+        "id": "tor",
+        "keys": [],
+        "name": "Tor",
+        "pool": true,
+        "reachable": null,
+        "reason": null,
+        "status": null,
+        "url": "socks5://127.0.0.1:9050"
+      },
+      {
+        "checked_at": null,
+        "id": "vpn",
+        "keys": [],
+        "name": "VPN",
+        "pool": false,
+        "reachable": null,
+        "reason": null,
+        "status": null,
+        "url": "socks5://user:***@10.8.0.1:1080"
+      },
+      {
+        "checked_at": null,
+        "id": "i2p",
+        "keys": [],
+        "name": "I2P router",
+        "pool": false,
+        "reachable": null,
+        "reason": null,
+        "status": null,
+        "url": "http://127.0.0.1:4444"
+      }
+    ],
+    "reachable": 0,
+    "routes": [
+      {
+        "key": "invoices",
+        "proxy": null,
+        "reason": "pool_offline",
+        "relay": "wss://relay-a.example",
+        "rule": 5,
+        "via": "off"
+      },
+      {
+        "key": "invoices",
+        "proxy": null,
+        "reason": "rule",
+        "relay": "wss://relay-b.example",
+        "rule": 3,
+        "via": "direct"
+      },
+      {
+        "key": "invoices",
+        "proxy": "tor",
+        "reason": "rule",
+        "relay": "ws://abcdefghij.onion",
+        "rule": 1,
+        "via": "proxy"
+      },
+      {
+        "key": "invoices",
+        "proxy": "i2p",
+        "reason": "rule",
+        "relay": "ws://nostr-not.i2p",
+        "rule": 2,
+        "via": "proxy"
+      },
+      {
+        "key": "admin",
+        "proxy": null,
+        "reason": "pool_offline",
+        "relay": "wss://relay-a.example",
+        "rule": 5,
+        "via": "off"
+      },
+      {
+        "key": "admin",
+        "proxy": null,
+        "reason": "rule",
+        "relay": "wss://relay-b.example",
+        "rule": 3,
+        "via": "direct"
+      },
+      {
+        "key": "admin",
+        "proxy": "tor",
+        "reason": "rule",
+        "relay": "ws://abcdefghij.onion",
+        "rule": 1,
+        "via": "proxy"
+      },
+      {
+        "key": "admin",
+        "proxy": "i2p",
+        "reason": "rule",
+        "relay": "ws://nostr-not.i2p",
+        "rule": 2,
+        "via": "proxy"
+      }
+    ],
+    "state": "offline",
+    "total": 3,
+    "transparent": false
+  },
+  "full / tor down": {
+    "active": null,
+    "lanes": [
+      {
+        "active": null,
+        "key": "invoices",
+        "next_switch_at": null,
+        "reachable": 0,
+        "state": "offline",
+        "uses_default": true
+      },
+      {
+        "active": null,
+        "key": "admin",
+        "next_switch_at": null,
+        "reachable": 0,
+        "state": "offline",
+        "uses_default": true
+      }
+    ],
+    "mode": "round_robin",
+    "next_switch_at": null,
+    "offline": "kill_switch",
+    "posture": "off",
+    "proxies": [
+      {
+        "checked_at": 1700000000,
+        "id": "tor",
+        "keys": [],
+        "name": "Tor",
+        "pool": true,
+        "reachable": false,
+        "reason": null,
+        "status": "failed",
+        "url": "socks5://127.0.0.1:9050"
+      },
+      {
+        "checked_at": 1700000000,
+        "id": "vpn",
+        "keys": [],
+        "name": "VPN",
+        "pool": false,
+        "reachable": true,
+        "reason": null,
+        "status": "connected",
+        "url": "socks5://user:***@10.8.0.1:1080"
+      },
+      {
+        "checked_at": 1700000000,
+        "id": "i2p",
+        "keys": [],
+        "name": "I2P router",
+        "pool": false,
+        "reachable": true,
+        "reason": null,
+        "status": "connected",
+        "url": "http://127.0.0.1:4444"
+      }
+    ],
+    "reachable": 0,
+    "routes": [
+      {
+        "key": "invoices",
+        "proxy": null,
+        "reason": "pool_offline",
+        "relay": "wss://relay-a.example",
+        "rule": 5,
+        "via": "off"
+      },
+      {
+        "key": "invoices",
+        "proxy": null,
+        "reason": "rule",
+        "relay": "wss://relay-b.example",
+        "rule": 3,
+        "via": "direct"
+      },
+      {
+        "key": "invoices",
+        "proxy": "tor",
+        "reason": "rule",
+        "relay": "ws://abcdefghij.onion",
+        "rule": 1,
+        "via": "proxy"
+      },
+      {
+        "key": "invoices",
+        "proxy": "i2p",
+        "reason": "rule",
+        "relay": "ws://nostr-not.i2p",
+        "rule": 2,
+        "via": "proxy"
+      },
+      {
+        "key": "admin",
+        "proxy": null,
+        "reason": "pool_offline",
+        "relay": "wss://relay-a.example",
+        "rule": 5,
+        "via": "off"
+      },
+      {
+        "key": "admin",
+        "proxy": null,
+        "reason": "rule",
+        "relay": "wss://relay-b.example",
+        "rule": 3,
+        "via": "direct"
+      },
+      {
+        "key": "admin",
+        "proxy": "tor",
+        "reason": "rule",
+        "relay": "ws://abcdefghij.onion",
+        "rule": 1,
+        "via": "proxy"
+      },
+      {
+        "key": "admin",
+        "proxy": "i2p",
+        "reason": "rule",
+        "relay": "ws://nostr-not.i2p",
+        "rule": 2,
+        "via": "proxy"
+      }
+    ],
+    "state": "offline",
+    "total": 3,
+    "transparent": false
+  },
+  "full / tor down / posture, connection, proxy in use": [
+    "Off",
+    "Off",
+    "None",
+    "Off",
+    "None"
+  ],
+  "keyed / all up": {
+    "active": "tor",
+    "lanes": [
+      {
+        "active": "tor",
+        "key": "invoices",
+        "next_switch_at": null,
+        "reachable": 1,
+        "state": "active",
+        "uses_default": true
+      },
+      {
+        "active": "tor",
+        "key": "admin",
+        "next_switch_at": null,
+        "reachable": 1,
+        "state": "active",
+        "uses_default": true
+      }
+    ],
+    "mode": "round_robin",
+    "next_switch_at": null,
+    "offline": "kill_switch",
+    "posture": "normal",
+    "proxies": [
+      {
+        "checked_at": 1700000000,
+        "id": "tor",
+        "keys": [],
+        "name": "Tor",
+        "pool": true,
+        "reachable": true,
+        "reason": null,
+        "status": "connected",
+        "url": "socks5://127.0.0.1:9050"
+      },
+      {
+        "checked_at": 1700000000,
+        "id": "vpn",
+        "keys": [],
+        "name": "VPN",
+        "pool": false,
+        "reachable": true,
+        "reason": null,
+        "status": "connected",
+        "url": "socks5://user:***@10.8.0.1:1080"
+      },
+      {
+        "checked_at": 1700000000,
+        "id": "i2p",
+        "keys": [],
+        "name": "I2P router",
+        "pool": false,
+        "reachable": true,
+        "reason": null,
+        "status": "connected",
+        "url": "http://127.0.0.1:4444"
+      }
+    ],
+    "reachable": 1,
+    "routes": [
+      {
+        "key": "invoices",
+        "proxy": "tor",
+        "reason": "rule",
+        "relay": "wss://relay-a.example",
+        "rule": 5,
+        "via": "proxy"
+      },
+      {
+        "key": "invoices",
+        "proxy": null,
+        "reason": "rule",
+        "relay": "wss://relay-b.example",
+        "rule": 3,
+        "via": "direct"
+      },
+      {
+        "key": "invoices",
+        "proxy": "tor",
+        "reason": "default",
+        "relay": "ws://abcdefghij.onion",
+        "rule": null,
+        "via": "proxy"
+      },
+      {
+        "key": "invoices",
+        "proxy": "vpn",
+        "reason": "rule",
+        "relay": "wss://relay.example",
+        "rule": 6,
+        "via": "proxy"
+      },
+      {
+        "key": "admin",
+        "proxy": "tor",
+        "reason": "rule",
+        "relay": "wss://relay-a.example",
+        "rule": 5,
+        "via": "proxy"
+      },
+      {
+        "key": "admin",
+        "proxy": "tor",
+        "reason": "rule",
+        "relay": "ws://abcdefghij.onion",
+        "rule": 1,
+        "via": "proxy"
+      },
+      {
+        "key": "admin",
+        "proxy": "i2p",
+        "reason": "rule",
+        "relay": "ws://nostr-not.i2p",
+        "rule": 2,
+        "via": "proxy"
+      },
+      {
+        "key": "admin",
+        "proxy": "vpn",
+        "reason": "rule",
+        "relay": "wss://relay.example",
+        "rule": 6,
+        "via": "proxy"
+      }
+    ],
+    "state": "active",
+    "total": 3,
+    "transparent": false
+  },
+  "keyed / nothing probed": {
+    "active": null,
+    "lanes": [
+      {
+        "active": null,
+        "key": "invoices",
+        "next_switch_at": null,
+        "reachable": 0,
+        "state": "offline",
+        "uses_default": true
+      },
+      {
+        "active": null,
+        "key": "admin",
+        "next_switch_at": null,
+        "reachable": 0,
+        "state": "offline",
+        "uses_default": true
+      }
+    ],
+    "mode": "round_robin",
+    "next_switch_at": null,
+    "offline": "kill_switch",
+    "posture": "off",
+    "proxies": [
+      {
+        "checked_at": null,
+        "id": "tor",
+        "keys": [],
+        "name": "Tor",
+        "pool": true,
+        "reachable": null,
+        "reason": null,
+        "status": null,
+        "url": "socks5://127.0.0.1:9050"
+      },
+      {
+        "checked_at": null,
+        "id": "vpn",
+        "keys": [],
+        "name": "VPN",
+        "pool": false,
+        "reachable": null,
+        "reason": null,
+        "status": null,
+        "url": "socks5://user:***@10.8.0.1:1080"
+      },
+      {
+        "checked_at": null,
+        "id": "i2p",
+        "keys": [],
+        "name": "I2P router",
+        "pool": false,
+        "reachable": null,
+        "reason": null,
+        "status": null,
+        "url": "http://127.0.0.1:4444"
+      }
+    ],
+    "reachable": 0,
+    "routes": [
+      {
+        "key": "invoices",
+        "proxy": null,
+        "reason": "pool_offline",
+        "relay": "wss://relay-a.example",
+        "rule": 5,
+        "via": "off"
+      },
+      {
+        "key": "invoices",
+        "proxy": null,
+        "reason": "rule",
+        "relay": "wss://relay-b.example",
+        "rule": 3,
+        "via": "direct"
+      },
+      {
+        "key": "invoices",
+        "proxy": null,
+        "reason": "pool_offline",
+        "relay": "ws://abcdefghij.onion",
+        "rule": null,
+        "via": "off"
+      },
+      {
+        "key": "invoices",
+        "proxy": null,
+        "reason": "pool_offline",
+        "relay": "wss://relay.example",
+        "rule": 6,
+        "via": "off"
+      },
+      {
+        "key": "admin",
+        "proxy": null,
+        "reason": "pool_offline",
+        "relay": "wss://relay-a.example",
+        "rule": 5,
+        "via": "off"
+      },
+      {
+        "key": "admin",
+        "proxy": "tor",
+        "reason": "rule",
+        "relay": "ws://abcdefghij.onion",
+        "rule": 1,
+        "via": "proxy"
+      },
+      {
+        "key": "admin",
+        "proxy": "i2p",
+        "reason": "rule",
+        "relay": "ws://nostr-not.i2p",
+        "rule": 2,
+        "via": "proxy"
+      },
+      {
+        "key": "admin",
+        "proxy": null,
+        "reason": "pool_offline",
+        "relay": "wss://relay.example",
+        "rule": 6,
+        "via": "off"
+      }
+    ],
+    "state": "offline",
+    "total": 3,
+    "transparent": false
+  },
+  "keyed / tor down": {
+    "active": null,
+    "lanes": [
+      {
+        "active": null,
+        "key": "invoices",
+        "next_switch_at": null,
+        "reachable": 0,
+        "state": "offline",
+        "uses_default": true
+      },
+      {
+        "active": null,
+        "key": "admin",
+        "next_switch_at": null,
+        "reachable": 0,
+        "state": "offline",
+        "uses_default": true
+      }
+    ],
+    "mode": "round_robin",
+    "next_switch_at": null,
+    "offline": "kill_switch",
+    "posture": "off",
+    "proxies": [
+      {
+        "checked_at": 1700000000,
+        "id": "tor",
+        "keys": [],
+        "name": "Tor",
+        "pool": true,
+        "reachable": false,
+        "reason": null,
+        "status": "failed",
+        "url": "socks5://127.0.0.1:9050"
+      },
+      {
+        "checked_at": 1700000000,
+        "id": "vpn",
+        "keys": [],
+        "name": "VPN",
+        "pool": false,
+        "reachable": true,
+        "reason": null,
+        "status": "connected",
+        "url": "socks5://user:***@10.8.0.1:1080"
+      },
+      {
+        "checked_at": 1700000000,
+        "id": "i2p",
+        "keys": [],
+        "name": "I2P router",
+        "pool": false,
+        "reachable": true,
+        "reason": null,
+        "status": "connected",
+        "url": "http://127.0.0.1:4444"
+      }
+    ],
+    "reachable": 0,
+    "routes": [
+      {
+        "key": "invoices",
+        "proxy": null,
+        "reason": "pool_offline",
+        "relay": "wss://relay-a.example",
+        "rule": 5,
+        "via": "off"
+      },
+      {
+        "key": "invoices",
+        "proxy": null,
+        "reason": "rule",
+        "relay": "wss://relay-b.example",
+        "rule": 3,
+        "via": "direct"
+      },
+      {
+        "key": "invoices",
+        "proxy": null,
+        "reason": "pool_offline",
+        "relay": "ws://abcdefghij.onion",
+        "rule": null,
+        "via": "off"
+      },
+      {
+        "key": "invoices",
+        "proxy": "vpn",
+        "reason": "rule",
+        "relay": "wss://relay.example",
+        "rule": 6,
+        "via": "proxy"
+      },
+      {
+        "key": "admin",
+        "proxy": null,
+        "reason": "pool_offline",
+        "relay": "wss://relay-a.example",
+        "rule": 5,
+        "via": "off"
+      },
+      {
+        "key": "admin",
+        "proxy": "tor",
+        "reason": "rule",
+        "relay": "ws://abcdefghij.onion",
+        "rule": 1,
+        "via": "proxy"
+      },
+      {
+        "key": "admin",
+        "proxy": "i2p",
+        "reason": "rule",
+        "relay": "ws://nostr-not.i2p",
+        "rule": 2,
+        "via": "proxy"
+      },
+      {
+        "key": "admin",
+        "proxy": "vpn",
+        "reason": "rule",
+        "relay": "wss://relay.example",
+        "rule": 6,
+        "via": "proxy"
+      }
+    ],
+    "state": "offline",
+    "total": 3,
+    "transparent": false
+  },
+  "keyed / tor down / posture, connection, proxy in use": [
+    "Off",
+    "Off",
+    "None",
+    "Off",
+    "None"
+  ]
+}

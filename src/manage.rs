@@ -3600,4 +3600,185 @@ pub(crate) mod tests {
 
         crate::snapshot::check("network_tool_refusals", &serde_json::to_value(&out).unwrap());
     }
+
+    // ---- Network behaviour the wire snapshots above do not cover: where each relay
+    // goes, what health reports, and the refusals that depend on the keys. ----
+
+    /// `full_patch`, with a relay and a rule each given to one key only.
+    fn keyed_patch() -> serde_json::Value {
+        let mut p = full_patch();
+        // One relay from the environment's list stays, for the administration key.
+        p["relays"].as_array_mut().unwrap().push("wss://relay.example".into());
+        p["relay_keys"] = serde_json::json!({ "wss://relay-b.example": ["invoices"], "ws://nostr-not.i2p": ["admin"] });
+        p["proxies"]["rules"][0]["keys"] = serde_json::json!(["admin"]);
+        p["proxies"]["rules"][4]["fallback"] = serde_json::json!("offline");
+        p["proxies"]["rules"]
+            .as_array_mut()
+            .unwrap()
+            .push(serde_json::json!({ "name": "vpn", "match": ["relay.example"], "to": { "proxy": "vpn" }, "fallback": "pool" }));
+        p
+    }
+
+    fn probe(r: &Rig, id: &str, up: bool) {
+        r.svc.record_probe(
+            id,
+            crate::privacy::ProxyCheck {
+                proxy: format!("socks5://h/{id}"),
+                status: if up { "connected" } else { "failed" }.into(),
+                checked_at: T0,
+                relays: Vec::new(),
+            },
+        );
+    }
+
+    #[tokio::test]
+    async fn route_table_snapshot() {
+        use crate::routes::{relays_through_proxy, resolve, uses_default, DefaultRoute};
+        let mut out = std::collections::BTreeMap::new();
+        for (name, patch_json) in [("full", full_patch()), ("keyed", keyed_patch())] {
+            let r = rig(|_| {}).await;
+            r.svc.update_settings(&r.admin(), patch(patch_json)).unwrap();
+            let s = r.svc.settings().clone();
+            let tor = DefaultRoute::Proxy {
+                id: "tor".into(),
+                url: "socks5://127.0.0.1:9050".into(),
+            };
+            let cases = [
+                ("default through tor, proxies up", tor.clone(), true),
+                ("default through tor, proxies down", tor, false),
+                ("default direct, proxies up", DefaultRoute::Direct, true),
+                ("default off, proxies down", DefaultRoute::Off, false),
+            ];
+            for key in ["invoices", "admin"] {
+                for (case, default, up) in &cases {
+                    let table: Vec<String> = resolve(&s, key, default, &|_| *up)
+                        .iter()
+                        .map(|x| format!("{x:?}"))
+                        .collect();
+                    out.insert(format!("{name} / {key} / {case}"), serde_json::json!(table));
+                }
+                out.insert(
+                    format!("{name} / {key} / uses the default route"),
+                    serde_json::json!(uses_default(&s, key)),
+                );
+            }
+            for id in ["tor", "vpn", "i2p", "ghost"] {
+                out.insert(
+                    format!("{name} / relays through {id}"),
+                    serde_json::json!(relays_through_proxy(&s, id)),
+                );
+            }
+        }
+        crate::snapshot::check("route_table", &serde_json::to_value(&out).unwrap());
+    }
+
+    #[tokio::test]
+    async fn pool_health_snapshot() {
+        let mut out = std::collections::BTreeMap::new();
+        for (name, patch_json) in [("full", full_patch()), ("keyed", keyed_patch())] {
+            let r = rig(|_| {}).await;
+            r.svc.update_settings(&r.admin(), patch(patch_json)).unwrap();
+            r.svc.replan();
+            out.insert(
+                format!("{name} / nothing probed"),
+                serde_json::to_value(r.svc.pool_health()).unwrap(),
+            );
+            for id in ["tor", "vpn", "i2p"] {
+                probe(&r, id, true);
+            }
+            r.svc.replan();
+            out.insert(
+                format!("{name} / all up"),
+                serde_json::to_value(r.svc.pool_health()).unwrap(),
+            );
+            probe(&r, "tor", false);
+            r.svc.replan();
+            out.insert(
+                format!("{name} / tor down"),
+                serde_json::to_value(r.svc.pool_health()).unwrap(),
+            );
+            out.insert(
+                format!("{name} / tor down / posture, connection, proxy in use"),
+                serde_json::json!([
+                    format!("{:?}", r.svc.posture()),
+                    format!("{:?}", r.svc.connection()),
+                    format!("{:?}", r.svc.active_proxy()),
+                    format!("{:?}", r.svc.connection_for("admin")),
+                    format!("{:?}", r.svc.active_proxy_for("admin")),
+                ]),
+            );
+        }
+        crate::snapshot::check("pool_health", &serde_json::to_value(&out).unwrap());
+    }
+
+    #[tokio::test]
+    async fn key_refusals_snapshot() {
+        use serde_json::json;
+        let mut out = std::collections::BTreeMap::new();
+        let o = &mut out;
+        let r = rig(|_| {}).await;
+        let save = |p: serde_json::Value| r.svc.update_settings(&r.admin(), patch(p));
+        let tor = json!({ "id": "tor", "url": "socks5://127.0.0.1:9050" });
+        refusal(
+            o,
+            "a rule for a key that does not exist",
+            save(json!({ "proxies": { "rules": [{ "match": ["*.onion"], "to": "block", "keys": ["nobody"] }] } })),
+        );
+        refusal(
+            o,
+            "a proxy for a key that does not exist",
+            save(
+                json!({ "proxies": { "list": [{ "id": "tor", "url": "socks5://127.0.0.1:9050", "keys": ["nobody"] }] } }),
+            ),
+        );
+        refusal(
+            o,
+            "a proxy that names a key twice",
+            save(
+                json!({ "proxies": { "list": [{ "id": "tor", "url": "socks5://127.0.0.1:9050", "keys": ["admin", "admin"] }] } }),
+            ),
+        );
+        refusal(
+            o,
+            "a relay for a key that does not exist",
+            save(json!({ "relay_keys": { "wss://relay.example": ["nobody"] } })),
+        );
+        refusal(
+            o,
+            "the default route has no proxy for a key",
+            save(
+                json!({ "proxies": { "list": [{ "id": "tor", "url": "socks5://127.0.0.1:9050", "keys": ["invoices"] }] } }),
+            ),
+        );
+        refusal(
+            o,
+            "a key left without a relay",
+            save(json!({ "relay_keys": { "wss://relay.example": ["invoices"], "ws://127.0.0.1:7777": ["invoices"] } })),
+        );
+        refusal(
+            o,
+            "every relay of a key is blocked",
+            save(json!({ "proxies": { "rules": [{ "match": ["*"], "to": "block", "keys": ["admin"] }] } })),
+        );
+        refusal(
+            o,
+            "a rule sends an onion relay straight",
+            save(json!({ "proxies": { "rules": [{ "match": ["*.onion"], "to": "direct" }] } })),
+        );
+        // Turning the strategy off while a key's first proxy is down.
+        save(json!({ "proxies": {
+            "list": [tor, { "id": "vpn", "url": "socks5://127.0.0.1:1080" }],
+            "mode": "failover"
+        } }))
+        .unwrap();
+        probe(&r, "tor", false);
+        probe(&r, "vpn", true);
+        r.svc.replan();
+        refusal(
+            o,
+            "the strategy is turned off while a key's first proxy is down",
+            save(json!({ "proxies": { "mode": "off" } })),
+        );
+        crate::snapshot::check("key_refusals", &serde_json::to_value(&out).unwrap());
+    }
 }
