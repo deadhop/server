@@ -401,6 +401,7 @@ dependencies = [
  "bip39",
  "bitcoin",
  "contextvm-sdk",
+ "deadhop-tlspin",
  "futures-util",
  "getrandom 0.2.17",
  "hex",
@@ -420,6 +421,16 @@ dependencies = [
  "tokio-util",
  "tracing",
  "tracing-subscriber",
+ "webpki-roots 0.26.11",
+]
+
+[[package]]
+name = "deadhop-tlspin"
+version = "0.1.0"
+dependencies = [
+ "bitcoin",
+ "hex",
+ "rustls",
  "webpki-roots 0.26.11",
 ]
 
