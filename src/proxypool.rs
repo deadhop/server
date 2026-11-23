@@ -1294,6 +1294,14 @@ mod tests {
             ]
         );
         assert_eq!(r.svc.posture(), Posture::Off);
+        // On a host that is itself behind a proxy, every relay goes straight.
+        let mut s = r.svc.settings().clone();
+        s.proxies.transparent = true;
+        r.svc.apply_settings(s);
+        r.svc.replan();
+        assert!(routes(&r)
+            .iter()
+            .all(|(_, via, why)| via.as_deref() == Some("direct") && *why == Reason::Transparent));
     }
 
     #[tokio::test]

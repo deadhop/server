@@ -2894,6 +2894,35 @@ pub(crate) mod tests {
     }
 
     #[tokio::test]
+    async fn only_one_i2p_lookup_runs_at_a_time() {
+        let r = rig(|_| {}).await;
+        r.svc
+            .update_settings(
+                &r.admin(),
+                patch(serde_json::json!({ "proxies": { "list": [{ "url": "http://127.0.0.1:4444", "i2p": true }] } })),
+            )
+            .unwrap();
+        r.svc.i2p_lookup_busy.store(true, Ordering::SeqCst);
+        assert_eq!(
+            code(r.svc.resolve_i2p_name(&r.admin(), lookup("x.i2p")).await),
+            "rate_limited"
+        );
+    }
+
+    #[tokio::test]
+    async fn an_i2p_router_without_an_address_is_refused() {
+        // Saving never lets this through; settings applied some other way still must not panic.
+        let r = rig(|_| {}).await;
+        let mut s = r.svc.settings().clone();
+        s.proxies.list = vec![serde_json::from_value(serde_json::json!({
+            "id": "i2p", "name": "", "url": "", "i2p": true
+        }))
+        .unwrap()];
+        r.svc.apply_settings(s);
+        assert!(msg(r.svc.resolve_i2p_name(&r.admin(), lookup("x.i2p")).await).contains("has no address"));
+    }
+
+    #[tokio::test]
     async fn i2p_proxies_and_registries_are_checked_when_saved() {
         let r = rig(|_| {}).await;
         let save = |p: serde_json::Value| {
@@ -2916,6 +2945,11 @@ pub(crate) mod tests {
         assert!(msg(save(serde_json::json!({ "i2p_registries": ["http://a.i2p/?q="] }))).contains("{name}"));
         let five: Vec<String> = (0..5).map(|i| format!("http://r{i}.i2p/?q={{name}}")).collect();
         assert!(msg(save(serde_json::json!({ "i2p_registries": five }))).contains("at most 4"));
+        assert!(msg(save(serde_json::json!({ "i2p_registries": [
+            "http://a.i2p/?q={name}",
+            "http://a.i2p/?q={name}"
+        ] })))
+        .contains("listed twice"));
         assert!(serde_json::from_value::<ProxyPatch>(serde_json::json!({ "registries": [] })).is_err());
         let v = save(serde_json::json!({ "list": [{ "id": "i2p", "url": "http://127.0.0.1:4444", "i2p": true }] }))
             .unwrap();
@@ -3203,5 +3237,367 @@ pub(crate) mod tests {
         let names: Vec<&str> = report.iter().map(|h| h.relay.as_str()).collect();
         assert_eq!(names, [good.as_str()]);
         assert_eq!(report[0].status, "down", "its proxy is not there");
+    }
+
+    // ---- Recorded wire behaviour (see snapshot.rs): later refactors must leave these unchanged. ----
+
+    /// The settings view as clients get it, with the random operator key made fixed.
+    fn view_json(v: &SettingsView) -> serde_json::Value {
+        let mut j = serde_json::to_value(v).unwrap();
+        for o in j["operators"].as_array_mut().unwrap() {
+            o["pubkey"] = "<operator>".into();
+        }
+        j
+    }
+
+    #[tokio::test]
+    async fn get_settings_default_snapshot() {
+        let r = rig(|_| {}).await;
+        crate::snapshot::check(
+            "get_settings_default",
+            &view_json(&r.svc.get_settings(&r.admin()).unwrap()),
+        );
+    }
+
+    /// Proxies of every kind, rules of every kind, relays with names.
+    fn full_patch() -> serde_json::Value {
+        serde_json::json!({
+            "name": "snapshot service",
+            "relays": ["wss://relay-a.example", "wss://relay-b.example", "ws://abcdefghij.onion", "ws://nostr-not.i2p"],
+            "relay_names": { "ws://nostr-not.i2p": "nostr-not.i2p", "wss://relay-a.example": "Relay A" },
+            "proxies": {
+                "list": [
+                    { "id": "tor", "name": "Tor", "url": "socks5://127.0.0.1:9050" },
+                    { "id": "vpn", "name": "VPN", "url": "socks5://user:secret@10.8.0.1:1080", "pool": false },
+                    { "id": "i2p", "name": "I2P router", "url": "http://127.0.0.1:4444", "pool": false, "i2p": true }
+                ],
+                "mode": "round_robin",
+                "rotate_secs": 1800,
+                "chaos_min_secs": 120,
+                "chaos_max_secs": 600,
+                "offline": "kill_switch",
+                "rules": [
+                    { "name": "onions", "match": ["*.onion"], "to": { "proxy": "tor" }, "fallback": "offline" },
+                    { "name": "i2p", "match": ["*.i2p"], "to": { "proxy": "i2p" } },
+                    { "match": ["wss://relay-b.example"], "to": "direct" },
+                    { "name": "never", "match": ["relay-c.example:7777"], "to": "block" },
+                    { "match": ["relay-a.example"], "to": "pool" }
+                ],
+                "i2p_registries": ["http://notbob.i2p/cgi-bin/jump.cgi?q={name}", "http://reg.i2p/?a={name}"]
+            }
+        })
+    }
+
+    #[tokio::test]
+    async fn get_settings_full_snapshot_and_a_stored_patch_reads_back() {
+        let r = rig(|_| {}).await;
+        r.svc.update_settings(&r.admin(), patch(full_patch())).unwrap();
+        crate::snapshot::check(
+            "get_settings_full",
+            &view_json(&r.svc.get_settings(&r.admin()).unwrap()),
+        );
+        // What was stored is the patch, in a form that reads back as itself.
+        let stored = r.svc.stored_patch().unwrap();
+        let raw = r.svc.db.meta_get(META_SETTINGS).unwrap().unwrap();
+        assert_eq!(
+            raw,
+            include_str!("../tests/fixtures/stored_settings_patch.json").trim_end()
+        );
+        crate::snapshot::check("stored_settings_patch", &serde_json::from_str(&raw).unwrap());
+        assert_eq!(serde_json::from_str::<SettingsPatch>(&raw).unwrap(), stored);
+    }
+
+    #[test]
+    fn a_stored_patch_written_by_earlier_code_reads_back_the_same() {
+        // The exact text the service stored when it was last changed through
+        // `full_patch`; a later version must read it and write it back unchanged.
+        let blob = include_str!("../tests/fixtures/stored_settings_patch.json").trim_end();
+        let read: SettingsPatch = serde_json::from_str(blob).unwrap();
+        assert_eq!(serde_json::to_string(&read).unwrap(), blob);
+        assert_eq!(read.relays.as_ref().unwrap().len(), 4);
+        assert_eq!(read.proxies.as_ref().unwrap().rules.as_ref().unwrap().len(), 5);
+    }
+
+    fn refusal<T: std::fmt::Debug>(
+        out: &mut std::collections::BTreeMap<String, serde_json::Value>,
+        label: &str,
+        r: Result<T>,
+    ) {
+        let e = r.unwrap_err();
+        let shown = serde_json::json!({ "code": e.code(), "public_message": e.public_message() });
+        assert!(out.insert(label.into(), shown).is_none(), "{label} twice");
+    }
+
+    #[tokio::test]
+    async fn network_tool_refusals_snapshot() {
+        use serde_json::json;
+        let mut out = std::collections::BTreeMap::new();
+        let o = &mut out;
+        let params = |v: serde_json::Value| serde_json::from_value::<CheckProxyParams>(v).unwrap();
+
+        // check_proxy
+        let r = rig(|_| {}).await;
+        refusal(
+            o,
+            "check_proxy: not an operator",
+            r.svc.check_proxy(&stranger(), params(json!({}))).await,
+        );
+        refusal(
+            o,
+            "check_proxy: unknown id",
+            r.svc.check_proxy(&r.admin(), params(json!({ "id": "nope" }))).await,
+        );
+        refusal(
+            o,
+            "check_proxy: id and proxy",
+            r.svc
+                .check_proxy(&r.admin(), params(json!({ "id": "a", "proxy": "socks5://h:1" })))
+                .await,
+        );
+        refusal(
+            o,
+            "check_proxy: bad address",
+            r.svc
+                .check_proxy(&r.admin(), params(json!({ "proxy": "ftp://h:1" })))
+                .await,
+        );
+        r.svc
+            .update_settings(
+                &r.admin(),
+                patch(json!({ "proxies": { "list": [{ "id": "tor", "url": "socks5://127.0.0.1:9050" }, { "id": "vpn", "url": "socks5://127.0.0.1:1080", "pool": false }] } })),
+            )
+            .unwrap();
+        refusal(
+            o,
+            "check_proxy: no relay goes through it",
+            r.svc.check_proxy(&r.admin(), params(json!({ "id": "vpn" }))).await,
+        );
+        r.svc.proxy_check_busy.store(true, Ordering::SeqCst);
+        refusal(
+            o,
+            "check_proxy: one at a time",
+            r.svc.check_proxy(&r.admin(), params(json!({ "id": "tor" }))).await,
+        );
+        r.svc.proxy_check_busy.store(false, Ordering::SeqCst);
+        r.svc
+            .proxy_checks
+            .lock()
+            .unwrap()
+            .extend(std::iter::repeat_n(T0, PROXY_CHECKS_PER_MIN));
+        refusal(
+            o,
+            "check_proxy: per-minute budget",
+            r.svc.check_proxy(&r.admin(), params(json!({ "id": "tor" }))).await,
+        );
+        let locked = rig(|c| c.proxy_locked = true).await;
+        refusal(
+            o,
+            "check_proxy: locked, address not listed",
+            locked
+                .svc
+                .check_proxy(&locked.admin(), params(json!({ "proxy": "socks5://h:1" })))
+                .await,
+        );
+
+        // check_relays, get_relay_history, get_privacy_audit
+        refusal(
+            o,
+            "check_relays: not an operator",
+            r.svc.check_relays(&stranger()).await,
+        );
+        r.svc
+            .relay_checks
+            .lock()
+            .unwrap()
+            .extend(std::iter::repeat_n(T0, RELAY_CHECKS_PER_MIN));
+        refusal(
+            o,
+            "check_relays: per-minute budget",
+            r.svc.check_relays(&r.admin()).await,
+        );
+        let window = |w: Option<&str>| RelayHistoryParams {
+            window: w.map(str::to_string),
+        };
+        refusal(
+            o,
+            "get_relay_history: not an operator",
+            r.svc.relay_history(&stranger(), window(None)),
+        );
+        refusal(
+            o,
+            "get_relay_history: bad window",
+            r.svc.relay_history(&r.admin(), window(Some("2h"))),
+        );
+        refusal(
+            o,
+            "get_privacy_audit: not an operator",
+            r.svc.privacy_audit(&stranger()).await,
+        );
+
+        // resolve_i2p_name
+        let l = |n: &str| lookup(n);
+        refusal(
+            o,
+            "resolve_i2p_name: not an operator",
+            r.svc.resolve_i2p_name(&stranger(), l("x.i2p")).await,
+        );
+        refusal(
+            o,
+            "resolve_i2p_name: locked",
+            locked.svc.resolve_i2p_name(&locked.admin(), l("x.i2p")).await,
+        );
+        refusal(
+            o,
+            "resolve_i2p_name: bad name",
+            r.svc.resolve_i2p_name(&r.admin(), l("Bad Name")).await,
+        );
+        refusal(
+            o,
+            "resolve_i2p_name: no I2P router",
+            r.svc.resolve_i2p_name(&r.admin(), l("x.i2p")).await,
+        );
+        let ready = rig(|_| {}).await;
+        ready
+            .svc
+            .update_settings(
+                &ready.admin(),
+                patch(json!({ "proxies": { "list": [{ "id": "i2p", "url": "http://127.0.0.1:4444", "i2p": true }], "i2p_registries": [] } })),
+            )
+            .unwrap();
+        refusal(
+            o,
+            "resolve_i2p_name: no registries",
+            ready.svc.resolve_i2p_name(&ready.admin(), l("x.i2p")).await,
+        );
+        ready
+            .svc
+            .update_settings(
+                &ready.admin(),
+                patch(json!({ "proxies": { "i2p_registries": ["http://reg.i2p/?q={name}"] } })),
+            )
+            .unwrap();
+        ready.svc.i2p_lookup_busy.store(true, Ordering::SeqCst);
+        refusal(
+            o,
+            "resolve_i2p_name: one at a time",
+            ready.svc.resolve_i2p_name(&ready.admin(), l("x.i2p")).await,
+        );
+
+        // update_settings: proxies and relays
+        let save = |p: serde_json::Value| r.svc.update_settings(&r.admin(), patch(p));
+        let proxies = |p: serde_json::Value| save(json!({ "proxies": p }));
+        let nine: Vec<_> = (0..9)
+            .map(|i| json!({ "id": format!("p{i}"), "url": format!("socks5://h{i}:1") }))
+            .collect();
+        refusal(o, "update_settings: too many proxies", proxies(json!({ "list": nine })));
+        refusal(
+            o,
+            "update_settings: proxy bad id",
+            proxies(json!({ "list": [{ "id": "Bad Id", "url": "socks5://h:1" }] })),
+        );
+        refusal(
+            o,
+            "update_settings: proxy name too long",
+            proxies(json!({ "list": [{ "id": "a", "name": "n".repeat(61), "url": "socks5://h:1" }] })),
+        );
+        refusal(
+            o,
+            "update_settings: proxy empty address",
+            proxies(json!({ "list": [{ "id": "a", "url": " " }] })),
+        );
+        refusal(
+            o,
+            "update_settings: proxy bad scheme",
+            proxies(json!({ "list": [{ "id": "a", "url": "ftp://h:1" }] })),
+        );
+        refusal(
+            o,
+            "update_settings: proxy id twice",
+            proxies(json!({ "list": [{ "id": "a", "url": "socks5://h:1" }, { "id": "a", "url": "socks5://h:2" }] })),
+        );
+        refusal(
+            o,
+            "update_settings: proxy address twice",
+            proxies(json!({ "list": [{ "id": "a", "url": "socks5://h:1" }, { "id": "b", "url": "socks5://h:1" }] })),
+        );
+        refusal(
+            o,
+            "update_settings: i2p proxy not http",
+            proxies(json!({ "list": [{ "id": "a", "url": "socks5://h:1", "i2p": true }] })),
+        );
+        refusal(
+            o,
+            "update_settings: two i2p proxies",
+            proxies(json!({ "list": [
+                { "id": "a", "url": "http://h:1", "i2p": true },
+                { "id": "b", "url": "http://h:2", "i2p": true }
+            ] })),
+        );
+        refusal(
+            o,
+            "update_settings: bad registry",
+            proxies(json!({ "i2p_registries": ["http://example.com/?q={name}"] })),
+        );
+        refusal(
+            o,
+            "update_settings: too many registries",
+            proxies(
+                json!({ "i2p_registries": (0..5).map(|i| format!("http://r{i}.i2p/?q={{name}}")).collect::<Vec<_>>() }),
+            ),
+        );
+        refusal(
+            o,
+            "update_settings: registry twice",
+            proxies(json!({ "i2p_registries": ["http://a.i2p/?q={name}", "http://a.i2p/?q={name}"] })),
+        );
+        refusal(
+            o,
+            "update_settings: rotate interval out of range",
+            proxies(json!({ "rotate_secs": 1 })),
+        );
+        refusal(
+            o,
+            "update_settings: rule names no proxy",
+            proxies(json!({ "rules": [{ "match": ["*.onion"], "to": { "proxy": "ghost" } }] })),
+        );
+        refusal(
+            o,
+            "update_settings: rule pattern empty",
+            proxies(json!({ "rules": [{ "match": [""], "to": "direct" }] })),
+        );
+        refusal(o, "update_settings: no relays", save(json!({ "relays": [] })));
+        let nine_relays: Vec<_> = (0..9).map(|i| format!("wss://r{i}.example")).collect();
+        refusal(
+            o,
+            "update_settings: too many relays",
+            save(json!({ "relays": nine_relays })),
+        );
+        refusal(
+            o,
+            "update_settings: relay not ws",
+            save(json!({ "relays": ["https://relay.example"] })),
+        );
+        refusal(
+            o,
+            "update_settings: relay with spaces",
+            save(json!({ "relays": ["wss://relay example"] })),
+        );
+        refusal(
+            o,
+            "update_settings: relay with a password",
+            save(json!({ "relays": ["wss://user:pw@relay.example"] })),
+        );
+        refusal(
+            o,
+            "update_settings: relay name for an unlisted relay",
+            save(json!({ "relay_names": { "wss://" : "x".repeat(61) } })),
+        );
+        refusal(
+            o,
+            "update_settings: not an operator",
+            r.svc.update_settings(&stranger(), patch(json!({ "name": "x" }))),
+        );
+
+        crate::snapshot::check("network_tool_refusals", &serde_json::to_value(&out).unwrap());
     }
 }

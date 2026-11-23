@@ -1535,6 +1535,11 @@ mod tests {
         // The proxy check and the privacy audit, over the wire.
         let c = call(&admin, "check_proxy", json!({})).await.unwrap();
         assert_eq!(c["status"], "direct");
+        // No I2P router proxy is set, so a name lookup is refused (over the wire).
+        let refused = call(&admin, "resolve_i2p_name", json!({ "name": "x.i2p" }))
+            .await
+            .unwrap_err();
+        assert_eq!(refused, (-32602, "invalid_params".to_string()));
         // (No background check runs while this one does: it would turn this one away.)
         app.relay_health.abort();
         app.svc
