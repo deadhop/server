@@ -5,6 +5,8 @@
 //! old paths.
 
 pub mod error;
+#[cfg(test)]
+mod hosttests;
 pub mod i2p;
 pub mod netruntime;
 pub mod network;

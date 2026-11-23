@@ -520,3 +520,416 @@ impl Topology {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::routes::{Fallback, RouteTo, Rule};
+
+    fn lanes() -> Vec<Lane> {
+        [("invoices", "Public invoices"), ("admin", "Administration")]
+            .iter()
+            .map(|(id, label)| Lane {
+                id: id.to_string(),
+                label: label.to_string(),
+            })
+            .collect()
+    }
+
+    fn ids(v: &[&str]) -> Vec<String> {
+        v.iter().map(|s| s.to_string()).collect()
+    }
+
+    fn entry(id: &str, url: &str) -> ProxyEntry {
+        ProxyEntry {
+            id: id.into(),
+            name: String::new(),
+            url: url.into(),
+            keys: Vec::new(),
+            pool: true,
+            i2p: false,
+        }
+    }
+
+    fn topology(relays: &[&str]) -> Topology {
+        Topology {
+            settings: NetworkSettings {
+                relays: ids(relays),
+                relay_keys: BTreeMap::new(),
+                relay_names: BTreeMap::new(),
+                proxies: ProxySettings::default(),
+            },
+            lanes: lanes(),
+        }
+    }
+
+    fn why<T: std::fmt::Debug>(r: Result<T>) -> String {
+        r.unwrap_err().to_string()
+    }
+
+    #[test]
+    fn lane_ids_are_assigned_and_checked() {
+        assert!(assigned(&[], "admin") && assigned(&ids(&["admin"]), "admin"));
+        assert!(!assigned(&ids(&["invoices"]), "admin"));
+        check_ids(&lanes(), &ids(&["admin", "invoices"]), "relay").unwrap();
+        assert_eq!(
+            why(check_ids(&lanes(), &ids(&["nobody"]), "relay")),
+            "invalid parameters: relay: there is no key 'nobody'"
+        );
+        assert_eq!(
+            why(check_ids(&lanes(), &ids(&["admin", "admin"]), "proxy")),
+            "invalid parameters: proxy: key 'admin' is named twice"
+        );
+    }
+
+    #[test]
+    fn small_helpers_do_what_they_say() {
+        assert_eq!(relay_key("wss://a/"), "wss://a");
+        assert!(same_relay("wss://a", "wss://a/") && !same_relay("wss://a", "wss://b"));
+        within("x", 5, (1, 5)).unwrap();
+        assert_eq!(
+            why(within("x", 6, (1, 5))),
+            "invalid parameters: x must be between 1 and 5"
+        );
+        assert!(within("x", 0, (1, 5)).is_err());
+        let mut slot = 1;
+        take(&mut slot, &None);
+        assert_eq!(slot, 1);
+        take(&mut slot, &Some(2));
+        assert_eq!(slot, 2);
+        let mut kept = Some(1);
+        keep(&mut kept, &None);
+        assert_eq!(kept, Some(1));
+        keep(&mut kept, &Some(3));
+        assert_eq!(kept, Some(3));
+    }
+
+    #[test]
+    fn a_proxy_patch_fills_in_ids_keeps_hidden_passwords_and_applies_whole() {
+        let stored = vec![
+            entry("tor", "socks5://127.0.0.1:9050"),
+            entry("vpn", "socks5://user:secret@10.8.0.1:1080"),
+        ];
+        // What the dashboard sends back: ids, and the password shown as ***.
+        let mut patch = ProxyPatch::with_list(&stored);
+        patch.list.as_mut().unwrap()[1].url = "socks5://user:***@10.8.0.1:1080".into();
+        patch.resolve(&stored).unwrap();
+        assert_eq!(patch.list.as_ref().unwrap()[1].url, stored[1].url);
+        // Without an id, the stored entry with the same (hidden) address is meant.
+        let input = |url: &str| ProxyEntryInput {
+            id: None,
+            name: None,
+            url: url.into(),
+            keys: None,
+            pool: None,
+            i2p: None,
+        };
+        let mut by_address = ProxyPatch {
+            list: Some(vec![input("socks5://user:***@10.8.0.1:1080"), input("socks5://new:1")]),
+            ..ProxyPatch::default()
+        };
+        by_address.resolve(&stored).unwrap();
+        let list = by_address.list.clone().unwrap();
+        assert_eq!(
+            (list[0].id.as_deref(), list[0].url.as_str()),
+            (Some("vpn"), stored[1].url.as_str())
+        );
+        let fresh = list[1].id.clone().unwrap();
+        assert!(fresh.starts_with('p') && fresh.len() == 9, "{fresh}");
+        // A hidden password with nothing stored behind it cannot be used.
+        let mut lost = ProxyPatch {
+            list: Some(vec![input("socks5://who:***@h:1")]),
+            ..ProxyPatch::default()
+        };
+        assert!(why(lost.resolve(&stored)).contains("the password is hidden"));
+        let mut wrong_id = ProxyPatch {
+            list: Some(vec![ProxyEntryInput {
+                id: Some("tor".into()),
+                ..input("socks5://user:***@10.8.0.1:1080")
+            }]),
+            ..ProxyPatch::default()
+        };
+        assert!(wrong_id.resolve(&stored).is_err());
+        // No list in the patch: nothing to do.
+        ProxyPatch::default().resolve(&stored).unwrap();
+
+        // Entries get their defaults; everything set is applied, the rest is kept.
+        let made = entries_from(&[input("socks5://a:1"), input("socks5://b:1")]);
+        assert_eq!((made[0].id.as_str(), made[1].id.as_str()), ("p0", "p1"));
+        assert!(made[0].pool && !made[0].i2p && made[0].keys.is_empty() && made[0].name.is_empty());
+        let rule = Rule {
+            name: String::new(),
+            patterns: ids(&["*.onion"]),
+            keys: Vec::new(),
+            to: RouteTo::Block,
+            fallback: Fallback::Offline,
+        };
+        let full = ProxyPatch {
+            list: by_address.list.clone(),
+            mode: Some(ProxyMode::Chaos),
+            rotate_secs: Some(120),
+            chaos_min_secs: Some(61),
+            chaos_max_secs: Some(62),
+            offline: Some(OfflinePolicy::Open),
+            transparent: Some(true),
+            rules: Some(vec![rule.clone()]),
+            i2p_registries: Some(ids(&["http://reg.i2p/?q={name}"])),
+        };
+        let mut s = ProxySettings::default();
+        ProxyPatch::default().apply(&mut s);
+        assert_eq!(s, ProxySettings::default());
+        full.apply(&mut s);
+        assert_eq!(
+            (s.list.len(), s.mode, s.rotate_secs, s.chaos_min_secs, s.chaos_max_secs),
+            (2, ProxyMode::Chaos, 120, 61, 62)
+        );
+        assert_eq!(
+            (s.offline, s.transparent, s.rules.len()),
+            (OfflinePolicy::Open, true, 1)
+        );
+        assert_eq!(s.i2p_registries, ids(&["http://reg.i2p/?q={name}"]));
+        // Merging keeps what the newer patch does not mention.
+        let mut merged = ProxyPatch {
+            mode: Some(ProxyMode::Failover),
+            ..ProxyPatch::default()
+        };
+        merged.merge(&ProxyPatch::default());
+        assert_eq!(merged.mode, Some(ProxyMode::Failover));
+        merged.merge(&full);
+        assert_eq!(merged, full);
+        let mut names = Vec::new();
+        ProxyPatch::default().names(&mut names);
+        assert!(names.is_empty());
+        full.names(&mut names);
+        assert_eq!(
+            names,
+            [
+                "proxies.list",
+                "proxies.mode",
+                "proxies.rotate_secs",
+                "proxies.chaos_min_secs",
+                "proxies.chaos_max_secs",
+                "proxies.offline",
+                "proxies.transparent",
+                "proxies.rules",
+                "proxies.i2p_registries"
+            ]
+        );
+        assert_eq!(s.redacted().list[0].url, "socks5://user:***@10.8.0.1:1080");
+    }
+
+    #[test]
+    fn proxy_settings_are_checked() {
+        let with = |list: Vec<ProxyEntry>| ProxySettings {
+            list,
+            ..ProxySettings::default()
+        };
+        let named = |id: &str, f: &dyn Fn(&mut ProxyEntry)| {
+            let mut e = entry(id, &format!("socks5://{id}:1"));
+            f(&mut e);
+            e
+        };
+        with(vec![entry("tor", "socks5://h:1")]).validate(&lanes()).unwrap();
+        let nine = (0..9)
+            .map(|i| entry(&format!("p{i}"), &format!("socks5://h{i}:1")))
+            .collect();
+        let cases: Vec<(ProxySettings, &str)> =
+            vec![
+            (with(nine), "at most 8 proxies"),
+            (with(vec![entry("Bad Id", "socks5://h:1")]), "proxy: bad id"),
+            (with(vec![entry("", "socks5://h:1")]), "proxy: bad id"),
+            (with(vec![entry(&"a".repeat(25), "socks5://h:1")]), "proxy: bad id"),
+            (
+                with(vec![named("a", &|e| e.name = "n".repeat(61))]),
+                "proxy name must be at most 60 visible characters",
+            ),
+            (
+                with(vec![named("a", &|e| e.name = "a\u{200b}b".into())]),
+                "proxy name must be at most 60 visible characters",
+            ),
+            (with(vec![named("a", &|e| e.keys = ids(&["nobody"]))]), "proxy: there is no key 'nobody'"),
+            (with(vec![entry("a", "")]), "proxy: the address is empty"),
+            (with(vec![entry("a", "ftp://h:1")]), "proxy: scheme must be socks5://, https:// or http://"),
+            (
+                with(vec![entry("a", "socks5://h:1"), entry("a", "socks5://h:2")]),
+                "proxy: the same id is used twice",
+            ),
+            (
+                with(vec![entry("a", "socks5://h:1"), entry("b", "socks5://h:1")]),
+                "proxy: the same address is listed twice",
+            ),
+            (
+                with(vec![named("a", &|e| e.i2p = true)]),
+                "proxy: an I2P router proxy must be its http:// proxy",
+            ),
+            (
+                with(vec![
+                    named("a", &|e| (e.i2p, e.url) = (true, "http://h:1".into())),
+                    named("b", &|e| (e.i2p, e.url) = (true, "HTTP://h:2".into())),
+                ]),
+                "proxy: at most one I2P router proxy",
+            ),
+            (
+                ProxySettings {
+                    i2p_registries: (0..5).map(|i| format!("http://r{i}.i2p/?q={{name}}")).collect(),
+                    ..ProxySettings::default()
+                },
+                "at most 4 I2P name registries",
+            ),
+            (
+                ProxySettings {
+                    i2p_registries: ids(&["http://example.com/?q={name}"]),
+                    ..ProxySettings::default()
+                },
+                "I2P registry 'http://example.com/?q={name}' must name a lowercase .i2p host with no port or user name",
+            ),
+            (
+                ProxySettings {
+                    i2p_registries: ids(&["http://a.i2p/?q={name}", "http://a.i2p/?q={name}"]),
+                    ..ProxySettings::default()
+                },
+                "I2P registry: listed twice",
+            ),
+            (
+                ProxySettings {
+                    rotate_secs: 1,
+                    ..ProxySettings::default()
+                },
+                "proxies.rotate_secs must be between 60 and 604800",
+            ),
+            (
+                ProxySettings {
+                    chaos_min_secs: 1,
+                    ..ProxySettings::default()
+                },
+                "proxies.chaos_min_secs must be between 60 and 604800",
+            ),
+            (
+                ProxySettings {
+                    chaos_max_secs: 1,
+                    ..ProxySettings::default()
+                },
+                "proxies.chaos_max_secs must be between 60 and 604800",
+            ),
+            (
+                ProxySettings {
+                    chaos_min_secs: 900,
+                    chaos_max_secs: 300,
+                    ..ProxySettings::default()
+                },
+                "proxies.chaos_min_secs exceeds proxies.chaos_max_secs",
+            ),
+        ];
+        for (settings, text) in cases {
+            assert_eq!(why(settings.validate(&lanes())), format!("invalid parameters: {text}"));
+        }
+        // An I2P router's own http:// proxy is fine.
+        with(vec![named("i2p", &|e| {
+            (e.i2p, e.url, e.pool) = (true, "http://127.0.0.1:4444".into(), false)
+        })])
+        .validate(&lanes())
+        .unwrap();
+    }
+
+    #[test]
+    fn a_topology_says_which_lane_uses_which_relay() {
+        let (a, b) = ("wss://a.example", "wss://b.example");
+        let mut t = topology(&[a, b]);
+        assert_eq!(t.relay_users(a), ids(&["invoices", "admin"]));
+        assert_eq!(t.relays_for("admin"), ids(&[a, b]));
+        // One relay for one lane only (the address may end in a slash).
+        t.relay_keys.insert(format!("{b}/"), ids(&["invoices"]));
+        assert_eq!(t.relay_users(b), ids(&["invoices"]));
+        assert_eq!(t.relays_for("admin"), ids(&[a]));
+        assert_eq!(t.relays_for("invoices"), ids(&[a, b]));
+        assert_eq!(t.relays_through(&ids(&["admin"])), ids(&[a]));
+        assert_eq!(t.relays_through(&[]), ids(&[a, b]));
+        // The settings are reached through the topology, and can be changed there.
+        assert_eq!(t.relays.len(), 2);
+        t.relays.pop();
+        assert_eq!(t.settings.relays, ids(&[a]));
+    }
+
+    #[test]
+    fn a_topology_is_checked_as_a_whole() {
+        let (a, b) = ("wss://a.example", "wss://b.example");
+        topology(&[a, b]).validate().unwrap();
+        let refused = |change: &dyn Fn(&mut Topology)| {
+            let mut t = topology(&[a, b]);
+            change(&mut t);
+            why(t.validate())
+        };
+        // The proxies and the rules are checked first.
+        assert_eq!(
+            refused(&|t| t.proxies.rotate_secs = 1),
+            "invalid parameters: proxies.rotate_secs must be between 60 and 604800"
+        );
+        assert_eq!(
+            refused(&|t| t.proxies.rules = vec![Rule {
+                name: String::new(),
+                patterns: Vec::new(),
+                keys: Vec::new(),
+                to: RouteTo::Block,
+                fallback: Fallback::Offline,
+            }]),
+            "invalid parameters: rule 1: between 1 and 16 relays or patterns are required"
+        );
+        // A lane whose relays take the default route needs a proxy in it.
+        assert_eq!(
+            refused(&|t| {
+                let mut tor = entry("tor", "socks5://h:1");
+                tor.keys = ids(&["invoices"]);
+                t.proxies.list = vec![tor];
+            }),
+            "invalid parameters: no proxy in the default route is assigned to the administration key, which would \
+             connect without one"
+        );
+        // With a transparent proxy, or a proxy for every lane, there is nothing to forget.
+        let mut ok = topology(&[a, b]);
+        ok.proxies.list = vec![entry("tor", "socks5://h:1")];
+        ok.validate().unwrap();
+        ok.proxies.list[0].keys = ids(&["invoices"]);
+        ok.proxies.transparent = true;
+        ok.validate().unwrap();
+        assert_eq!(
+            refused(&|t| {
+                t.relay_keys.insert(a.into(), ids(&["nobody"]));
+            }),
+            "invalid parameters: relay: there is no key 'nobody'"
+        );
+        for bad in [" ".to_string(), "n".repeat(61), "a\u{202e}b".to_string()] {
+            assert_eq!(
+                refused(&|t| {
+                    t.relay_names.insert(a.into(), bad.clone());
+                }),
+                "invalid parameters: relay names must be 1 to 60 visible characters"
+            );
+        }
+        assert_eq!(
+            refused(&|t| {
+                t.relay_keys.insert(a.into(), ids(&["invoices"]));
+                t.relay_keys.insert(b.into(), ids(&["invoices"]));
+            }),
+            "invalid parameters: no relay is assigned to the administration key, which could then not be reached"
+        );
+        let mut named = topology(&[a, b]);
+        named.relay_names.insert(a.into(), "Relay A".into());
+        named.validate().unwrap();
+    }
+
+    #[test]
+    fn stored_proxy_settings_read_back_with_their_defaults() {
+        let old: ProxySettings = serde_json::from_value(serde_json::json!({
+            "list": [{ "id": "a", "name": "", "url": "http://127.0.0.1:4444" }],
+            "mode": "failover", "rotate_secs": 3600, "chaos_min_secs": 300, "chaos_max_secs": 900,
+            "offline": "kill_switch", "transparent": false
+        }))
+        .unwrap();
+        assert!(old.list[0].pool && !old.list[0].i2p && old.list[0].keys.is_empty());
+        assert!(old.rules.is_empty());
+        assert_eq!(old.i2p_registries, crate::i2p::default_registries());
+        let network: NetworkSettings =
+            serde_json::from_value(serde_json::json!({ "relays": ["wss://a.example"], "proxies": old })).unwrap();
+        assert!(network.relay_keys.is_empty() && network.relay_names.is_empty());
+    }
+}
