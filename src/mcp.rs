@@ -18,11 +18,9 @@ use serde_json::json;
 use crate::error::Error;
 use crate::keys::KeyDef;
 use crate::manage::{
-    AddOperatorParams, AuditLog, AuditParams, Backup, BackupList, CheckProxyParams, ControlParams, ControlResult,
-    Health, Metrics, RelayHealthReport, RelayHistory, RelayHistoryParams, RemoveOperatorParams, ResolveI2pNameParams,
-    Series, SeriesParams, SettingsView, UpdateSettingsParams, WipeParams, WipeResult,
+    AddOperatorParams, AuditLog, AuditParams, Backup, BackupList, ControlParams, ControlResult, Health, Metrics,
+    RemoveOperatorParams, Series, SeriesParams, SettingsView, UpdateSettingsParams, WipeParams, WipeResult,
 };
-use crate::privacy::{PrivacyAudit, ProxyCheck};
 use crate::service::{
     CreateInvoiceParams, GetInvoiceParams, Info, Invoice, InvoiceList, ListInvoicesParams, Service, Stats,
 };
@@ -60,6 +58,11 @@ pub struct PayServer {
 }
 
 impl PayServer {
+    /// Every tool: this service's own and the network tools of its engine.
+    pub fn tool_router() -> ToolRouter<Self> {
+        Self::own_tools() + deadhop_netengine::tools::network_router()
+    }
+
     pub fn new(svc: Arc<Service>, key: &'static KeyDef) -> Self {
         let mut router = Self::tool_router();
         if let Some(allowed) = key.tools {
@@ -81,7 +84,7 @@ impl PayServer {
     }
 }
 
-#[tool_router]
+#[tool_router(router = own_tools)]
 impl PayServer {
     #[tool(
         name = "get_info",
@@ -282,63 +285,6 @@ impl PayServer {
         self.svc.wipe(&c, p).map(Json).map_err(rpc_error)
     }
 
-    #[tool(
-        name = "resolve_i2p_name",
-        description = "Operators only: look up an I2P name (such as example.i2p) by asking every configured I2P name registry through the I2P router proxy; returns its .b32.i2p address and which registries agree, disagree or do not know it."
-    )]
-    async fn tool_resolve_i2p_name(
-        &self,
-        Parameters(p): Parameters<ResolveI2pNameParams>,
-        ctx: RequestContext<RoleServer>,
-    ) -> Result<Json<crate::i2p::I2pNameLookup>, ErrorData> {
-        let c = caller_from(&ctx.extensions);
-        self.svc.resolve_i2p_name(&c, p).await.map(Json).map_err(rpc_error)
-    }
-
-    #[tool(
-        name = "check_proxy",
-        description = "Operators only: open a tunnel through a proxy (default: the current one) to each live relay and report, per relay, whether it worked and why not."
-    )]
-    async fn tool_check_proxy(
-        &self,
-        Parameters(p): Parameters<CheckProxyParams>,
-        ctx: RequestContext<RoleServer>,
-    ) -> Result<Json<ProxyCheck>, ErrorData> {
-        let c = caller_from(&ctx.extensions);
-        self.svc.check_proxy(&c, p).await.map(Json).map_err(rpc_error)
-    }
-
-    #[tool(
-        name = "check_relays",
-        description = "Operators only: check every live relay now: does it connect, does it carry ContextVM events from one connection to another, and is it rate-limiting us."
-    )]
-    async fn tool_check_relays(&self, ctx: RequestContext<RoleServer>) -> Result<Json<RelayHealthReport>, ErrorData> {
-        let c = caller_from(&ctx.extensions);
-        self.svc.check_relays(&c).await.map(Json).map_err(rpc_error)
-    }
-
-    #[tool(
-        name = "get_relay_history",
-        description = "Operators only: how each relay did over a window (15m, 1h, 12h, 1d or 1w): health checks and replies sent, how many failed, and a series of buckets to plot."
-    )]
-    async fn tool_get_relay_history(
-        &self,
-        Parameters(p): Parameters<RelayHistoryParams>,
-        ctx: RequestContext<RoleServer>,
-    ) -> Result<Json<RelayHistory>, ErrorData> {
-        let c = caller_from(&ctx.extensions);
-        self.svc.relay_history(&c, p).map(Json).map_err(rpc_error)
-    }
-
-    #[tool(
-        name = "get_privacy_audit",
-        description = "Operators only: what can be learned about where this service runs, scored from the checks it can make."
-    )]
-    async fn tool_get_privacy_audit(&self, ctx: RequestContext<RoleServer>) -> Result<Json<PrivacyAudit>, ErrorData> {
-        let c = caller_from(&ctx.extensions);
-        self.svc.privacy_audit(&c).await.map(Json).map_err(rpc_error)
-    }
-
     #[tool(name = "get_audit_log", description = "Operators only: recent operator actions.")]
     async fn tool_get_audit_log(
         &self,
@@ -415,6 +361,24 @@ impl ServerHandler for PayServer {
         ServerInfo::new(ServerCapabilities::builder().enable_tools().build())
             .with_server_info(Implementation::new("deadhop", env!("CARGO_PKG_VERSION")))
             .with_instructions("On-chain bitcoin invoices over ContextVM.")
+    }
+}
+
+impl deadhop_netengine::tools::NetworkServer for PayServer {
+    fn network(&self) -> &crate::netruntime::NetworkRuntime {
+        &self.svc.net
+    }
+
+    fn host(&self) -> &dyn crate::netruntime::NetworkHost {
+        &*self.svc
+    }
+
+    fn caller(&self, ext: &Extensions) -> crate::service::Caller {
+        caller_from(ext)
+    }
+
+    fn to_rpc(&self, e: deadhop_netengine::error::Error) -> ErrorData {
+        rpc_error(e.into())
     }
 }
 

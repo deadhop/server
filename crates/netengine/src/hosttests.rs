@@ -1104,3 +1104,135 @@ async fn the_privacy_audit_is_given_what_the_runtime_and_the_host_know() {
     assert_ne!(stale, fresh, "a check of another proxy says nothing about this one");
     assert!(fresh.contains("socks5://tor:1"));
 }
+
+/// A service that serves only the network tools, over the fake host, to an
+/// operator or to a stranger.
+struct ToolServer {
+    rig: Rig,
+    operator: bool,
+}
+
+impl crate::tools::NetworkServer for ToolServer {
+    fn network(&self) -> &NetworkRuntime {
+        &self.rig.net
+    }
+
+    fn host(&self) -> &dyn NetworkHost {
+        &self.rig.host
+    }
+
+    fn caller(&self, _: &rmcp::model::Extensions) -> Caller {
+        if self.operator {
+            op()
+        } else {
+            Caller::default()
+        }
+    }
+
+    fn to_rpc(&self, e: Error) -> rmcp::ErrorData {
+        rmcp::ErrorData::invalid_params(e.to_string(), None)
+    }
+}
+
+impl rmcp::ServerHandler for ToolServer {
+    async fn call_tool(
+        &self,
+        request: rmcp::model::CallToolRequestParams,
+        context: rmcp::service::RequestContext<rmcp::RoleServer>,
+    ) -> std::result::Result<rmcp::model::CallToolResult, rmcp::ErrorData> {
+        let ctx = rmcp::handler::server::tool::ToolCallContext::new(self, request, context);
+        crate::tools::network_router::<Self>().call(ctx).await
+    }
+
+    async fn list_tools(
+        &self,
+        _: Option<rmcp::model::PaginatedRequestParams>,
+        _: rmcp::service::RequestContext<rmcp::RoleServer>,
+    ) -> std::result::Result<rmcp::model::ListToolsResult, rmcp::ErrorData> {
+        Ok(rmcp::model::ListToolsResult {
+            tools: crate::tools::network_router::<Self>().list_all(),
+            meta: None,
+            next_cursor: None,
+        })
+    }
+}
+
+/// Serve `server` in memory and connect a client to it.
+async fn connect(server: ToolServer) -> rmcp::service::RunningService<rmcp::RoleClient, ()> {
+    use rmcp::ServiceExt;
+    let (a, b) = tokio::io::duplex(1 << 20);
+    tokio::spawn(async move {
+        let running = server.serve(a).await.unwrap();
+        let _ = running.waiting().await;
+    });
+    ().serve(b).await.unwrap()
+}
+
+async fn call(
+    client: &rmcp::service::RunningService<rmcp::RoleClient, ()>,
+    tool: &'static str,
+    args: serde_json::Value,
+) -> std::result::Result<serde_json::Value, String> {
+    let params = rmcp::model::CallToolRequestParams::new(tool).with_arguments(args.as_object().unwrap().clone());
+    match client.call_tool(params).await {
+        Ok(r) => Ok(r.structured_content.unwrap()),
+        Err(e) => Err(e.to_string()),
+    }
+}
+
+#[tokio::test]
+async fn the_network_tools_are_served_by_whichever_service_merges_them() {
+    let (relay, _l) = listening_relay().await;
+    let client = connect(ToolServer {
+        rig: rig(&[&relay]),
+        operator: true,
+    })
+    .await;
+    let tools = client.list_all_tools().await.unwrap();
+    let names: Vec<&str> = tools.iter().map(|t| t.name.as_ref()).collect();
+    assert_eq!(
+        names,
+        [
+            "check_proxy",
+            "check_relays",
+            "get_privacy_audit",
+            "get_relay_history",
+            "resolve_i2p_name"
+        ]
+    );
+    assert!(tools
+        .iter()
+        .all(|t| t.output_schema.is_some() && t.description.is_some()));
+    assert_eq!(
+        call(&client, "check_proxy", serde_json::json!({})).await.unwrap()["status"],
+        "direct"
+    );
+    let checked = call(&client, "check_relays", serde_json::json!({})).await.unwrap();
+    assert_eq!(checked["relays"][0]["relay"], relay.as_str());
+    let history = call(&client, "get_relay_history", serde_json::json!({ "window": "15m" }))
+        .await
+        .unwrap();
+    assert_eq!(history["bucket_secs"], 60);
+    assert!(call(&client, "get_privacy_audit", serde_json::json!({})).await.unwrap()["checks"].is_array());
+    let lookup = call(&client, "resolve_i2p_name", serde_json::json!({ "name": "x.i2p" })).await;
+    assert!(lookup.unwrap_err().contains("there is no I2P router proxy"));
+    client.cancel().await.unwrap();
+
+    // A stranger is refused by every one of them, in the service's own words.
+    let client = connect(ToolServer {
+        rig: rig(&[&relay]),
+        operator: false,
+    })
+    .await;
+    for (tool, args) in [
+        ("check_proxy", serde_json::json!({})),
+        ("check_relays", serde_json::json!({})),
+        ("get_relay_history", serde_json::json!({})),
+        ("get_privacy_audit", serde_json::json!({})),
+        ("resolve_i2p_name", serde_json::json!({ "name": "x.i2p" })),
+    ] {
+        let refused = call(&client, tool, args).await.unwrap_err();
+        assert!(refused.contains("not authorized"), "{tool}: {refused}");
+    }
+    client.cancel().await.unwrap();
+}
