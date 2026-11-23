@@ -1,0 +1,20 @@
+[package]
+name = "deadhop-common"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.88"
+description = "Conventions shared by deadhop services: the wallet account, private files and keys, the rate limiter"
+license = "MIT"
+publish = false
+
+[dependencies]
+bip39 = { version = "2", default-features = false, features = ["std"] }
+bitcoin = { version = "0.32", default-features = false, features = ["std"] }
+hex = "0.4"
+nostr-sdk = "0.44"
+thiserror = "2"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "io-util", "time", "sync", "signal"] }
+
+[dev-dependencies]
+deadhop-electrum = { path = "../electrum" }
+tempfile = "3"

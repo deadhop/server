@@ -728,7 +728,7 @@ impl Service {
         let scripts = chunk
             .iter()
             .map(|inv| self.wallet.script_for(&inv.address))
-            .collect::<Result<Vec<_>>>()?;
+            .collect::<deadhop_common::error::Result<Vec<_>>>()?;
         let snap = self.chain.snapshot(&scripts).await?;
         if snap.payments.len() != chunk.len() {
             return Err(Error::Chain("backend returned the wrong number of histories".into()));
