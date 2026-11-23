@@ -24,9 +24,12 @@ use std::collections::HashMap;
 use rmcp::schemars::{self, JsonSchema};
 use serde::Serialize;
 
+use crate::netruntime::{NetworkHost, NetworkRuntime};
+use crate::network::Topology;
 use crate::privacy::ProxyCheck;
 use crate::relay::{parse_proxy, redact};
-use crate::service::Service;
+// The probe loop of this service, at its old path.
+pub use crate::nethost::probe_loop;
 use crate::settings::{OfflinePolicy, ProxyMode, ProxySettings};
 
 /// A proxy that came back must stay up this long before failover returns to it.
@@ -393,35 +396,30 @@ pub struct PoolHealth {
     pub routes: Vec<RouteHealth>,
 }
 
-impl Service {
+impl NetworkRuntime {
     /// The posture the plan implies right now: the offline policy applies as
     /// soon as any key has no reachable proxy.
-    pub fn posture(&self) -> Posture {
-        let settings = self.settings().clone();
+    pub fn posture(&self, host: &dyn NetworkHost) -> Posture {
+        let settings = host.topology();
         let offline = self
             .pool
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .applied
             .iter()
-            .any(|(k, a)| a.state == PoolState::Offline && crate::routes::uses_default(&settings.topology(), k));
+            .any(|(k, a)| a.state == PoolState::Offline && crate::routes::uses_default(&settings, k));
         if offline {
-            Posture::offline(self.settings().proxies.offline)
+            Posture::offline(settings.proxies.offline)
         } else {
             Posture::Normal
         }
     }
 
-    /// What the public invoices key's relay connections should be now.
-    pub fn connection(&self) -> Connection {
-        self.connection_for(crate::keys::INVOICES)
-    }
-
     /// What one key's relay connections should be now. While its proxies are
     /// all down, the offline policy decides: the kill switch cuts the key off,
     /// and the others connect straight for the one kind of key they keep.
-    pub fn connection_for(&self, key: &str) -> Connection {
-        let settings = self.settings();
+    pub fn connection_for(&self, host: &dyn NetworkHost, key: &str) -> Connection {
+        let settings = host.topology();
         if settings.proxies.transparent {
             return Connection::Direct;
         }
@@ -433,12 +431,11 @@ impl Service {
             Some(a) => match (a.state, &a.active_url) {
                 (PoolState::Direct | PoolState::Transparent, _) => Connection::Direct,
                 (PoolState::Offline, _) => {
-                    let operators = crate::keys::def(key).is_some_and(|k| k.operators_only);
-                    match (settings.proxies.offline, operators) {
-                        (OfflinePolicy::KillSwitch, _)
-                        | (OfflinePolicy::AdminOnly, false)
-                        | (OfflinePolicy::InvoicingOnly, true) => Connection::Off,
-                        _ => Connection::Direct,
+                    // What the policy means for this lane is the host's to say.
+                    if host.connects_while_offline(key, settings.proxies.offline) {
+                        Connection::Direct
+                    } else {
+                        Connection::Off
                     }
                 }
                 (_, url) => url.clone().map_or(Connection::Off, Connection::Via),
@@ -446,14 +443,9 @@ impl Service {
         }
     }
 
-    /// The proxy url relay traffic goes through, if any.
-    pub fn active_proxy(&self) -> Option<String> {
-        self.active_proxy_for(crate::keys::INVOICES)
-    }
-
     /// The proxy url one key's relay traffic goes through, if any.
-    pub fn active_proxy_for(&self, key: &str) -> Option<String> {
-        match self.connection_for(key) {
+    pub fn active_proxy_for(&self, host: &dyn NetworkHost, key: &str) -> Option<String> {
+        match self.connection_for(host, key) {
             Connection::Via(u) => Some(u),
             _ => None,
         }
@@ -470,11 +462,11 @@ impl Service {
     }
 
     /// Probe every proxy (all at once, against the live relays) and plan again.
-    pub async fn refresh_pool(&self) {
-        let cfg = self.settings().proxies.clone();
+    pub async fn refresh_pool(&self, host: &dyn NetworkHost) {
+        let cfg = host.topology().proxies.clone();
         if !cfg.transparent && !cfg.list.is_empty() {
-            let settings = self.settings().clone();
-            let now = (self.clock)();
+            let settings = host.topology();
+            let now = host.now();
             // A proxy is only ever tried against the relays it would carry
             // (by the rules, or as part of the default route for its keys), so
             // it never sees a relay or key it was not given. One that would
@@ -485,7 +477,7 @@ impl Service {
                 .map(|e| {
                     (
                         e.id.clone(),
-                        crate::routes::relays_through_proxy(&settings.topology(), &e.id),
+                        crate::routes::relays_through_proxy(&settings, &e.id),
                         parse_proxy(&e.url).ok().flatten(),
                         redact(&e.url),
                     )
@@ -507,7 +499,7 @@ impl Service {
                 }
             }
         }
-        self.replan();
+        self.replan(host);
     }
 
     /// Forget a proxy's last probe (it carries nothing, so it is not tried).
@@ -540,19 +532,20 @@ impl Service {
     /// Choose a proxy from the probes so far. Wakes the supervisor when the
     /// connections should change, and undoes a proxy change that left nothing
     /// reachable.
-    pub fn replan(&self) {
-        let settings = self.settings().clone();
+    pub fn replan(&self, host: &dyn NetworkHost) {
+        let settings = host.topology();
         let cfg = settings.proxies.clone();
-        let now = (self.clock)();
+        let now = host.now();
         let (decided, revert_to) = {
             let mut pool = self.pool.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
             pool.probes.retain(|id, _| cfg.list.iter().any(|e| &e.id == id));
             let mut decided: Vec<(String, Applied)> = Vec::new();
-            for key in crate::keys::KEYS.iter() {
+            for key in settings.lanes.iter() {
                 // This key's own default route: the proxies in the pool that
                 // it may use, in list order.
                 let mut lane = cfg.clone();
-                lane.list.retain(|e| e.pool && crate::keys::assigned(&e.keys, key.id));
+                lane.list
+                    .retain(|e| e.pool && crate::network::assigned(&e.keys, &key.id));
                 if lane.list.is_empty() && !cfg.list.is_empty() && !cfg.transparent {
                     // Proxies are configured but none is in this key's
                     // default route: that is not "no proxy, go straight".
@@ -584,7 +577,7 @@ impl Service {
                         )
                     })
                     .collect();
-                let mut rot = pool.rot.remove(key.id).unwrap_or_default();
+                let mut rot = pool.rot.remove(&key.id).unwrap_or_default();
                 let d = plan(&lane, &reach, &mut rot, now, &mut random_between);
                 pool.rot.insert(key.id.to_string(), rot);
                 let active_url = d
@@ -606,7 +599,7 @@ impl Service {
             // Only a key whose relays may use the default route is hurt by it being down.
             let offline = decided
                 .iter()
-                .any(|(k, a)| a.state == PoolState::Offline && crate::routes::uses_default(&settings.topology(), k));
+                .any(|(k, a)| a.state == PoolState::Offline && crate::routes::uses_default(&settings, k));
             // A change that left a key with nothing reachable is undone once;
             // one that works (or a probation that ran out) ends the probation.
             let revert_to = match pool.probation.clone() {
@@ -620,7 +613,7 @@ impl Service {
             (decided, revert_to)
         };
         let reverted = revert_to.is_some_and(|previous| {
-            self.revert_proxies(
+            host.revert_proxies(
                 previous,
                 "none of the new proxies was reachable; back to the previous ones",
             )
@@ -650,7 +643,7 @@ impl Service {
         };
         // A rule's own proxy going up or down moves relays even when no
         // key's default route changed.
-        let routes = self.route_shape();
+        let routes = self.route_shape(host);
         let moved = {
             let mut pool = self.pool.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
             let moved = pool.route_shape != routes;
@@ -664,11 +657,12 @@ impl Service {
 
     /// Where every key's relays go now: (key, relay, proxy url, or "" for
     /// straight); relays with no connection are left out.
-    fn route_shape(&self) -> Vec<(String, String, Option<String>)> {
-        crate::keys::KEYS
+    fn route_shape(&self, host: &dyn NetworkHost) -> Vec<(String, String, Option<String>)> {
+        let lanes = host.topology().lanes;
+        lanes
             .iter()
             .flat_map(|k| {
-                self.routes_for(k.id).into_iter().map(move |r| {
+                self.routes_for(host, &k.id).into_iter().map(move |r| {
                     let url = match r.via {
                         crate::routes::Via::Proxy { url, .. } => Some(url),
                         crate::routes::Via::Direct => Some(String::new()),
@@ -683,32 +677,32 @@ impl Service {
     /// The label of a key that turning the strategy off would cut off now:
     /// one whose relays take the default route, whose first proxy there was
     /// down at its last probe while another of its proxies was up.
-    pub fn stranded_by_off(&self, next: &crate::settings::Settings) -> Option<&'static str> {
+    pub fn stranded_by_off(&self, next: &Topology) -> Option<String> {
         if next.proxies.transparent {
             return None;
         }
         let pool = self.pool.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         let up = |e: &&crate::settings::ProxyEntry| pool.probes.get(&e.id).map(|p| p.up);
-        crate::keys::KEYS
+        next.lanes
             .iter()
             .find(|k| {
                 let lane: Vec<_> = next
                     .proxies
                     .list
                     .iter()
-                    .filter(|e| e.pool && crate::keys::assigned(&e.keys, k.id))
+                    .filter(|e| e.pool && crate::network::assigned(&e.keys, &k.id))
                     .collect();
-                crate::routes::uses_default(&next.topology(), k.id)
+                crate::routes::uses_default(next, &k.id)
                     && lane.first().map(up) == Some(Some(false))
                     && lane.iter().skip(1).any(|e| up(e) == Some(true))
             })
-            .map(|k| k.label)
+            .map(|k| k.label.clone())
     }
 
     /// One key's default route now, as the routing rules see it.
-    pub fn default_route_for(&self, key: &str) -> crate::routes::DefaultRoute {
+    pub fn default_route_for(&self, host: &dyn NetworkHost, key: &str) -> crate::routes::DefaultRoute {
         use crate::routes::DefaultRoute;
-        match self.connection_for(key) {
+        match self.connection_for(host, key) {
             Connection::Off => DefaultRoute::Off,
             Connection::Direct => DefaultRoute::Direct,
             Connection::Via(url) => {
@@ -720,9 +714,9 @@ impl Service {
     }
 
     /// Where each of one key's relays goes now, and why.
-    pub fn routes_for(&self, key: &str) -> Vec<crate::routes::Resolved> {
-        let settings = self.settings().clone();
-        let default = self.default_route_for(key);
+    pub fn routes_for(&self, host: &dyn NetworkHost, key: &str) -> Vec<crate::routes::Resolved> {
+        let settings = host.topology();
+        let default = self.default_route_for(host, key);
         let up: std::collections::HashSet<String> = self
             .pool
             .lock()
@@ -732,12 +726,12 @@ impl Service {
             .filter(|(_, p)| p.up)
             .map(|(id, _)| id.clone())
             .collect();
-        crate::routes::resolve(&settings.topology(), key, &default, &|id| up.contains(id))
+        crate::routes::resolve(&settings, key, &default, &|id| up.contains(id))
     }
 
     /// The pool as the dashboard shows it.
-    pub fn pool_health(&self) -> PoolHealth {
-        let settings = self.settings().clone();
+    pub fn pool_health(&self, host: &dyn NetworkHost) -> PoolHealth {
+        let settings = host.topology();
         let cfg = settings.proxies.clone();
         let pool = self.pool.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         let waiting = if cfg.list.is_empty() {
@@ -745,16 +739,17 @@ impl Service {
         } else {
             PoolState::Offline
         };
-        let lanes: Vec<LaneHealth> = crate::keys::KEYS
+        let lanes: Vec<LaneHealth> = settings
+            .lanes
             .iter()
-            .map(|k| match pool.applied.get(k.id) {
+            .map(|k| match pool.applied.get(&k.id) {
                 Some(a) if !cfg.transparent => LaneHealth {
                     key: k.id.to_string(),
                     state: a.state,
                     active: a.active.clone(),
                     reachable: a.reachable,
                     next_switch_at: a.next_switch_at,
-                    uses_default: crate::routes::uses_default(&settings.topology(), k.id),
+                    uses_default: crate::routes::uses_default(&settings, &k.id),
                 },
                 _ => LaneHealth {
                     key: k.id.to_string(),
@@ -766,7 +761,7 @@ impl Service {
                     active: None,
                     reachable: 0,
                     next_switch_at: None,
-                    uses_default: crate::routes::uses_default(&settings.topology(), k.id),
+                    uses_default: crate::routes::uses_default(&settings, &k.id),
                 },
             })
             .collect();
@@ -789,10 +784,11 @@ impl Service {
             })
             .collect();
         drop(pool);
-        let routes = crate::keys::KEYS
+        let routes = settings
+            .lanes
             .iter()
             .flat_map(|k| {
-                self.routes_for(k.id).into_iter().map(move |r| {
+                self.routes_for(host, &k.id).into_iter().map(move |r| {
                     let (via, proxy) = match r.via {
                         crate::routes::Via::Proxy { id, .. } => (RouteVia::Proxy, Some(id)),
                         crate::routes::Via::Direct => (RouteVia::Direct, None),
@@ -848,14 +844,14 @@ pub fn probe_wait(next_switch_at: Option<u64>, now: u64) -> std::time::Duration 
 
 /// Probe the proxies now and then (and at once when asked), and keep the plan
 /// current: it also moves rotation along when its time comes.
-pub async fn probe_loop(svc: std::sync::Arc<Service>, stop: tokio_util::sync::CancellationToken) {
+pub async fn run_probe_loop(net: &NetworkRuntime, host: &dyn NetworkHost, stop: tokio_util::sync::CancellationToken) {
     loop {
-        svc.refresh_pool().await;
+        net.refresh_pool(host).await;
         // Rotation has its own timer; probes are slower than a short interval.
-        let wait = probe_wait(svc.pool_health().next_switch_at, (svc.clock)());
+        let wait = probe_wait(net.pool_health(host).next_switch_at, host.now());
         tokio::select! {
             _ = stop.cancelled() => return,
-            _ = svc.pool_wake.notified() => {}
+            _ = net.pool_wake.notified() => {}
             _ = tokio::time::sleep(wait) => {}
         }
     }

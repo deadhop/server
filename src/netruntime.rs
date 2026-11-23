@@ -8,6 +8,24 @@
 use std::sync::atomic::AtomicBool;
 use std::sync::Mutex;
 
+use crate::error::Result;
+use crate::network::{OfflinePolicy, ProxySettings, Topology};
+
+/// What the runtime asks of the service it runs in.
+pub trait NetworkHost: Send + Sync {
+    /// The live network settings, with the host's lanes.
+    fn topology(&self) -> Topology;
+    /// Seconds since the Unix epoch.
+    fn now(&self) -> u64;
+    /// While a lane's default route has nothing reachable: whether it
+    /// connects straight under this policy (or stays off). The kill switch
+    /// and "carry on" mean the same everywhere; what the policies in between
+    /// keep running is the host's own business.
+    fn connects_while_offline(&self, lane: &str, policy: OfflinePolicy) -> bool;
+    /// Put the previous proxy settings back (a change left nothing reachable).
+    fn revert_proxies(&self, previous: ProxySettings, why: &str) -> Result<()>;
+}
+
 /// The network state of one service (never saved).
 pub struct NetworkRuntime {
     /// Result of the last check of the live proxy.
