@@ -35,8 +35,12 @@ tracing-subscriber = { version = "0.3", default-features = false, features = ["f
 bip39 = { version = "2", default-features = false, features = ["std"] }
 # Certificate pinning, in its own crate (a path dependency: the build context stays ./server).
 deadhop-tlspin = { path = "crates/tlspin" }
+# Relay transport and host classifiers.
+deadhop-net = { path = "crates/net" }
 
 [dev-dependencies]
+# The stand-in proxies, for tests only.
+deadhop-net = { path = "crates/net", features = ["test-support"] }
 nostr-relay-builder = "0.44"
 rmcp = { version = "1.8", features = ["server", "client", "macros", "transport-worker"] }
 tempfile = "3"
