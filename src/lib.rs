@@ -10,6 +10,7 @@ pub mod keyholder;
 pub mod keys;
 pub mod manage;
 pub mod mcp;
+pub mod netruntime;
 pub mod network;
 pub mod pow;
 pub mod privacy;
