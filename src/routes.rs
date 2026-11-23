@@ -431,7 +431,7 @@ pub fn relays_through_proxy(settings: &Topology, id: &str) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::settings::ProxyEntry;
+    use crate::network::{Lane, NetworkSettings, ProxyEntry, ProxySettings};
 
     #[test]
     fn patterns_match_hosts_as_documented() {
@@ -516,7 +516,19 @@ mod tests {
     const PLAIN: &str = "wss://bucket.coracle.social";
 
     fn settings(rules: Vec<Rule>) -> Topology {
-        let mut s = crate::settings::tests::defaults().topology();
+        let lane = |id: &str, label: &str| Lane {
+            id: id.into(),
+            label: label.into(),
+        };
+        let mut s = Topology {
+            settings: NetworkSettings {
+                relays: Vec::new(),
+                relay_keys: Default::default(),
+                relay_names: Default::default(),
+                proxies: ProxySettings::default(),
+            },
+            lanes: vec![lane("invoices", "Public invoices"), lane("admin", "Administration")],
+        };
         s.relays = vec![VPN_RELAY.into(), PLAIN.into(), ONION.into(), LAN.into()];
         s.proxies.list = vec![entry("tor", true), entry("vpn", true), entry("i2p", false)];
         s.proxies.rules = rules;

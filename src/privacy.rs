@@ -13,9 +13,10 @@ use nostr_sdk::Url;
 use rmcp::schemars::{self, JsonSchema};
 use serde::Serialize;
 
-use crate::config::is_loopback_host;
-use crate::relay::{ProxyKind, ProxySpec, ProxyStatus, ProxyTransport};
-use crate::service::{is_plain_text, RelayState};
+use crate::netruntime::RelayState;
+use deadhop_net::hosts::is_loopback_host;
+use deadhop_net::is_plain_text;
+use deadhop_net::relay::{ProxyKind, ProxySpec, ProxyStatus, ProxyTransport};
 
 /// How long one relay may take to answer through the proxy.
 #[cfg(not(test))]
@@ -358,7 +359,7 @@ pub struct AuditInputs<'a> {
     /// How many proxies are listed.
     pub configured: usize,
     /// What the service does while none is reachable.
-    pub offline: crate::settings::OfflinePolicy,
+    pub offline: crate::network::OfflinePolicy,
     pub relays: Vec<RelayState>,
     pub last_check: Option<ProxyCheck>,
     /// The Electrum server, `host:port`.
@@ -478,7 +479,7 @@ pub fn audit(i: AuditInputs<'_>) -> PrivacyAudit {
             "fail",
             30,
             match i.offline {
-                crate::settings::OfflinePolicy::KillSwitch => {
+                crate::network::OfflinePolicy::KillSwitch => {
                     "Every proxy is down, so the kill switch has taken the service offline."
                 }
                 _ => "Every proxy is down, so relays connect straight to this machine and see its IP address.",
@@ -488,10 +489,10 @@ pub fn audit(i: AuditInputs<'_>) -> PrivacyAudit {
                 format!(
                     "when offline   {}",
                     match i.offline {
-                        crate::settings::OfflinePolicy::KillSwitch => "kill switch",
-                        crate::settings::OfflinePolicy::AdminOnly => "operators only",
-                        crate::settings::OfflinePolicy::InvoicingOnly => "invoicing only",
-                        crate::settings::OfflinePolicy::Open => "carry on",
+                        crate::network::OfflinePolicy::KillSwitch => "kill switch",
+                        crate::network::OfflinePolicy::AdminOnly => "operators only",
+                        crate::network::OfflinePolicy::InvoicingOnly => "invoicing only",
+                        crate::network::OfflinePolicy::Open => "carry on",
                     }
                 ),
                 relays_line,
@@ -768,8 +769,8 @@ pub fn audit(i: AuditInputs<'_>) -> PrivacyAudit {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::relay::parse_proxy;
-    use crate::relay::tests::{connect_proxy, socks5_proxy};
+    use deadhop_net::relay::parse_proxy;
+    use deadhop_net::testing::{connect_proxy, socks5_proxy};
     use tokio::net::TcpListener;
 
     fn code(e: io::Error) -> (String, String) {
@@ -974,7 +975,7 @@ mod tests {
 
     #[test]
     fn with_every_proxy_down_the_audit_says_what_the_policy_does() {
-        use crate::settings::OfflinePolicy::*;
+        use crate::network::OfflinePolicy::*;
         for (policy, needle, said) in [
             (KillSwitch, "kill switch has taken", "kill switch"),
             (AdminOnly, "connect straight", "operators only"),
@@ -1012,7 +1013,7 @@ mod tests {
             proxy_locked: true,
             transparent: false,
             configured: usize::from(proxy.is_some()),
-            offline: crate::settings::OfflinePolicy::KillSwitch,
+            offline: crate::network::OfflinePolicy::KillSwitch,
             relays: vec![relay(true)],
             last_check: Some(proxy_check("connected")),
             electrum: "127.0.0.1:50001".into(),

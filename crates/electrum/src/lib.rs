@@ -20,21 +20,8 @@ pub fn scripthash(script: &ScriptBuf) -> String {
     hex::encode(h)
 }
 
-/// Characters allowed in a memo. Besides control characters this refuses the
-/// invisible and direction-changing ones, which could be used to make a note
-/// shown on the merchant's page read as something else.
-pub fn is_plain_text(c: char) -> bool {
-    !(c.is_control()
-        || matches!(c,
-            '\u{00AD}' | '\u{061C}' | '\u{180E}' | '\u{FEFF}'
-            | '\u{200B}'..='\u{200F}'
-            | '\u{2028}'..='\u{202F}'
-            | '\u{2060}'..='\u{206F}'
-            | '\u{E000}'..='\u{F8FF}'
-            | '\u{FFF0}'..='\u{FFFF}'
-            | '\u{E0000}'..='\u{E0FFF}'
-            | '\u{F0000}'..='\u{10FFFF}'))
-}
+// What counts as plain text lives in the net crate; kept at its old path.
+pub use deadhop_net::is_plain_text;
 
 /// `host:port` (plain TCP) or `tls://host:port` / `ssl://host:port`, plus
 /// optional comma-separated certificate fingerprints to pin.

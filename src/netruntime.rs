@@ -11,13 +11,12 @@ use std::sync::Mutex;
 use rmcp::schemars::{self, JsonSchema};
 use serde::{Deserialize, Serialize};
 
-use crate::db::RelayEventRow;
 use crate::error::{Error, Result};
 use crate::network::{relay_key, OfflinePolicy, ProxySettings, Topology};
 use crate::privacy::{audit, own_listening, AuditInputs, PrivacyAudit, ProxyCheck};
-use crate::relay::{parse_proxy, redact};
 use crate::relayhealth::{check_relay, RelayHealth};
-use crate::service::{Caller, RelayState};
+use deadhop_cvm::caller::Caller;
+use deadhop_net::relay::{parse_proxy, redact};
 
 /// What the runtime asks of the service it runs in.
 #[async_trait::async_trait]
@@ -51,6 +50,27 @@ pub trait NetworkHost: Send + Sync {
     fn relay_events_since(&self, since: u64) -> Result<Vec<RelayEventRow>>;
     /// What the privacy audit needs to know about the host itself.
     fn audit_facts(&self) -> AuditFacts;
+}
+
+/// Connection state of one relay, as reported by the transport.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
+pub struct RelayState {
+    pub url: String,
+    /// Transport status, for example `connected`, `connecting` or `disconnected`.
+    pub status: String,
+    pub connected: bool,
+    /// The keys (by id) that use this relay.
+    pub keys: Vec<String>,
+}
+
+/// One relay result: a health check (`check`) or a reply sent (`send`).
+#[derive(Debug, PartialEq, Eq)]
+pub struct RelayEventRow {
+    pub at: u64,
+    pub relay: String,
+    pub kind: String,
+    pub ok: bool,
+    pub ms: Option<u64>,
 }
 
 /// What the privacy audit needs to know about the host itself.
@@ -385,7 +405,7 @@ impl NetworkRuntime {
             return Err(Error::RateLimited);
         }
         let _busy = Busy(&self.i2p_lookup_busy);
-        let proxy = crate::relay::ProxyTransport::new(spec);
+        let proxy = deadhop_net::relay::ProxyTransport::new(spec);
         let out = crate::i2p::lookup(&proxy, &cfg.i2p_registries, &name, crate::i2p::LOOKUP_SECS).await;
         let detail = match &out {
             Ok(l) => format!(
@@ -412,7 +432,7 @@ impl NetworkRuntime {
         // check must not make a connection the routes do not allow. Saved
         // proxies were validated when saved.
         let settings = host.topology();
-        let mut jobs: Vec<(String, Option<crate::relay::ProxySpec>)> = Vec::new();
+        let mut jobs: Vec<(String, Option<deadhop_net::relay::ProxySpec>)> = Vec::new();
         for r in &settings.relays {
             let route = settings.relay_users(r).into_iter().find_map(|k| {
                 self.routes_for(host, &k)
@@ -635,8 +655,9 @@ impl NetworkRuntime {
         let mut out: Vec<String> = Vec::new();
         for k in host.topology().lanes {
             for r in self.routes_for(host, &k.id) {
-                let internet = crate::routes::host_port(&r.relay)
-                    .is_some_and(|(h, _)| !crate::privacy::is_private_host(&h) && !crate::config::is_overlay_host(&h));
+                let internet = crate::routes::host_port(&r.relay).is_some_and(|(h, _)| {
+                    !crate::privacy::is_private_host(&h) && !deadhop_net::hosts::is_overlay_host(&h)
+                });
                 if r.via == crate::routes::Via::Direct
                     && r.reason == crate::routes::Reason::Rule
                     && internet

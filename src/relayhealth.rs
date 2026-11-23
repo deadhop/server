@@ -13,7 +13,7 @@ use nostr_sdk::{Client, EventBuilder, Filter, Keys, Kind, Tag, Timestamp};
 use rmcp::schemars::{self, JsonSchema};
 use serde::Serialize;
 
-use crate::relay::{ProxySpec, ProxyTransport};
+use deadhop_net::relay::{ProxySpec, ProxyTransport};
 
 // The ContextVM event kind, defined once in the ContextVM crate.
 pub use deadhop_cvm::CTXVM_KIND;
@@ -304,8 +304,8 @@ mod tests {
     #[tokio::test]
     async fn checks_go_through_the_proxy() {
         let relay = MockRelay::run().await.unwrap();
-        let (port, _p) = crate::relay::tests::socks5_proxy(None).await;
-        let spec = crate::relay::parse_proxy(&format!("socks5://127.0.0.1:{port}")).unwrap();
+        let (port, _p) = deadhop_net::testing::socks5_proxy(None).await;
+        let spec = deadhop_net::relay::parse_proxy(&format!("socks5://127.0.0.1:{port}")).unwrap();
         let h = check_relay(&relay.url().await.to_string(), spec.as_ref(), LIMIT, 1).await;
         assert_eq!(h.status, "ok", "{h:?}");
     }

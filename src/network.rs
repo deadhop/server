@@ -272,10 +272,10 @@ impl ProxyPatch {
         for input in list.iter_mut() {
             let stored = match &input.id {
                 Some(id) => current.iter().find(|c| &c.id == id),
-                None => current.iter().find(|c| crate::relay::redact(&c.url) == input.url),
+                None => current.iter().find(|c| deadhop_net::relay::redact(&c.url) == input.url),
             };
             if input.url.contains("***") {
-                match stored.filter(|c| crate::relay::redact(&c.url) == input.url) {
+                match stored.filter(|c| deadhop_net::relay::redact(&c.url) == input.url) {
                     Some(c) => input.url.clone_from(&c.url),
                     None => {
                         return Err(Error::InvalidParams(
@@ -352,13 +352,13 @@ impl ProxySettings {
             if !ok_id {
                 return Err(Error::InvalidParams("proxy: bad id".into()));
             }
-            if e.name.chars().count() > NAME_LEN || !e.name.chars().all(crate::service::is_plain_text) {
+            if e.name.chars().count() > NAME_LEN || !e.name.chars().all(deadhop_net::is_plain_text) {
                 return Err(Error::InvalidParams(format!(
                     "proxy name must be at most {NAME_LEN} visible characters"
                 )));
             }
             check_ids(lanes, &e.keys, "proxy")?;
-            if crate::relay::parse_proxy(&e.url)?.is_none() {
+            if deadhop_net::relay::parse_proxy(&e.url)?.is_none() {
                 return Err(Error::InvalidParams("proxy: the address is empty".into()));
             }
             if self.list[..i].iter().any(|o| o.id == e.id) {
@@ -404,7 +404,9 @@ impl ProxySettings {
     // Replace each url's password with `***`.
     pub fn redacted(&self) -> ProxySettings {
         let mut s = self.clone();
-        s.list.iter_mut().for_each(|e| e.url = crate::relay::redact(&e.url));
+        s.list
+            .iter_mut()
+            .for_each(|e| e.url = deadhop_net::relay::redact(&e.url));
         s
     }
 }
@@ -502,7 +504,7 @@ impl Topology {
         for name in self.relay_names.values() {
             if name.trim().is_empty()
                 || name.chars().count() > NAME_LEN
-                || !name.chars().all(crate::service::is_plain_text)
+                || !name.chars().all(deadhop_net::is_plain_text)
             {
                 return Err(Error::InvalidParams(format!(
                     "relay names must be 1 to {NAME_LEN} visible characters"

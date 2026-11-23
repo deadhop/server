@@ -13,7 +13,7 @@ use serde::Serialize;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 use crate::error::{Error, Result};
-use crate::relay::ProxyTransport;
+use deadhop_net::relay::ProxyTransport;
 
 /// Registries used when none are configured.
 pub const DEFAULT_REGISTRIES: [&str; 2] = [
@@ -614,7 +614,7 @@ pub(crate) mod tests {
         .into();
         let (port, seen, task) = fake_router(pages).await;
         let proxy = ProxyTransport::new(
-            crate::relay::parse_proxy(&format!("http://127.0.0.1:{port}"))
+            deadhop_net::relay::parse_proxy(&format!("http://127.0.0.1:{port}"))
                 .unwrap()
                 .unwrap(),
         );
@@ -672,7 +672,7 @@ pub(crate) mod tests {
         .into();
         let (port, _seen, task) = fake_router(pages).await;
         let proxy = ProxyTransport::new(
-            crate::relay::parse_proxy(&format!("http://127.0.0.1:{port}"))
+            deadhop_net::relay::parse_proxy(&format!("http://127.0.0.1:{port}"))
                 .unwrap()
                 .unwrap(),
         );
@@ -705,7 +705,7 @@ pub(crate) mod tests {
             let _ = s.read_to_end(&mut rest).await;
         });
         let proxy = ProxyTransport::new(
-            crate::relay::parse_proxy(&format!("http://127.0.0.1:{port}"))
+            deadhop_net::relay::parse_proxy(&format!("http://127.0.0.1:{port}"))
                 .unwrap()
                 .unwrap(),
         );
