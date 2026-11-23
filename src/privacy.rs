@@ -373,6 +373,36 @@ pub struct AuditInputs<'a> {
 }
 
 /// Whether a host is on this machine or a private network.
+/// Looks up the addresses of `host`; empty when it cannot be resolved.
+pub type Resolver = std::sync::Arc<
+    dyn Fn(String, u16) -> std::pin::Pin<Box<dyn std::future::Future<Output = Vec<std::net::IpAddr>> + Send>>
+        + Send
+        + Sync,
+>;
+
+/// The system resolver, with a short timeout. A direct route already uses it
+/// to connect, so the lookup tells nobody anything new.
+pub fn system_resolver() -> Resolver {
+    std::sync::Arc::new(|host, port| {
+        Box::pin(async move {
+            let lookup = tokio::net::lookup_host((host.as_str(), port));
+            let found = tokio::time::timeout(std::time::Duration::from_secs(3), lookup).await;
+            found
+                .ok()
+                .and_then(std::io::Result::ok)
+                .map(|a| a.map(|s| s.ip()).collect())
+                .unwrap_or_default()
+        })
+    })
+}
+
+/// Whether a host name resolves only to this machine or private networks
+/// (so a direct connection to it never leaves the local network). A name that
+/// does not resolve counts as public.
+pub fn resolves_private(addrs: &[std::net::IpAddr]) -> bool {
+    !addrs.is_empty() && addrs.iter().all(|ip| is_private_host(&ip.to_string()))
+}
+
 pub fn is_private_host(host: &str) -> bool {
     let host = host.trim_start_matches('[').trim_end_matches(']').to_ascii_lowercase();
     if is_loopback_host(&host) {
@@ -914,6 +944,25 @@ mod tests {
         for h in ["8.8.8.8", "100.128.0.1", "2001:db8::1", "electrum.blockstream.info"] {
             assert!(!is_private_host(h), "{h}");
         }
+    }
+
+    #[test]
+    fn names_count_as_private_only_when_every_address_is() {
+        let ip = |s: &str| s.parse::<std::net::IpAddr>().unwrap();
+        assert!(resolves_private(&[ip("192.168.151.196")]));
+        assert!(resolves_private(&[ip("10.0.0.1"), ip("fd00::1")]));
+        assert!(!resolves_private(&[ip("10.0.0.1"), ip("1.1.1.1")]));
+        assert!(
+            !resolves_private(&[]),
+            "a name that does not resolve is not known to be local"
+        );
+    }
+
+    #[tokio::test]
+    async fn the_system_resolver_looks_names_up() {
+        let resolve = system_resolver();
+        assert!(resolve("localhost".into(), 80).await.iter().all(|a| a.is_loopback()));
+        assert!(resolve("nothing.invalid".into(), 80).await.is_empty());
     }
 
     fn relay(connected: bool) -> RelayState {

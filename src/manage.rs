@@ -964,14 +964,34 @@ impl Service {
             electrum_transport: self.cfg.electrum_security.label().to_string(),
             announce,
             listening: own_listening(&self.proc_net),
-            direct_by_rule: self.direct_by_rule(),
+            direct_by_rule: self.direct_by_rule().await,
             now: (self.clock)(),
         }))
     }
 
     /// Relays a routing rule sends straight to a host on the internet (not
-    /// this machine, a private network, or Tor, I2P and FIPS), once each.
-    fn direct_by_rule(&self) -> Vec<String> {
+    /// this machine, a private network, or Tor, I2P and FIPS), once each. A
+    /// name that resolves only to private addresses (a LAN name such as
+    /// relay.home.example) stays on the local network and is not listed.
+    async fn direct_by_rule(&self) -> Vec<String> {
+        let mut out: Vec<String> = Vec::new();
+        for relay in self.direct_by_rule_text() {
+            let (host, port) = crate::routes::host_port(&relay).expect("listed relays have a host");
+            let resolve = self
+                .resolver
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .clone();
+            if !crate::privacy::resolves_private(&resolve(host, port).await) {
+                out.push(relay);
+            }
+        }
+        out
+    }
+
+    /// The relays routed direct by a rule whose host name is not, as written,
+    /// private (an address, a single label, .lan and similar, or an overlay).
+    fn direct_by_rule_text(&self) -> Vec<String> {
         let mut out: Vec<String> = Vec::new();
         for k in crate::keys::KEYS {
             for r in self.routes_for(k.id) {
