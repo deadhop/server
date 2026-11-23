@@ -45,14 +45,8 @@ pub fn system_clock() -> Clock {
     })
 }
 
-/// Who is asking, as established by the transport.
-#[derive(Debug, Clone, Default)]
-pub struct Caller {
-    /// Hex public key that signed the request.
-    pub pubkey: Option<String>,
-    /// The signed request event itself.
-    pub event: Option<Event>,
-}
+// Who is asking; it lives in the ContextVM crate and keeps its old path.
+pub use deadhop_cvm::caller::Caller;
 
 /// Arguments of `create_invoice`.
 #[derive(Debug, Clone, Deserialize, JsonSchema)]

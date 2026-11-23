@@ -43,8 +43,8 @@ fn committed_target(event: &Event) -> Option<u32> {
     })
 }
 
-/// Kind of a ContextVM request event.
-pub const CTXVM_KIND: u16 = 25910;
+// The ContextVM event kind, defined once in the ContextVM crate.
+pub use deadhop_cvm::CTXVM_KIND;
 
 /// Whether the event names `pubkey` (hex) as its recipient.
 fn addressed_to(event: &Event, pubkey: &str) -> bool {

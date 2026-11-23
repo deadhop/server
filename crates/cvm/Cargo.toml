@@ -1,0 +1,23 @@
+[package]
+name = "deadhop-cvm"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.88"
+description = "ContextVM plumbing for deadhop services: the local MCP handshake, the caller of a request, the event kind"
+license = "MIT"
+publish = false
+
+[features]
+# An in-memory transport for the tests of the services that use this crate.
+# Enabled only from dev-dependencies; never part of a release build.
+test-support = ["dep:tokio"]
+
+[dependencies]
+contextvm-sdk = "0.2.2"
+nostr-sdk = "0.44"
+rmcp = { version = "1.8", features = ["server", "macros", "transport-worker"] }
+serde_json = "1"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "io-util", "time", "sync", "signal"], optional = true }
+
+[dev-dependencies]
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "io-util", "time", "sync", "signal"] }

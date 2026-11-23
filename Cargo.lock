@@ -401,6 +401,7 @@ dependencies = [
  "bip39",
  "bitcoin",
  "contextvm-sdk",
+ "deadhop-cvm",
  "deadhop-net",
  "deadhop-tlspin",
  "futures-util",
@@ -423,6 +424,17 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "webpki-roots 0.26.11",
+]
+
+[[package]]
+name = "deadhop-cvm"
+version = "0.1.0"
+dependencies = [
+ "contextvm-sdk",
+ "nostr-sdk",
+ "rmcp",
+ "serde_json",
+ "tokio",
 ]
 
 [[package]]
