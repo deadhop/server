@@ -1358,6 +1358,8 @@ mod tests {
             "wss://open.example".into(),
             "ws://relay.lan:1".into(),
             "ws://x.fips:1".into(),
+            "wss://relay.home.example".into(),
+            "wss://mixed.example".into(),
         ];
         s.proxies.list = vec![ProxyEntry {
             id: "spare".into(),
@@ -1375,7 +1377,24 @@ mod tests {
             fallback: Fallback::Offline,
         };
         // Straight to an internet relay is a finding; to the LAN and FIPS it is not.
-        s.proxies.rules = vec![direct("open.example"), direct("*.lan"), direct("*.fips")];
+        s.proxies.rules = vec![
+            direct("open.example"),
+            direct("*.lan"),
+            direct("*.fips"),
+            direct("relay.home.example"),
+            direct("mixed.example"),
+        ];
+        // A LAN name that resolves only to private addresses stays local; one
+        // with any public address, or none at all, reaches the internet.
+        *r.svc.resolver.lock().unwrap() = std::sync::Arc::new(|host: String, _| {
+            Box::pin(async move {
+                match host.as_str() {
+                    "relay.home.example" => vec!["192.168.1.5".parse().unwrap()],
+                    "mixed.example" => vec!["10.0.0.1".parse().unwrap(), "8.8.8.8".parse().unwrap()],
+                    _ => vec![],
+                }
+            })
+        });
         r.svc.apply_settings(s);
         r.svc.replan();
         let err = r
@@ -1392,7 +1411,13 @@ mod tests {
         assert!(err.to_string().contains("no relay goes through this proxy"), "{err}");
         let audit = r.svc.privacy_audit(&r.admin()).await.unwrap();
         let c = audit.checks.iter().find(|c| c.id == "relays_direct_by_rule").unwrap();
-        assert_eq!(c.evidence, vec!["direct   wss://open.example".to_string()]);
+        assert_eq!(
+            c.evidence,
+            vec![
+                "direct   wss://open.example".to_string(),
+                "direct   wss://mixed.example".to_string()
+            ]
+        );
     }
 
     use crate::service::tests::{public, rig, Rig, T0};

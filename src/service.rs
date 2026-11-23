@@ -244,6 +244,9 @@ pub struct Service {
     pub(crate) i2p_lookups: Mutex<Vec<u64>>,
     /// Where the kernel lists this namespace's sockets (`/proc/net`).
     pub(crate) proc_net: std::path::PathBuf,
+    /// Looks up relay hosts, to tell a direct route to the local network
+    /// from one to the internet (see the privacy audit).
+    pub(crate) resolver: Mutex<crate::privacy::Resolver>,
     /// Result of the last check of every live relay.
     pub(crate) relay_health: Mutex<Vec<crate::relayhealth::RelayHealth>>,
     /// A relay check is running.
@@ -375,6 +378,7 @@ impl Service {
             i2p_lookup_busy: AtomicBool::new(false),
             i2p_lookups: Mutex::new(Vec::new()),
             proc_net: std::path::PathBuf::from("/proc/net"),
+            resolver: Mutex::new(crate::privacy::system_resolver()),
             relay_health: Mutex::new(Vec::new()),
             relay_health_busy: AtomicBool::new(false),
             relay_checks: Mutex::new(Vec::new()),
