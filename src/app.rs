@@ -263,23 +263,11 @@ async fn connects_within(link: &Link, limit: Duration) -> bool {
     tokio::time::timeout(limit, wait).await.is_ok()
 }
 
-/// Each relay of a key and the proxy url it goes through ("" for straight).
-type Routes = Vec<(String, String)>;
+use crate::netruntime::Routes;
 
-/// How a key should be connected now: each relay that has a route and its
-/// proxy, or `None` when no relay of the key should connect at all (the kill
-/// switch, or every relay blocked or waiting on a proxy that is down).
+/// How a key should be connected now (see [`crate::netruntime::NetworkRuntime::lane_routes`]).
 fn wanted(key: &str, svc: &Service) -> Option<Routes> {
-    let routes: Routes = svc
-        .routes_for(key)
-        .into_iter()
-        .filter_map(|r| match r.via {
-            crate::routes::Via::Proxy { url, .. } => Some((r.relay, url)),
-            crate::routes::Via::Direct => Some((r.relay, String::new())),
-            crate::routes::Via::Off => None,
-        })
-        .collect();
-    (!routes.is_empty()).then_some(routes)
+    svc.net.lane_routes(svc, key)
 }
 
 /// Connect one key the way the service is set to now: through its chosen
