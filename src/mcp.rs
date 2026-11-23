@@ -7,7 +7,6 @@
 
 use std::sync::Arc;
 
-use contextvm_sdk::transport::server::{ClientPubkey, InboundEvent};
 use rmcp::handler::server::router::tool::ToolRouter;
 use rmcp::handler::server::tool::ToolCallContext;
 use rmcp::handler::server::wrapper::{Json, Parameters};
@@ -25,16 +24,11 @@ use crate::manage::{
 };
 use crate::privacy::{PrivacyAudit, ProxyCheck};
 use crate::service::{
-    Caller, CreateInvoiceParams, GetInvoiceParams, Info, Invoice, InvoiceList, ListInvoicesParams, Service, Stats,
+    CreateInvoiceParams, GetInvoiceParams, Info, Invoice, InvoiceList, ListInvoicesParams, Service, Stats,
 };
 
-/// Identity of the requester as injected by the Nostr transport.
-pub fn caller_from(ext: &Extensions) -> Caller {
-    Caller {
-        pubkey: ext.get::<ClientPubkey>().map(|p| p.0.clone()),
-        event: ext.get::<InboundEvent>().map(|e| e.0.clone()),
-    }
-}
+// Reading the requester lives in the ContextVM crate and keeps its old path.
+pub use deadhop_cvm::caller::caller_from;
 
 /// Convert a service error into a JSON-RPC error with a stable `data.code`.
 pub fn rpc_error(e: Error) -> ErrorData {
@@ -427,6 +421,7 @@ impl ServerHandler for PayServer {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use contextvm_sdk::transport::server::{ClientPubkey, InboundEvent};
     use nostr_sdk::{EventBuilder, Keys, Kind};
 
     #[test]

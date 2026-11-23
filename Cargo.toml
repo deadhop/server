@@ -37,10 +37,13 @@ bip39 = { version = "2", default-features = false, features = ["std"] }
 deadhop-tlspin = { path = "crates/tlspin" }
 # Relay transport and host classifiers.
 deadhop-net = { path = "crates/net" }
+# ContextVM plumbing: the local handshake, the caller, the event kind.
+deadhop-cvm = { path = "crates/cvm" }
 
 [dev-dependencies]
 # The stand-in proxies, for tests only.
 deadhop-net = { path = "crates/net", features = ["test-support"] }
+deadhop-cvm = { path = "crates/cvm", features = ["test-support"] }
 nostr-relay-builder = "0.44"
 rmcp = { version = "1.8", features = ["server", "client", "macros", "transport-worker"] }
 tempfile = "3"

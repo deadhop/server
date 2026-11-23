@@ -15,8 +15,8 @@ use serde::Serialize;
 
 use crate::relay::{ProxySpec, ProxyTransport};
 
-/// The event kind ContextVM requests and replies use (ephemeral).
-pub const CTXVM_KIND: u16 = 25910;
+// The ContextVM event kind, defined once in the ContextVM crate.
+pub use deadhop_cvm::CTXVM_KIND;
 
 /// One relay's health.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
