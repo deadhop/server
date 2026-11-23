@@ -11,6 +11,9 @@
 //! - `http://host:port`: a plain HTTP `CONNECT` tunnel, for a proxy on this
 //!   machine or a private network.
 
+// Without the `contextvm` feature, what only the ContextVM pool uses is unused.
+#![cfg_attr(not(feature = "contextvm"), allow(unused_imports, dead_code))]
+
 use std::fmt;
 use std::io;
 use std::pin::Pin;
@@ -18,9 +21,11 @@ use std::sync::Arc;
 use std::task::{Context, Poll};
 use std::time::{Duration, Instant};
 
+#[cfg(feature = "contextvm")]
 use async_trait::async_trait;
 use async_wsocket::message::{CloseFrame, Message};
 use base64::Engine;
+#[cfg(feature = "contextvm")]
 use contextvm_sdk::relay::RelayPoolTrait;
 use nostr_sdk::pool::transport::error::TransportError;
 use nostr_sdk::pool::transport::websocket::{WebSocketSink, WebSocketStream, WebSocketTransport};
@@ -424,10 +429,12 @@ pub struct Pool {
     sink: Option<RelaySink>,
 }
 
+#[cfg(feature = "contextvm")]
 fn transport_err(e: impl fmt::Display) -> contextvm_sdk::Error {
     contextvm_sdk::Error::Transport(e.to_string())
 }
 
+#[cfg(feature = "contextvm")]
 fn other_err(e: impl fmt::Display) -> contextvm_sdk::Error {
     contextvm_sdk::Error::Other(e.to_string())
 }
@@ -477,6 +484,7 @@ impl Pool {
     /// a relay that hangs or is still connecting must never hold up a reply
     /// that a working relay has already delivered. Fails only when every
     /// relay refused it.
+    #[cfg(feature = "contextvm")]
     async fn send_first_ok(&self, event: &Event, only: Option<&[String]>) -> contextvm_sdk::Result<EventId> {
         let relays = self.client.relays().await;
         let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
@@ -516,6 +524,7 @@ fn same_relay(a: &str, b: &str) -> bool {
     a.trim_end_matches('/') == b.trim_end_matches('/')
 }
 
+#[cfg(feature = "contextvm")]
 #[async_trait]
 impl RelayPoolTrait for Pool {
     async fn connect(&self, relay_urls: &[String]) -> contextvm_sdk::Result<()> {

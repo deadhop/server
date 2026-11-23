@@ -14,7 +14,8 @@ RUN useradd --system --uid 10001 --home-dir /data --shell /usr/sbin/nologin dead
  && install -d -o deadhop -g deadhop -m 0700 /data \
  && install -d -o deadhop -g deadhop -m 0755 /public \
  && install -d -o deadhop -g deadhop -m 0700 /wallet \
- && install -d -o deadhop -g deadhop -m 0755 /wallet-public
+ && install -d -o deadhop -g deadhop -m 0755 /wallet-public \
+ && install -d -o deadhop -g deadhop -m 0755 /wallet-scan
 COPY --from=build /src/target/release/deadhop /usr/local/bin/deadhop
 COPY --chmod=0755 entrypoint.sh /usr/local/bin/deadhop-entrypoint
 USER deadhop

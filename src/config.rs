@@ -35,6 +35,9 @@ pub struct Config {
     /// The file the xpub was read from (`DEADHOP_XPUB_FILE`), when it was not
     /// given directly in `DEADHOP_XPUB`.
     pub xpub_file: Option<PathBuf>,
+    /// Where to publish the next unused address index (`DEADHOP_INDEX_FILE`),
+    /// so the sweeping wallet scans every address handed out.
+    pub index_file: Option<PathBuf>,
     /// Electrum protocol server, `host:port` (without any `tls://` prefix).
     pub electrum: String,
     /// How the Electrum connection is protected.
@@ -119,16 +122,8 @@ pub fn account_key(direct: Option<String>, file: Option<String>) -> Result<(Stri
     Ok((key, Some(path)))
 }
 
-/// Parse a `DEADHOP_NETWORK` value.
-pub fn parse_network(s: &str) -> Result<Network> {
-    match s {
-        "bitcoin" | "mainnet" => Ok(Network::Bitcoin),
-        "testnet" => Ok(Network::Testnet),
-        "signet" => Ok(Network::Signet),
-        "regtest" => Ok(Network::Regtest),
-        other => Err(Error::Config(format!("unknown network '{other}'"))),
-    }
-}
+// The network names live in the common crate; kept at its old path.
+pub use deadhop_common::parse_network;
 
 fn parse_bool(key: &str, s: &str) -> Result<bool> {
     match s {
@@ -333,6 +328,7 @@ impl Config {
             network: parse_network(&get("DEADHOP_NETWORK").unwrap_or_else(|| "bitcoin".into()))?,
             xpub,
             xpub_file,
+            index_file: get("DEADHOP_INDEX_FILE").map(PathBuf::from),
             electrum,
             electrum_security,
             admins,
@@ -792,6 +788,9 @@ pub(crate) mod tests {
         let c = load(&m).unwrap();
         assert_eq!(c.xpub, key);
         assert_eq!(c.xpub_file.as_deref(), Some(file.as_path()));
+        assert!(c.index_file.is_none());
+        m.insert("DEADHOP_INDEX_FILE", "/scan/next-index".into());
+        assert_eq!(load(&m).unwrap().index_file, Some(PathBuf::from("/scan/next-index")));
         // A key given directly wins over the file.
         m.insert("DEADHOP_XPUB", key.clone());
         assert_eq!(load(&m).unwrap().xpub_file, None);

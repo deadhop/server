@@ -34,10 +34,40 @@ pub async fn shutdown_signal() {
     }
 }
 
+/// Parse a `DEADHOP_NETWORK` value.
+pub fn parse_network(s: &str) -> error::Result<bitcoin::Network> {
+    match s {
+        "bitcoin" | "mainnet" => Ok(bitcoin::Network::Bitcoin),
+        "testnet" => Ok(bitcoin::Network::Testnet),
+        "signet" => Ok(bitcoin::Network::Signet),
+        "regtest" => Ok(bitcoin::Network::Regtest),
+        other => Err(error::Error::Config(format!("unknown network '{other}'"))),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::time::Duration;
+
+    #[test]
+    fn network_names_are_read_strictly() {
+        use bitcoin::Network;
+        let cases = [
+            ("bitcoin", Network::Bitcoin),
+            ("mainnet", Network::Bitcoin),
+            ("testnet", Network::Testnet),
+            ("signet", Network::Signet),
+            ("regtest", Network::Regtest),
+        ];
+        for (name, net) in cases {
+            assert_eq!(parse_network(name).unwrap(), net);
+        }
+        assert_eq!(
+            parse_network("main").unwrap_err().to_string(),
+            "invalid configuration: unknown network 'main'"
+        );
+    }
 
     #[test]
     fn the_clock_and_the_file_names_are_what_the_services_agree_on() {

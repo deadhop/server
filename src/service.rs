@@ -678,12 +678,31 @@ impl Service {
             None => {
                 h.chain_ok = true;
                 h.last_poll_at = Some((self.clock)());
+                drop(h);
+                self.publish_index();
                 Ok(report.changed)
             }
             Some(e) => {
                 h.chain_ok = false;
                 Err(e)
             }
+        }
+    }
+
+    /// Write the next unused address index to `DEADHOP_INDEX_FILE`, if set,
+    /// for the sweeping wallet: invoices are mostly unpaid, so paid addresses
+    /// are sparse and a gap-limit scan alone would miss some. A failure is
+    /// logged and never stops the poll.
+    pub fn publish_index(&self) {
+        let Some(path) = &self.cfg.index_file else { return };
+        let write = || -> Result<()> {
+            let tmp = path.with_extension("tmp");
+            std::fs::write(&tmp, format!("{}\n", self.db.next_index()?))?;
+            std::fs::rename(&tmp, path)?;
+            Ok(())
+        };
+        if let Err(e) = write() {
+            tracing::warn!(error = %e, path = %path.display(), "could not publish the address index");
         }
     }
 
@@ -1458,6 +1477,25 @@ pub(crate) mod tests {
                 .set(|s| s.calls.iter().filter(|m| *m == "blockchain.headers.subscribe").count()),
             2
         );
+    }
+
+    #[tokio::test]
+    async fn publishes_the_address_high_water_mark_for_the_wallet() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("next-index");
+        let f = file.clone();
+        let r = rig(move |c| c.index_file = Some(f)).await;
+        r.svc.poll_once().await.unwrap();
+        assert_eq!(std::fs::read_to_string(&file).unwrap(), "0\n");
+        r.create(5_000);
+        r.create(5_000);
+        r.svc.poll_once().await.unwrap();
+        assert_eq!(std::fs::read_to_string(&file).unwrap(), "2\n");
+        // An unwritable place is logged, and the poll still succeeds.
+        let bad = rig(|c| c.index_file = Some("/nonexistent-dir/next-index".into())).await;
+        bad.svc.poll_once().await.unwrap();
+        // Unset: nothing is written.
+        rig(|_| {}).await.svc.publish_index();
     }
 
     /// The attack: flood one invoice's address with dust so its history is too
