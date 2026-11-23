@@ -15,7 +15,7 @@ test-support = []
 [dependencies]
 async-trait = "0.1"
 bitcoin = { version = "0.32", default-features = false, features = ["std"] }
-deadhop-net = { path = "../net" }
+deadhop-net = { path = "../net", default-features = false }
 deadhop-tlspin = { path = "../tlspin" }
 hex = "0.4"
 rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }

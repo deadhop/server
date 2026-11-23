@@ -306,7 +306,7 @@ impl Electrum {
         self
     }
 
-    async fn batch(&self, reqs: &[(&str, Value)], line_cap: u64, budget: &mut u64) -> Result<Vec<Value>> {
+    pub async fn batch(&self, reqs: &[(&str, Value)], line_cap: u64, budget: &mut u64) -> Result<Vec<Value>> {
         let mut slot = self.conn.lock().await;
         let work = async {
             let conn = match slot.as_mut() {

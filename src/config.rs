@@ -122,16 +122,8 @@ pub fn account_key(direct: Option<String>, file: Option<String>) -> Result<(Stri
     Ok((key, Some(path)))
 }
 
-/// Parse a `DEADHOP_NETWORK` value.
-pub fn parse_network(s: &str) -> Result<Network> {
-    match s {
-        "bitcoin" | "mainnet" => Ok(Network::Bitcoin),
-        "testnet" => Ok(Network::Testnet),
-        "signet" => Ok(Network::Signet),
-        "regtest" => Ok(Network::Regtest),
-        other => Err(Error::Config(format!("unknown network '{other}'"))),
-    }
-}
+// The network names live in the common crate; kept at its old path.
+pub use deadhop_common::parse_network;
 
 fn parse_bool(key: &str, s: &str) -> Result<bool> {
     match s {

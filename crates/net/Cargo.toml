@@ -11,13 +11,17 @@ publish = false
 # Stand-in proxies for the tests of the services that use this crate.
 # Enabled only from dev-dependencies; never part of a release build.
 test-support = []
+# The relay pool as a ContextVM relay pool (what the services serve MCP over).
+# Off for a crate that needs only the transport (the CoinJoin of the wallet).
+contextvm = ["dep:contextvm-sdk", "dep:async-trait"]
+default = ["contextvm"]
 
 [dependencies]
-async-trait = "0.1"
+async-trait = { version = "0.1", optional = true }
 # The relay library's websocket message type (same version it uses).
 async-wsocket = { version = "=0.13.2", default-features = false }
 base64 = "0.22"
-contextvm-sdk = "0.2.2"
+contextvm-sdk = { version = "0.2.2", optional = true }
 futures-util = { version = "0.3", default-features = false, features = ["sink", "std"] }
 nostr-sdk = "0.44"
 rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
