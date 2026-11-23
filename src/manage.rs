@@ -1249,6 +1249,15 @@ impl Service {
                 "the administration key must keep at least one relay from DEADHOP_RELAYS, the way back in if the others fail".into(),
             ));
         }
+        // Turning the strategy off while a key's first proxy is down would cut
+        // that key off at once, perhaps the operator's own way in.
+        if next.proxies.mode == crate::settings::ProxyMode::Off && before.mode != crate::settings::ProxyMode::Off {
+            if let Some(key) = self.stranded_by_off(&next) {
+                return Err(Error::InvalidParams(format!(
+                    "the first proxy in the {key} key's default route is down, so turning the strategy off would cut that key off now; move a reachable proxy first or wait until it is back"
+                )));
+            }
+        }
         let relays_changed = self.connection_changes(&next);
         let proxies_changed = next.proxies != before;
         let json = serde_json::to_string(&stored).expect("settings always serialize");

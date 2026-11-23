@@ -220,12 +220,13 @@ fn load_proxies(get: &dyn Fn(&str) -> Option<String>) -> Result<crate::settings:
         Ok(v)
     };
     out.mode = match get("DEADHOP_PROXY_MODE").as_deref() {
-        None | Some("failover") => ProxyMode::Failover,
+        None | Some("off") => ProxyMode::Off,
+        Some("failover") => ProxyMode::Failover,
         Some("round_robin") => ProxyMode::RoundRobin,
         Some("chaos") => ProxyMode::Chaos,
         Some(o) => {
             return Err(Error::Config(format!(
-                "DEADHOP_PROXY_MODE: '{o}' is not failover, round_robin or chaos"
+                "DEADHOP_PROXY_MODE: '{o}' is not off, failover, round_robin or chaos"
             )))
         }
     };
@@ -667,8 +668,17 @@ pub(crate) mod tests {
         assert!(c.proxies.list.is_empty() && !c.proxy_locked && !c.proxies.transparent);
         assert_eq!(
             (c.proxies.mode, c.proxies.offline),
-            (ProxyMode::Failover, OfflinePolicy::KillSwitch)
+            (ProxyMode::Off, OfflinePolicy::KillSwitch)
         );
+        for (text, mode) in [
+            ("off", ProxyMode::Off),
+            ("failover", ProxyMode::Failover),
+            ("round_robin", ProxyMode::RoundRobin),
+        ] {
+            m.insert("DEADHOP_PROXY_MODE", text.into());
+            assert_eq!(load(&m).unwrap().proxies.mode, mode, "{text}");
+        }
+        m.remove("DEADHOP_PROXY_MODE");
         m.insert("DEADHOP_PROXY", "socks5://127.0.0.1:9050".into());
         m.insert("DEADHOP_PROXY_LOCKED", "true".into());
         let c = load(&m).unwrap();

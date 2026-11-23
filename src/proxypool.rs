@@ -5,6 +5,8 @@
 //! that touches the network or the service lives elsewhere (`manage.rs` holds
 //! the probe loop's state, `app.rs` acts on the plan).
 //!
+//! - **Off** uses the first proxy in the list and never another: while it is
+//!   down the offline policy applies.
 //! - **Failover** uses the first reachable proxy in list order. When a proxy
 //!   earlier in the list comes back, the service returns to it only after it
 //!   has stayed up for [`FAILBACK_HOLD_SECS`], so a flapping proxy does not
@@ -42,7 +44,8 @@ pub enum PoolState {
     Active,
     // Rotation needs two reachable proxies and only one is: it stays in use.
     Suspended,
-    // Proxies are configured and none is reachable: the offline policy applies.
+    // Proxies are configured and none it may use is reachable (with the
+    // strategy off: the first is down): the offline policy applies.
     Offline,
 }
 
@@ -143,6 +146,24 @@ pub fn plan(
         return state_only(PoolState::Offline, 0);
     }
     let id = |i: usize| cfg.list[i].id.clone();
+    // Off: the first proxy only. While it is down the key is offline, even
+    // with others up: it never moves to another exit.
+    if cfg.mode == ProxyMode::Off {
+        if ups[0] != 0 {
+            *rot = Rotation::default();
+            return state_only(PoolState::Offline, ups.len());
+        }
+        *rot = Rotation {
+            current: Some(id(0)),
+            due_at: 0,
+        };
+        return Plan {
+            active: Some(id(0)),
+            state: PoolState::Active,
+            next_switch_at: None,
+            reachable: ups.len(),
+        };
+    }
     let current = rot
         .current
         .as_ref()
@@ -659,6 +680,31 @@ impl Service {
             .collect()
     }
 
+    /// The label of a key that turning the strategy off would cut off now:
+    /// one whose relays take the default route, whose first proxy there was
+    /// down at its last probe while another of its proxies was up.
+    pub fn stranded_by_off(&self, next: &crate::settings::Settings) -> Option<&'static str> {
+        if next.proxies.transparent {
+            return None;
+        }
+        let pool = self.pool.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let up = |e: &&crate::settings::ProxyEntry| pool.probes.get(&e.id).map(|p| p.up);
+        crate::keys::KEYS
+            .iter()
+            .find(|k| {
+                let lane: Vec<_> = next
+                    .proxies
+                    .list
+                    .iter()
+                    .filter(|e| e.pool && crate::keys::assigned(&e.keys, k.id))
+                    .collect();
+                crate::routes::uses_default(next, k.id)
+                    && lane.first().map(up) == Some(Some(false))
+                    && lane.iter().skip(1).any(|e| up(e) == Some(true))
+            })
+            .map(|k| k.label)
+    }
+
     /// One key's default route now, as the routing rules see it.
     pub fn default_route_for(&self, key: &str) -> crate::routes::DefaultRoute {
         use crate::routes::DefaultRoute;
@@ -873,6 +919,31 @@ mod tests {
             let p = plan(&c, &up(&[false]), &mut rot, 10, &mut low);
             assert_eq!((p.state, p.active), (PoolState::Offline, None));
         }
+    }
+
+    #[test]
+    fn off_uses_the_first_proxy_and_never_another() {
+        let c = cfg(ProxyMode::Off, 3);
+        // Coming from another strategy: whatever was in use, it is the first now.
+        let mut rot = Rotation {
+            current: Some("p2".into()),
+            due_at: 99,
+        };
+        let p = plan(&c, &up(&[true, true, true]), &mut rot, 1_000, &mut low);
+        assert_eq!(
+            (p.active.as_deref(), p.state, p.next_switch_at, p.reachable),
+            (Some("p0"), PoolState::Active, None, 3)
+        );
+        assert_eq!(rot.due_at, 0);
+        // The first is down: offline, though the others are up.
+        let p = plan(&c, &up(&[false, true, true]), &mut rot, 1_010, &mut low);
+        assert_eq!((p.active, p.state, p.reachable), (None, PoolState::Offline, 2));
+        assert_eq!(rot, Rotation::default());
+        // It is back: used again at once, with no hold.
+        let mut r = up(&[true, true, true]);
+        r[0].up_since = 1_020;
+        let p = plan(&c, &r, &mut rot, 1_021, &mut low);
+        assert_eq!((p.active.as_deref(), p.state), (Some("p0"), PoolState::Active));
     }
 
     #[test]
@@ -1705,6 +1776,53 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn the_strategy_cannot_be_turned_off_while_the_first_proxy_is_down() {
+        let r = rig(|_| {}).await;
+        let save = |v: serde_json::Value| {
+            let patch = serde_json::from_value(v).unwrap();
+            r.svc
+                .update_settings(&r.admin(), crate::manage::UpdateSettingsParams { patch })
+        };
+        save(serde_json::json!({ "proxies": { "mode": "failover", "list": [
+            { "id": "p0", "url": "socks5://h:1" }, { "id": "p1", "url": "socks5://h:2" }
+        ] } }))
+        .unwrap();
+        r.svc.pool.lock().unwrap().probation = None;
+        probe(&r, "p0", false);
+        probe(&r, "p1", true);
+        r.svc.replan();
+        assert_eq!(r.svc.pool_health().active.as_deref(), Some("p1"));
+        // Off would leave every key offline now, the operators' included.
+        let e = save(serde_json::json!({ "proxies": { "mode": "off" } })).unwrap_err();
+        assert!(e.to_string().contains("first proxy"), "{e}");
+        assert_eq!(r.svc.settings().proxies.mode, ProxyMode::Failover);
+        // With a reachable proxy first, it is taken.
+        save(serde_json::json!({ "proxies": { "mode": "off", "list": [
+            { "id": "p1", "url": "socks5://h:2" }, { "id": "p0", "url": "socks5://h:1" }
+        ] } }))
+        .unwrap();
+        r.svc.pool.lock().unwrap().probation = None;
+        r.svc.replan();
+        assert_eq!(
+            (r.svc.pool_health().active.as_deref(), r.svc.posture()),
+            (Some("p1"), Posture::Normal)
+        );
+        // Off means it: the first going down cuts the key off, though p0 is up.
+        probe(&r, "p1", false);
+        probe(&r, "p0", true);
+        r.svc.replan();
+        let h = r.svc.pool_health();
+        assert_eq!(
+            (h.state, h.reachable, r.svc.posture()),
+            (PoolState::Offline, 1, Posture::Off)
+        );
+        // A transparent proxy does the work: nothing here can strand a key.
+        save(serde_json::json!({ "proxies": { "mode": "failover" } })).unwrap();
+        save(serde_json::json!({ "proxies": { "mode": "off", "transparent": true } })).unwrap();
+        assert_eq!(r.svc.settings().proxies.mode, ProxyMode::Off);
+    }
+
+    #[tokio::test]
     async fn a_changed_policy_is_not_undone_when_the_same_proxies_fail_later() {
         let r = rig(|_| {}).await;
         let first = serde_json::from_value(serde_json::json!({
@@ -1749,7 +1867,7 @@ mod tests {
         assert_eq!(live.len(), 1);
         assert_eq!(live[0].url, "socks5://me:pw@10.1.2.3:1080");
         assert_eq!(svc.settings().pow_bits, 21, "nothing else was dropped");
-        assert_eq!(svc.settings().proxies.mode, ProxyMode::Failover);
+        assert_eq!(svc.settings().proxies.mode, ProxyMode::Off);
         assert_eq!(svc.settings().proxies.offline, OfflinePolicy::KillSwitch);
     }
 }

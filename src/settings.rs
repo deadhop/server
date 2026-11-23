@@ -110,6 +110,9 @@ fn in_pool() -> bool {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum ProxyMode {
+    // The first proxy in the list only, never another: while it is down the
+    // offline policy applies.
+    Off,
     // The first reachable proxy in list order; the next one when it fails.
     Failover,
     // Take the reachable proxies in turn, one change every `rotate_secs`.
@@ -164,7 +167,7 @@ impl Default for ProxySettings {
     fn default() -> Self {
         ProxySettings {
             list: Vec::new(),
-            mode: ProxyMode::Failover,
+            mode: ProxyMode::Off,
             rotate_secs: 3_600,
             chaos_min_secs: 300,
             chaos_max_secs: 900,

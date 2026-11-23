@@ -1666,6 +1666,7 @@ mod tests {
         let (p2, _second) = crate::relay::tests::socks5_proxy(None).await;
         s.env.insert("DEADHOP_PROXY", format!("socks5://127.0.0.1:{p1}"));
         s.env.insert("DEADHOP_PROXIES", format!("socks5://127.0.0.1:{p2}"));
+        s.env.insert("DEADHOP_PROXY_MODE", "failover".into());
         let app = App::start(load(&s.env).unwrap()).await.unwrap();
         let admin = connect(&s, &app.admin_pubkey, s.admin.clone()).await;
         let h = health_until(&admin, |h| h["relays"][0]["connected"] == true).await;
