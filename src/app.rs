@@ -36,6 +36,10 @@ use crate::wallet::Wallet;
 pub const KEY_FILE: &str = "server.nsec";
 /// File the server writes its public key to, for operators and tooling.
 pub const PUBKEY_FILE: &str = "server.pubkey";
+/// File in `DEADHOP_PUBLIC_DIR` naming the relays each key listens on now, so
+/// that a dashboard on the same host follows the service when its relays
+/// change from the dashboard (or fall back to the environment's).
+pub const RELAYS_FILE: &str = "relays.json";
 /// Database file name.
 pub const DB_FILE: &str = "deadhop.sqlite";
 /// The project's name before it became deadhop. Data directories from then
@@ -378,6 +382,35 @@ fn relay_setup(svc: &Service) -> RelaySetup {
 
 type RelaySetup = (Vec<String>, std::collections::BTreeMap<String, Vec<String>>);
 
+/// The relays each key listens on, as `{"admin": [...], "invoices": [...]}`.
+/// Only `wss://` relays on the open internet: a browser on an HTTPS page can
+/// reach nothing else, and `.onion`, `.i2p` and `.fips` addresses are not
+/// published on a public page.
+fn public_relays(svc: &Service) -> String {
+    let s = svc.settings();
+    let open = |r: &String| {
+        nostr_sdk::Url::parse(r)
+            .is_ok_and(|u| u.scheme() == "wss" && !u.host_str().is_some_and(crate::config::is_overlay_host))
+    };
+    let map: std::collections::BTreeMap<&str, Vec<String>> = crate::keys::KEYS
+        .iter()
+        .map(|k| (k.id, s.relays_for(k.id).into_iter().filter(open).collect()))
+        .collect();
+    serde_json::json!(map).to_string()
+}
+
+/// Write [`public_relays`] to `RELAYS_FILE` in `dir` (atomically), when there
+/// is a directory. A failure is logged, never fatal: the dashboard then uses
+/// its own relay list.
+fn publish_relays(dir: Option<&Path>, svc: &Service) {
+    let Some(dir) = dir else { return };
+    let tmp = dir.join(format!("{RELAYS_FILE}.new"));
+    let written = fs::write(&tmp, public_relays(svc)).and_then(|()| fs::rename(&tmp, dir.join(RELAYS_FILE)));
+    if let Err(e) = written {
+        tracing::warn!(error = %e, dir = %dir.display(), "could not publish the relays for the dashboard");
+    }
+}
+
 /// Close every link.
 async fn close_all(links: &mut Vec<Link>) {
     for l in links.drain(..) {
@@ -499,6 +532,8 @@ async fn supervise(
     // The relay setup the links were made with: what to go back to.
     let mut live = relay_setup(&svc);
     loop {
+        // Every turn follows a possible change of relays: tell the dashboard.
+        publish_relays(cfg.public_dir.as_deref(), &svc);
         *current.lock().unwrap_or_else(std::sync::PoisonError::into_inner) =
             links.first().map_or_else(CancellationToken::new, |l| l.cancel.clone());
         let ended: Vec<CancellationToken> = links.iter().map(|l| l.ended.clone()).collect();
@@ -1171,6 +1206,34 @@ mod tests {
                 "reply {round} after the restart took {took:?}"
             );
         }
+        app.stop().await;
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn the_dashboard_is_told_which_relays_each_key_listens_on() {
+        let mut s = stack().await;
+        let public = s.dir.path().join("public");
+        fs::create_dir(&public).unwrap();
+        s.env
+            .insert("DEADHOP_PUBLIC_DIR", public.to_string_lossy().into_owned());
+        // A plain ws:// relay and an overlay address never reach the page.
+        s.env.insert(
+            "DEADHOP_RELAYS",
+            format!("{},wss://relay.invalid,wss://hidden.onion", s.relay_url),
+        );
+        let app = App::start(load(&s.env).unwrap()).await.unwrap();
+        let file = public.join(RELAYS_FILE);
+        eventually("relays.json", Duration::from_secs(5), || file.exists()).await;
+        let written: Value = serde_json::from_str(&fs::read_to_string(&file).unwrap()).unwrap();
+        assert_eq!(
+            written,
+            json!({ "admin": ["wss://relay.invalid"], "invoices": ["wss://relay.invalid"] })
+        );
+
+        // No directory: nothing to do. A directory that cannot be written: only a warning.
+        publish_relays(None, &app.svc);
+        publish_relays(Some(&public.join("missing")), &app.svc);
+        assert!(!public.join("missing").exists());
         app.stop().await;
     }
 
