@@ -2,6 +2,7 @@
 FROM rust:1.99-slim-trixie AS build
 WORKDIR /src
 COPY Cargo.toml Cargo.lock ./
+COPY crates ./crates
 COPY src ./src
 RUN cargo build --release --locked --bin deadhop \
  && strip target/release/deadhop
