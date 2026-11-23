@@ -401,6 +401,7 @@ dependencies = [
  "bip39",
  "bitcoin",
  "contextvm-sdk",
+ "deadhop-common",
  "deadhop-cvm",
  "deadhop-electrum",
  "deadhop-net",
@@ -425,6 +426,18 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "webpki-roots 0.26.11",
+]
+
+[[package]]
+name = "deadhop-common"
+version = "0.1.0"
+dependencies = [
+ "bip39",
+ "bitcoin",
+ "hex",
+ "nostr-sdk",
+ "thiserror 2.0.21",
+ "tokio",
 ]
 
 [[package]]

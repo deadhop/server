@@ -34,6 +34,17 @@ pub enum Error {
     Transport(String),
 }
 
+impl From<deadhop_common::error::Error> for Error {
+    fn from(e: deadhop_common::error::Error) -> Self {
+        match e {
+            deadhop_common::error::Error::Config(why) => Error::Config(why),
+            deadhop_common::error::Error::Capacity => Error::Capacity,
+            deadhop_common::error::Error::Chain(why) => Error::Chain(why),
+            deadhop_common::error::Error::Io(e) => Error::Io(e),
+        }
+    }
+}
+
 impl From<deadhop_electrum::error::Error> for Error {
     fn from(e: deadhop_electrum::error::Error) -> Self {
         match e {
@@ -85,6 +96,27 @@ impl Error {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn shared_crate_errors_keep_their_variant_and_text() {
+        use deadhop_common::error::Error as Common;
+        let io = Common::Io(std::io::Error::other("disk"));
+        let cases: Vec<(Error, &str, &str)> = vec![
+            (
+                Common::Config("x".into()).into(),
+                "internal",
+                "invalid configuration: x",
+            ),
+            (Common::Capacity.into(), "capacity", "service at capacity"),
+            (Common::Chain("x".into()).into(), "internal", "chain backend: x"),
+            (io.into(), "internal", "io: disk"),
+        ];
+        for (e, code, text) in cases {
+            assert_eq!((e.code(), e.to_string().as_str()), (code, text));
+        }
+        assert!(matches!(Error::from(Common::Capacity), Error::Capacity));
+        assert!(matches!(Error::from(Common::Chain("x".into())), Error::Chain(_)));
+    }
 
     #[test]
     fn transport_errors_convert() {

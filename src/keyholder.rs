@@ -22,14 +22,8 @@ use crate::config::parse_network;
 use crate::error::{Error, Result};
 use crate::wallet::{account_from_phrase, account_path, encode_account, Wallet};
 
-/// Recovery phrase, inside the wallet service's data directory.
-pub const PHRASE_FILE: &str = "wallet.mnemonic";
-/// Next to the xpub file: present once the wallet service has started.
-pub const READY_FILE: &str = "ready";
-/// Next to the xpub file: present when the xpub was generated here.
-pub const GENERATED_FILE: &str = "generated";
-/// Next to the xpub file: when the recovery phrase was last exported.
-pub const EXPORTED_FILE: &str = "recovery-exported";
+// The wallet files' names live in the common crate and keep their old paths.
+pub use deadhop_common::{EXPORTED_FILE, GENERATED_FILE, PHRASE_FILE, READY_FILE};
 
 /// What the wallet commands read from the environment.
 struct Env {

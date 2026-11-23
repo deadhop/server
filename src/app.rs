@@ -2,8 +2,7 @@
 
 use std::fs;
 use std::future::Future;
-use std::io::{stdout, ErrorKind, Read, Write};
-use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt, PermissionsExt};
+use std::io::{stdout, Write};
 use std::path::Path;
 use std::process::ExitCode;
 use std::sync::Arc;
@@ -12,7 +11,7 @@ use std::time::Duration;
 use bitcoin::blockdata::constants::genesis_block;
 use contextvm_sdk::transport::server::{NostrServerTransport, NostrServerTransportConfig};
 use contextvm_sdk::{EncryptionMode, GiftWrapMode, ServerInfo};
-use nostr_sdk::{Keys, RelayStatus, ToBech32};
+use nostr_sdk::RelayStatus;
 use rmcp::service::RoleServer;
 use rmcp::transport::{IntoTransport, Transport};
 use rmcp::ServiceExt;
@@ -73,73 +72,10 @@ pub fn rename_old_files(data_dir: &Path) -> Result<()> {
     Ok(())
 }
 
-/// Read a file that must be private to its owner; `None` if it does not
-/// exist. Permissions are read from the open handle, so the file that is
-/// checked is the file that is read.
-pub fn read_private(path: &Path) -> Result<Option<String>> {
-    match fs::File::open(path) {
-        Ok(mut file) => {
-            if file.metadata()?.permissions().mode() & 0o077 != 0 {
-                return Err(Error::Config(format!(
-                    "{} is accessible by other users; run: chmod 600 {}",
-                    path.display(),
-                    path.display()
-                )));
-            }
-            let mut text = String::new();
-            file.read_to_string(&mut text)?;
-            Ok(Some(text))
-        }
-        Err(e) if e.kind() == ErrorKind::NotFound => Ok(None),
-        Err(e) => Err(e.into()),
-    }
-}
-
-/// Create an owner-only file holding `content`; refuses to replace one.
-/// Synced to disk, so a secret survives a crash right after it is made.
-pub fn create_private(path: &Path, content: &str) -> Result<()> {
-    let mut file = fs::OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .mode(0o600)
-        .open(path)?;
-    file.write_all(content.as_bytes())?;
-    file.sync_all()?;
-    Ok(())
-}
-
-/// Load the server identity, creating it on first start. The file must be
-/// private to the owner; a key readable by others is refused.
-pub fn load_or_create_keys(path: &Path) -> Result<Keys> {
-    if let Some(text) = read_private(path)? {
-        return Keys::parse(text.trim())
-            .map_err(|_| Error::Config(format!("{} does not contain a nostr secret key", path.display())));
-    }
-    let keys = Keys::generate();
-    let nsec = keys
-        .secret_key()
-        .to_bech32()
-        .expect("a valid secret key always encodes as bech32");
-    create_private(path, &nsec)?;
-    Ok(keys)
-}
-
-/// Create a directory if needed and make it private to the owner.
-pub fn open_dir(dir: &Path) -> Result<()> {
-    fs::DirBuilder::new()
-        .recursive(true)
-        .mode(0o700)
-        .create(dir)
-        .and_then(|()| fs::set_permissions(dir, fs::Permissions::from_mode(0o700)))
-        .map_err(Error::from)
-}
-
-/// Seconds since the Unix epoch.
-fn unix_now() -> u64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_or(0, |d| d.as_secs())
-}
+// Private files and keys live in the common crate; these keep their old paths.
+pub use deadhop_common::files::{create_private, load_or_create_keys, open_dir, read_private};
+pub use deadhop_common::shutdown_signal;
+use deadhop_common::unix_now;
 
 /// The data directory: `DEADHOP_DATA_DIR`, or `data` when unset.
 fn data_dir(value: Option<String>) -> std::path::PathBuf {
@@ -796,16 +732,6 @@ pub fn log_filter(value: Option<String>) -> String {
     }
 }
 
-/// Resolves on SIGINT or SIGTERM.
-pub async fn shutdown_signal() {
-    let mut term = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
-        .expect("SIGTERM handler can be installed");
-    tokio::select! {
-        _ = tokio::signal::ctrl_c() => {}
-        _ = term.recv() => {}
-    }
-}
-
 /// Usage text for unknown commands.
 pub const USAGE: &str = "usage:
   deadhop                          run the service (configured by DEADHOP_* variables)
@@ -888,10 +814,12 @@ mod tests {
     use contextvm_sdk::transport::client::{NostrClientTransport, NostrClientTransportConfig};
     use nostr_relay_builder::MockRelay;
     use nostr_sdk::prelude::{BoxedFuture, NostrSigner, PublicKey, SignerBackend, SignerError, Tag, UnsignedEvent};
+    use nostr_sdk::{Keys, ToBech32};
     use rmcp::model::{CallToolRequestParams, CallToolResult};
     use rmcp::service::{RoleClient, RunningService, ServiceError};
     use serde_json::{json, Value};
     use std::collections::HashMap;
+    use std::os::unix::fs::PermissionsExt;
 
     /// Client signer that mines NIP-13 work into every event it signs, the
     /// same way the dashboard does in the browser.
