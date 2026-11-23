@@ -217,7 +217,28 @@ impl Default for NetworkRuntime {
     }
 }
 
+/// Each relay of a lane and the proxy url it goes through ("" for straight).
+pub type Routes = Vec<(String, String)>;
+
 impl NetworkRuntime {
+    /// How a lane should be connected now: each relay that has a route and
+    /// its proxy, or `None` when no relay of the lane should connect at all
+    /// (the kill switch, or every relay blocked or waiting on a proxy that is
+    /// down). The host rebuilds a lane's connections from this whenever
+    /// [`pool_changed`](Self::pool_changed) says the plan moved.
+    pub fn lane_routes(&self, host: &dyn NetworkHost, lane: &str) -> Option<Routes> {
+        let routes: Routes = self
+            .routes_for(host, lane)
+            .into_iter()
+            .filter_map(|r| match r.via {
+                crate::routes::Via::Proxy { url, .. } => Some((r.relay, url)),
+                crate::routes::Via::Direct => Some((r.relay, String::new())),
+                crate::routes::Via::Off => None,
+            })
+            .collect();
+        (!routes.is_empty()).then_some(routes)
+    }
+
     /// The proxy url the first lane's relay traffic goes through, if any:
     /// "the proxy in use" where one is named without a lane.
     pub fn main_proxy(&self, host: &dyn NetworkHost) -> Option<String> {
