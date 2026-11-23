@@ -253,21 +253,9 @@ fn is_invoice_id(s: &str) -> bool {
     s.len() == 32 && s.bytes().all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
 }
 
-/// Characters allowed in a memo. Besides control characters this refuses the
-/// invisible and direction-changing ones, which could be used to make a note
-/// shown on the merchant's page read as something else.
-pub fn is_plain_text(c: char) -> bool {
-    !(c.is_control()
-        || matches!(c,
-            '\u{00AD}' | '\u{061C}' | '\u{180E}' | '\u{FEFF}'
-            | '\u{200B}'..='\u{200F}'
-            | '\u{2028}'..='\u{202F}'
-            | '\u{2060}'..='\u{206F}'
-            | '\u{E000}'..='\u{F8FF}'
-            | '\u{FFF0}'..='\u{FFFF}'
-            | '\u{E0000}'..='\u{E0FFF}'
-            | '\u{F0000}'..='\u{10FFFF}'))
-}
+// What counts as plain text lives in the Electrum crate (which cleans error
+// text with it) and keeps its old path.
+pub use deadhop_electrum::is_plain_text;
 
 /// Derive the state of an invoice from what the chain shows.
 pub fn evaluate(amount_sat: u64, received_sat: u64, confirmed_sat: u64, now: u64, expires_at: u64) -> Status {
@@ -772,7 +760,7 @@ impl Service {
         if active.is_empty() {
             match self.chain.snapshot(&[]).await {
                 Ok(snap) => report.tip = Some(snap.tip),
-                Err(e) => report.failure = Some(e),
+                Err(e) => report.failure = Some(e.into()),
             }
             return report;
         }
@@ -1607,10 +1595,10 @@ pub(crate) mod tests {
     struct ShortChain;
     #[async_trait]
     impl Chain for ShortChain {
-        async fn genesis_hash(&self) -> Result<String> {
+        async fn genesis_hash(&self) -> deadhop_electrum::error::Result<String> {
             Ok(String::new())
         }
-        async fn snapshot(&self, _: &[ScriptBuf]) -> Result<Snapshot> {
+        async fn snapshot(&self, _: &[ScriptBuf]) -> deadhop_electrum::error::Result<Snapshot> {
             Ok(Snapshot {
                 tip: 1,
                 payments: vec![],

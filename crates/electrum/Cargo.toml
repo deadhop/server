@@ -1,0 +1,25 @@
+[package]
+name = "deadhop-electrum"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.88"
+description = "Hardened Electrum client for deadhop services: size caps, genesis check, re-hashed transactions, pinned TLS"
+license = "MIT"
+publish = false
+
+[features]
+# A scriptable in-process Electrum server for the tests of the services that
+# use this crate. Enabled only from dev-dependencies; never part of a release build.
+test-support = []
+
+[dependencies]
+async-trait = "0.1"
+bitcoin = { version = "0.32", default-features = false, features = ["std"] }
+deadhop-net = { path = "../net" }
+deadhop-tlspin = { path = "../tlspin" }
+hex = "0.4"
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
+serde_json = "1"
+thiserror = "2"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "io-util", "time", "sync", "signal"] }
+tokio-rustls = { version = "0.26", default-features = false, features = ["ring", "tls12"] }
