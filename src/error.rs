@@ -34,6 +34,15 @@ pub enum Error {
     Transport(String),
 }
 
+impl From<deadhop_electrum::error::Error> for Error {
+    fn from(e: deadhop_electrum::error::Error) -> Self {
+        match e {
+            deadhop_electrum::error::Error::Config(why) => Error::Config(why),
+            deadhop_electrum::error::Error::Chain(why) => Error::Chain(why),
+        }
+    }
+}
+
 impl From<deadhop_net::error::Error> for Error {
     fn from(e: deadhop_net::error::Error) -> Self {
         let deadhop_net::error::Error::InvalidParams(why) = e;

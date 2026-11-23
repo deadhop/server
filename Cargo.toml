@@ -37,6 +37,8 @@ bip39 = { version = "2", default-features = false, features = ["std"] }
 deadhop-tlspin = { path = "crates/tlspin" }
 # Relay transport and host classifiers.
 deadhop-net = { path = "crates/net" }
+# The hardened Electrum client.
+deadhop-electrum = { path = "crates/electrum" }
 # ContextVM plumbing: the local handshake, the caller, the event kind.
 deadhop-cvm = { path = "crates/cvm" }
 
@@ -44,6 +46,7 @@ deadhop-cvm = { path = "crates/cvm" }
 # The stand-in proxies, for tests only.
 deadhop-net = { path = "crates/net", features = ["test-support"] }
 deadhop-cvm = { path = "crates/cvm", features = ["test-support"] }
+deadhop-electrum = { path = "crates/electrum", features = ["test-support"] }
 nostr-relay-builder = "0.44"
 rmcp = { version = "1.8", features = ["server", "client", "macros", "transport-worker"] }
 tempfile = "3"

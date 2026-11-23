@@ -97,50 +97,6 @@ pub fn parse_pubkey(s: &str) -> Option<String> {
     Nip19Profile::from_bech32(s).ok().map(|p| p.public_key.to_hex())
 }
 
-/// `host:port` (plain TCP) or `tls://host:port` / `ssl://host:port`, plus
-/// optional comma-separated certificate fingerprints to pin.
-fn parse_electrum(spec: &str, pins: Option<&str>) -> Result<(String, crate::electrum::Security)> {
-    use crate::electrum::{parse_fingerprint, Security};
-    let (tls, addr) = match spec.split_once("://") {
-        None => (false, spec),
-        Some(("tcp", rest)) => (false, rest),
-        Some(("tls" | "ssl", rest)) => (true, rest),
-        Some(_) => {
-            return Err(Error::Config(
-                "DEADHOP_ELECTRUM scheme must be tcp://, tls:// or ssl://".into(),
-            ))
-        }
-    };
-    let port_ok = addr
-        .rsplit_once(':')
-        .is_some_and(|(host, port)| !host.is_empty() && port.parse::<u16>().is_ok());
-    if !port_ok {
-        return Err(Error::Config(
-            "DEADHOP_ELECTRUM must be host:port or tls://host:port".into(),
-        ));
-    }
-    let security = match (tls, pins) {
-        (false, None) => Security::Plain,
-        (false, Some(_)) => {
-            return Err(Error::Config(
-                "DEADHOP_ELECTRUM_CERT_SHA256 needs a tls:// Electrum server".into(),
-            ))
-        }
-        (true, None) => Security::Tls,
-        (true, Some(list)) => {
-            let pins = list
-                .split(',')
-                .map(|p| {
-                    parse_fingerprint(p)
-                        .ok_or_else(|| Error::Config(format!("'{}' is not a SHA-256 fingerprint", p.trim())))
-                })
-                .collect::<Result<Vec<_>>>()?;
-            Security::Pinned(pins)
-        }
-    };
-    Ok((addr.to_string(), security))
-}
-
 /// The account key: `DEADHOP_XPUB`, else the contents of `DEADHOP_XPUB_FILE`
 /// (written by `deadhop wallet serve`), with the file it came from.
 pub fn account_key(direct: Option<String>, file: Option<String>) -> Result<(String, Option<PathBuf>)> {
@@ -301,7 +257,7 @@ impl Config {
             }
         }
 
-        let (electrum, electrum_security) = parse_electrum(
+        let (electrum, electrum_security) = deadhop_electrum::parse_electrum(
             &required("DEADHOP_ELECTRUM")?,
             get("DEADHOP_ELECTRUM_CERT_SHA256").as_deref(),
         )?;

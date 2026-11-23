@@ -121,12 +121,8 @@ pub fn encode_account(account: &Xpub) -> String {
     base58::encode_check(&raw)
 }
 
-/// Electrum protocol script hash: `sha256(scriptPubKey)`, byte-reversed, hex.
-pub fn scripthash(script: &ScriptBuf) -> String {
-    let mut h = sha256::Hash::hash(script.as_bytes()).to_byte_array();
-    h.reverse();
-    hex::encode(h)
-}
+// The Electrum script hash lives in the Electrum crate and keeps its old path.
+pub use deadhop_electrum::scripthash;
 
 /// BIP-21 payment URI for `address` and `amount_sat`.
 pub fn bip21(address: &str, amount_sat: u64) -> String {
