@@ -102,3 +102,23 @@ fn fingerprints_are_parsed_and_printed() {
     assert_eq!(parse_fingerprint("abcd"), None);
     assert_eq!(parse_fingerprint(&"zz".repeat(32)), None);
 }
+
+#[test]
+fn the_first_certificate_of_a_pem_file_is_read() {
+    let pem = std::str::from_utf8(CERT).unwrap();
+    let der = deadhop_tlspin::first_pem_cert(&format!("junk\n{pem}{pem}")).unwrap();
+    assert_eq!(der, CertificateDer::from_pem_slice(CERT).unwrap().as_ref());
+    for (bad, why) in [
+        ("nothing here", "no certificate in the PEM file"),
+        (
+            "-----BEGIN CERTIFICATE-----\nAAAA",
+            "unterminated certificate in the PEM file",
+        ),
+        (
+            "-----BEGIN CERTIFICATE-----\n!!!\n-----END CERTIFICATE-----",
+            "the certificate in the PEM file is not valid base64",
+        ),
+    ] {
+        assert_eq!(deadhop_tlspin::first_pem_cert(bad).unwrap_err(), why);
+    }
+}

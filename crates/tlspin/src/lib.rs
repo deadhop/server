@@ -104,3 +104,17 @@ pub fn pinned(pins: Option<Vec<[u8; 32]>>) -> Arc<PinnedCert> {
         algs: rustls::crypto::ring::default_provider().signature_verification_algorithms,
     })
 }
+
+/// The first certificate in a PEM file, as DER.
+pub fn first_pem_cert(pem: &str) -> Result<Vec<u8>, String> {
+    use base64::Engine;
+    let begin = "-----BEGIN CERTIFICATE-----";
+    let start = pem.find(begin).ok_or("no certificate in the PEM file")? + begin.len();
+    let end = pem[start..]
+        .find("-----END CERTIFICATE-----")
+        .ok_or("unterminated certificate in the PEM file")?;
+    let body: String = pem[start..start + end].chars().filter(|c| !c.is_whitespace()).collect();
+    base64::engine::general_purpose::STANDARD
+        .decode(body)
+        .map_err(|_| "the certificate in the PEM file is not valid base64".to_string())
+}
