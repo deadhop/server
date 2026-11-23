@@ -335,7 +335,7 @@ impl Service {
             restart: tokio::sync::Notify::new(),
             relay_probe: Mutex::new(HashMap::new()),
             key_pubkeys: RwLock::new(Vec::new()),
-            net: crate::netruntime::NetworkRuntime::new(),
+            net: crate::netruntime::NetworkRuntime::default(),
             cfg,
             db,
             wallet,
