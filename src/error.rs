@@ -34,6 +34,13 @@ pub enum Error {
     Transport(String),
 }
 
+impl From<deadhop_net::error::Error> for Error {
+    fn from(e: deadhop_net::error::Error) -> Self {
+        let deadhop_net::error::Error::InvalidParams(why) = e;
+        Error::InvalidParams(why)
+    }
+}
+
 impl From<contextvm_sdk::Error> for Error {
     fn from(e: contextvm_sdk::Error) -> Self {
         Error::Transport(e.to_string())

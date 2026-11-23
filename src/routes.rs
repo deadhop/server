@@ -20,7 +20,6 @@
 use rmcp::schemars::{self, JsonSchema};
 use serde::{Deserialize, Serialize};
 
-use crate::config::is_overlay_host;
 use crate::error::{Error, Result};
 use crate::settings::{ProxySettings, Settings};
 
@@ -78,17 +77,7 @@ pub struct Rule {
     pub fallback: Fallback,
 }
 
-/// The host (lower case, without IPv6 brackets) and port of a relay address,
-/// as a URL parser reads them.
-pub fn host_port(relay: &str) -> Option<(String, u16)> {
-    let url = nostr_sdk::Url::parse(relay).ok()?;
-    let host = url
-        .host_str()?
-        .trim_start_matches('[')
-        .trim_end_matches(']')
-        .to_ascii_lowercase();
-    Some((host, url.port_or_known_default()?))
-}
+pub use deadhop_net::hosts::{host_port, never_direct};
 
 /// `*` matches any run of characters (dots included); everything else is literal.
 fn glob(pattern: &str, text: &str) -> bool {
@@ -194,15 +183,6 @@ fn names_tor_or_i2p(pattern: &str) -> bool {
     };
     let host = host.trim_end_matches('.');
     host.ends_with(".onion") || host.ends_with(".i2p")
-}
-
-/// Whether a relay must never be connected without a proxy: Tor and I2P names
-/// would go to the system resolver and fail, telling it what we looked up.
-pub fn never_direct(relay: &str) -> bool {
-    host_port(relay).is_some_and(|(h, _)| {
-        let h = h.trim_end_matches('.');
-        is_overlay_host(h) && !h.ends_with(".fips")
-    })
 }
 
 impl Rule {

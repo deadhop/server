@@ -453,25 +453,8 @@ pub fn is_loopback(addr: &str) -> bool {
     is_loopback_host(addr.rsplit_once(':').map_or(addr, |(h, _)| h))
 }
 
-/// Whether a bare host (no port; IPv6 with or without brackets) is this
-/// machine. Use this on a host that a URL parser extracted, never on a raw
-/// authority, which may carry userinfo (`ws://127.0.0.1:80@remote.example`).
-pub fn is_loopback_host(host: &str) -> bool {
-    let host = host.trim_start_matches('[').trim_end_matches(']');
-    host.eq_ignore_ascii_case("localhost") || host.parse::<std::net::IpAddr>().is_ok_and(|ip| ip.is_loopback())
-}
-
-/// Whether a bare host lives on a network that encrypts the whole path itself:
-/// Tor (`.onion`), I2P (`.i2p`, including `.b32.i2p`) or the FIPS mesh
-/// (`.fips`). A plain `ws://` relay there is not readable in transit, so the
-/// mainnet rule against unencrypted relays does not apply. Like
-/// [`is_loopback_host`], use it on a host a URL parser extracted.
-pub fn is_overlay_host(host: &str) -> bool {
-    let host = host.trim_end_matches('.').to_ascii_lowercase();
-    ["onion", "i2p", "fips"]
-        .iter()
-        .any(|tld| host.strip_suffix(tld).is_some_and(|rest| rest.ends_with('.')))
-}
+// Host classifiers live in the net crate; these keep their old paths.
+pub use deadhop_net::hosts::{is_loopback_host, is_overlay_host};
 
 impl Config {
     /// Settings that are allowed but that an operator should think twice about.

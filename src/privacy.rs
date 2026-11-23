@@ -403,24 +403,7 @@ pub fn resolves_private(addrs: &[std::net::IpAddr]) -> bool {
     !addrs.is_empty() && addrs.iter().all(|ip| is_private_host(&ip.to_string()))
 }
 
-pub fn is_private_host(host: &str) -> bool {
-    let host = host.trim_start_matches('[').trim_end_matches(']').to_ascii_lowercase();
-    if is_loopback_host(&host) {
-        return true;
-    }
-    match host.parse::<std::net::IpAddr>() {
-        Ok(std::net::IpAddr::V4(ip)) => {
-            ip.is_private() || ip.is_link_local() || ip.octets()[0] == 100 && (ip.octets()[1] & 0xc0) == 64
-        }
-        Ok(std::net::IpAddr::V6(ip)) => (ip.segments()[0] & 0xfe00) == 0xfc00 || (ip.segments()[0] & 0xffc0) == 0xfe80,
-        Err(_) => {
-            !host.contains('.')
-                || [".local", ".lan", ".home.arpa", ".internal"]
-                    .iter()
-                    .any(|s| host.ends_with(s))
-        }
-    }
-}
+pub use deadhop_net::hosts::is_private_host;
 
 #[allow(clippy::too_many_arguments)]
 fn finding(
