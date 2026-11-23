@@ -244,6 +244,49 @@ pub struct SettingsView {
     pub warnings: Vec<String>,
 }
 
+/// The network part of the settings, for the network views (core's dashboard
+/// and the standalone console): what `get_network` and `update_network` return.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
+pub struct NetworkView {
+    /// Live values (proxy passwords hidden).
+    pub settings: crate::network::NetworkSettings,
+    /// Values from the environment, used where nothing is overridden.
+    pub defaults: crate::network::NetworkSettings,
+    /// Names of the network settings changed from a dashboard.
+    pub overridden: Vec<String>,
+    /// The bitcoin network (`bitcoin`, `testnet`, `signet` or `regtest`): on
+    /// `bitcoin` a relay must use TLS unless it is on this machine or an overlay network.
+    pub chain: String,
+    /// The lanes (this service's keys) that relays and proxies are assigned to.
+    pub keys: Vec<KeyInfo>,
+    pub proxy_locked: bool,
+    pub restart_pending: bool,
+    pub warnings: Vec<String>,
+}
+
+/// Changes to the network settings; anything left out stays as it is.
+#[derive(Debug, Clone, Default, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct NetworkPatch {
+    #[serde(default)]
+    pub relays: Option<Vec<String>>,
+    /// Replaces the whole map of relays used by only some keys.
+    #[serde(default)]
+    pub relay_keys: Option<std::collections::BTreeMap<String, Vec<String>>>,
+    /// Replaces the whole map of relay names.
+    #[serde(default)]
+    pub relay_names: Option<std::collections::BTreeMap<String, String>>,
+    #[serde(default)]
+    pub proxies: Option<ProxyPatch>,
+}
+
+#[derive(Debug, Clone, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct UpdateNetworkParams {
+    /// Only the network settings to change.
+    pub patch: NetworkPatch,
+}
+
 #[derive(Debug, Clone, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct UpdateSettingsParams {
@@ -717,6 +760,41 @@ impl Service {
                 .read()
                 .unwrap_or_else(std::sync::PoisonError::into_inner)
                 .is_empty()
+    }
+
+    /// The network part of the settings view.
+    fn network_view(&self, v: SettingsView) -> NetworkView {
+        let network_name =
+            |n: &String| ["relays", "relay_keys", "relay_names"].contains(&n.as_str()) || n.starts_with("proxies.");
+        NetworkView {
+            settings: v.settings.network(),
+            defaults: v.defaults.network(),
+            overridden: v.overridden.into_iter().filter(network_name).collect(),
+            chain: v.fixed.network,
+            keys: v.fixed.keys,
+            proxy_locked: v.fixed.proxy_locked,
+            restart_pending: v.restart_pending,
+            warnings: v.warnings,
+        }
+    }
+
+    /// The network settings (operators only).
+    pub fn get_network(&self, caller: &Caller) -> Result<NetworkView> {
+        Ok(self.network_view(self.get_settings(caller)?))
+    }
+
+    /// Change the network settings (operators only): the same checks, storage
+    /// and reconnection as `update_settings`, for the network part alone.
+    pub fn update_network(&self, caller: &Caller, p: UpdateNetworkParams) -> Result<NetworkView> {
+        let patch = SettingsPatch {
+            relays: p.patch.relays,
+            relay_keys: p.patch.relay_keys,
+            relay_names: p.patch.relay_names,
+            proxies: p.patch.proxies,
+            ..SettingsPatch::default()
+        };
+        let view = self.update_settings(caller, UpdateSettingsParams { patch })?;
+        Ok(self.network_view(view))
     }
 
     /// Live and default settings, and who can operate the service.
@@ -3275,5 +3353,50 @@ pub(crate) mod tests {
             save(json!({ "proxies": { "mode": "off" } })),
         );
         crate::snapshot::check("key_refusals", &serde_json::to_value(&out).unwrap());
+    }
+
+    #[tokio::test]
+    async fn the_network_part_is_read_and_changed_on_its_own() {
+        let r = rig(|_| {}).await;
+        assert_eq!(code(r.svc.get_network(&stranger())), "unauthorized");
+        let none = UpdateNetworkParams {
+            patch: NetworkPatch::default(),
+        };
+        assert_eq!(code(r.svc.update_network(&stranger(), none)), "unauthorized");
+        // A change outside the network shows nowhere in the network view.
+        r.svc
+            .update_settings(&r.admin(), patch(serde_json::json!({ "name": "renamed" })))
+            .unwrap();
+        let v = r.svc.get_network(&r.admin()).unwrap();
+        assert!(v.overridden.is_empty(), "{:?}", v.overridden);
+        assert_eq!((v.chain.as_str(), v.keys.len(), v.proxy_locked), ("regtest", 2, false));
+        assert_eq!(v.settings, v.defaults);
+        // A network change goes through the same checks and storage as update_settings.
+        let p: NetworkPatch = serde_json::from_value(serde_json::json!({
+            "relay_names": { "wss://relay.example": "Relay" },
+            "proxies": { "list": [{ "id": "tor", "url": "socks5://user:pw@127.0.0.1:9050" }] }
+        }))
+        .unwrap();
+        let v = r
+            .svc
+            .update_network(&r.admin(), UpdateNetworkParams { patch: p })
+            .unwrap();
+        assert_eq!(
+            v.overridden,
+            ["name", "relay_names", "proxies.list"]
+                .iter()
+                .skip(1)
+                .map(|s| s.to_string())
+                .collect::<Vec<_>>()
+        );
+        assert_eq!(v.settings.relay_names["wss://relay.example"], "Relay");
+        assert_eq!(v.settings.proxies.list[0].url, "socks5://user:***@127.0.0.1:9050");
+        assert_eq!(r.svc.get_settings(&r.admin()).unwrap().settings.name, "renamed");
+        let bad: NetworkPatch = serde_json::from_value(serde_json::json!({ "relays": [] })).unwrap();
+        assert_eq!(
+            code(r.svc.update_network(&r.admin(), UpdateNetworkParams { patch: bad })),
+            "invalid_params"
+        );
+        assert!(serde_json::from_value::<NetworkPatch>(serde_json::json!({ "name": "x" })).is_err());
     }
 }

@@ -19,7 +19,8 @@ use crate::error::Error;
 use crate::keys::KeyDef;
 use crate::manage::{
     AddOperatorParams, AuditLog, AuditParams, Backup, BackupList, ControlParams, ControlResult, Health, Metrics,
-    RemoveOperatorParams, Series, SeriesParams, SettingsView, UpdateSettingsParams, WipeParams, WipeResult,
+    NetworkView, RemoveOperatorParams, Series, SeriesParams, SettingsView, UpdateNetworkParams, UpdateSettingsParams,
+    WipeParams, WipeResult,
 };
 use crate::service::{
     CreateInvoiceParams, GetInvoiceParams, Info, Invoice, InvoiceList, ListInvoicesParams, Service, Stats,
@@ -283,6 +284,28 @@ impl PayServer {
     ) -> Result<Json<WipeResult>, ErrorData> {
         let c = caller_from(&ctx.extensions);
         self.svc.wipe(&c, p).map(Json).map_err(rpc_error)
+    }
+
+    #[tool(
+        name = "get_network",
+        description = "Operators only: the network settings (relays, which keys use them, relay names, proxies, routing rules, I2P registries) with their environment defaults, the keys they are assigned to and the bitcoin network."
+    )]
+    async fn tool_get_network(&self, ctx: RequestContext<RoleServer>) -> Result<Json<NetworkView>, ErrorData> {
+        let c = caller_from(&ctx.extensions);
+        self.svc.get_network(&c).map(Json).map_err(rpc_error)
+    }
+
+    #[tool(
+        name = "update_network",
+        description = "Operators only: change the network settings; anything left out stays as it is. Checked, stored and applied exactly like update_settings."
+    )]
+    async fn tool_update_network(
+        &self,
+        Parameters(p): Parameters<UpdateNetworkParams>,
+        ctx: RequestContext<RoleServer>,
+    ) -> Result<Json<NetworkView>, ErrorData> {
+        let c = caller_from(&ctx.extensions);
+        self.svc.update_network(&c, p).map(Json).map_err(rpc_error)
     }
 
     #[tool(name = "get_audit_log", description = "Operators only: recent operator actions.")]
