@@ -5,7 +5,7 @@ use std::sync::Arc;
 
 use crate::db::RelayEventRow;
 use crate::electrum::Security;
-use crate::error::Result;
+use crate::error::{to_engine, Result};
 use crate::netruntime::{
     AuditFacts, CheckProxyParams, NetworkHost, RelayHealthReport, RelayHistory, RelayHistoryParams,
     ResolveI2pNameParams,
@@ -16,6 +16,7 @@ use crate::proxypool::{Connection, PoolHealth, Posture};
 use crate::relayhealth::RelayHealth;
 use crate::service::{Caller, RelayState, Service};
 use crate::settings::Settings;
+use deadhop_netengine::error::Result as EngineResult;
 
 #[async_trait::async_trait]
 impl NetworkHost for Service {
@@ -35,20 +36,20 @@ impl NetworkHost for Service {
         )
     }
 
-    fn revert_proxies(&self, previous: ProxySettings, why: &str) -> Result<()> {
-        Service::revert_proxies(self, previous, why)
+    fn revert_proxies(&self, previous: ProxySettings, why: &str) -> EngineResult<()> {
+        Service::revert_proxies(self, previous, why).map_err(to_engine)
     }
 
-    fn admit_change(&self, caller: &Caller) -> Result<String> {
-        Service::admit_change(self, caller)
+    fn admit_change(&self, caller: &Caller) -> EngineResult<String> {
+        Service::admit_change(self, caller).map_err(to_engine)
     }
 
-    fn admit_read(&self, caller: &Caller) -> Result<()> {
-        self.read_only(caller)
+    fn admit_read(&self, caller: &Caller) -> EngineResult<()> {
+        self.read_only(caller).map_err(to_engine)
     }
 
-    fn audit(&self, actor: &str, action: &str, detail: &str) -> Result<()> {
-        self.record(actor, action, detail)
+    fn audit(&self, actor: &str, action: &str, detail: &str) -> EngineResult<()> {
+        self.record(actor, action, detail).map_err(to_engine)
     }
 
     fn proxy_locked(&self) -> bool {
@@ -59,12 +60,12 @@ impl NetworkHost for Service {
         Service::relay_states(self).await
     }
 
-    fn store_relay_event(&self, row: &RelayEventRow) -> Result<()> {
-        self.db.record_relay_event(row)
+    fn store_relay_event(&self, row: &RelayEventRow) -> EngineResult<()> {
+        self.db.record_relay_event(row).map_err(to_engine)
     }
 
-    fn relay_events_since(&self, since: u64) -> Result<Vec<RelayEventRow>> {
-        self.db.relay_events_since(since)
+    fn relay_events_since(&self, since: u64) -> EngineResult<Vec<RelayEventRow>> {
+        self.db.relay_events_since(since).map_err(to_engine)
     }
 
     fn audit_facts(&self) -> AuditFacts {
@@ -131,7 +132,7 @@ impl Service {
 
     /// Test a proxy against the live relays (operators only).
     pub async fn check_proxy(&self, caller: &Caller, p: CheckProxyParams) -> Result<ProxyCheck> {
-        self.net.check_proxy(self, caller, p).await
+        Ok(self.net.check_proxy(self, caller, p).await?)
     }
 
     /// Look an I2P name up (operators only).
@@ -140,7 +141,7 @@ impl Service {
         caller: &Caller,
         p: ResolveI2pNameParams,
     ) -> Result<crate::i2p::I2pNameLookup> {
-        self.net.resolve_i2p_name(self, caller, p).await
+        Ok(self.net.resolve_i2p_name(self, caller, p).await?)
     }
 
     /// Check every live relay and keep the result for `health`. `None` if a
@@ -156,17 +157,17 @@ impl Service {
 
     /// How each relay did over a window (operators only).
     pub fn relay_history(&self, caller: &Caller, p: RelayHistoryParams) -> Result<RelayHistory> {
-        self.net.relay_history(self, caller, p)
+        Ok(self.net.relay_history(self, caller, p)?)
     }
 
     /// Check every live relay now (operators only, a few times a minute).
     pub async fn check_relays(&self, caller: &Caller) -> Result<RelayHealthReport> {
-        self.net.check_relays(self, caller).await
+        Ok(self.net.check_relays(self, caller).await?)
     }
 
     /// What can be learned about where this service runs (operators only).
     pub async fn privacy_audit(&self, caller: &Caller) -> Result<PrivacyAudit> {
-        self.net.privacy_audit(self, caller).await
+        Ok(self.net.privacy_audit(self, caller).await?)
     }
 
     /// Look at the proxies again at once, and undo the change (once) if none

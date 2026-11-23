@@ -171,16 +171,8 @@ struct PollReport {
     failure: Option<Error>,
 }
 
-/// Connection state of one relay, as reported by the transport.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
-pub struct RelayState {
-    pub url: String,
-    /// Transport status, for example `connected`, `connecting` or `disconnected`.
-    pub status: String,
-    pub connected: bool,
-    /// The keys (by id) that use this relay.
-    pub keys: Vec<String>,
-}
+// The state of a relay connection lives with the network runtime; kept at its old path.
+pub use crate::netruntime::RelayState;
 
 /// Something that can report relay connections (the live relay pool).
 #[async_trait::async_trait]

@@ -659,7 +659,7 @@ impl App {
         }
         let monitor = tokio::spawn(monitor(svc.clone(), None));
         let relay_health = tokio::spawn(relay_health_loop(svc.clone()));
-        let proxy_probe = tokio::spawn(crate::proxypool::probe_loop(svc.clone(), stop.clone()));
+        let proxy_probe = tokio::spawn(crate::nethost::probe_loop(svc.clone(), stop.clone()));
         tracing::info!(%pubkey, network = %cfg.network, relays, via_proxy, paused, "deadhop is serving");
         tracing::info!(address = %svc.first_address()?, "first receive address (index 0): check that your wallet lists it");
         Ok(App {
@@ -803,6 +803,23 @@ mod tests {
     use nostr_relay_builder::MockRelay;
     use nostr_sdk::prelude::{BoxedFuture, NostrSigner, PublicKey, SignerBackend, SignerError, Tag, UnsignedEvent};
     use nostr_sdk::{Keys, ToBech32};
+
+    /// Set (or clear) what every key's plan decided.
+    trait SetApplied {
+        fn set_applied(&mut self, a: Option<crate::proxypool::Applied>);
+    }
+
+    impl SetApplied for crate::proxypool::PoolRuntime {
+        fn set_applied(&mut self, a: Option<crate::proxypool::Applied>) {
+            self.applied = match a {
+                Some(a) => crate::keys::KEYS
+                    .iter()
+                    .map(|k| (k.id.to_string(), a.clone()))
+                    .collect(),
+                None => HashMap::new(),
+            };
+        }
+    }
     use rmcp::model::{CallToolRequestParams, CallToolResult};
     use rmcp::service::{RoleClient, RunningService, ServiceError};
     use serde_json::{json, Value};

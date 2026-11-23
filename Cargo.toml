@@ -39,6 +39,8 @@ deadhop-tlspin = { path = "crates/tlspin" }
 deadhop-net = { path = "crates/net" }
 # The wallet account, private files and keys, the rate limiter.
 deadhop-common = { path = "crates/common" }
+# The network engine: settings, routing rules, the proxy pool, relay health, I2P names, the privacy audit.
+deadhop-netengine = { path = "crates/netengine" }
 # The hardened Electrum client.
 deadhop-electrum = { path = "crates/electrum" }
 # ContextVM plumbing: the local handshake, the caller, the event kind.
@@ -49,6 +51,7 @@ deadhop-cvm = { path = "crates/cvm" }
 deadhop-net = { path = "crates/net", features = ["test-support"] }
 deadhop-cvm = { path = "crates/cvm", features = ["test-support"] }
 deadhop-electrum = { path = "crates/electrum", features = ["test-support"] }
+deadhop-netengine = { path = "crates/netengine", features = ["test-support"] }
 nostr-relay-builder = "0.44"
 rmcp = { version = "1.8", features = ["server", "client", "macros", "transport-worker"] }
 tempfile = "3"

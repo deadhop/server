@@ -142,15 +142,8 @@ CREATE INDEX IF NOT EXISTS relay_events_at ON relay_events(at);
 /// How long relay results are kept: a little over the longest window shown.
 pub const RELAY_EVENTS_KEPT_SECS: u64 = 8 * 86_400;
 
-/// One relay result: a health check (`check`) or a reply sent (`send`).
-#[derive(Debug, PartialEq, Eq)]
-pub struct RelayEventRow {
-    pub at: u64,
-    pub relay: String,
-    pub kind: String,
-    pub ok: bool,
-    pub ms: Option<u64>,
-}
+// A relay result lives with the network runtime; kept at its old path.
+pub use crate::netruntime::RelayEventRow;
 
 /// `meta` key of the next unused derivation index. Never decreases, so a
 /// wiped database can never hand out an address that was already used.

@@ -13,6 +13,8 @@ pub mod mcp;
 pub mod nethost;
 pub mod netruntime;
 pub mod network;
+#[cfg(test)]
+mod pooltests;
 pub mod pow;
 pub mod privacy;
 pub mod proxypool;

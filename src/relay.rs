@@ -13,5 +13,5 @@ pub fn parse_proxy(s: &str) -> Result<Option<ProxySpec>> {
 /// The stand-in proxies, where the tests of other modules look for them.
 #[cfg(test)]
 pub(crate) mod tests {
-    pub use deadhop_net::testing::{connect_proxy, socks5_proxy, socks5_proxy_on};
+    pub use deadhop_net::testing::{socks5_proxy, socks5_proxy_on};
 }

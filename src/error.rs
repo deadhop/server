@@ -34,6 +34,26 @@ pub enum Error {
     Transport(String),
 }
 
+impl From<deadhop_netengine::error::Error> for Error {
+    fn from(e: deadhop_netengine::error::Error) -> Self {
+        use deadhop_netengine::error::Error as Engine;
+        match e {
+            Engine::InvalidParams(why) => Error::InvalidParams(why),
+            Engine::RateLimited => Error::RateLimited,
+            // What this service told the engine comes back as it was.
+            Engine::Host(e) => match e.downcast::<Error>() {
+                Ok(own) => *own,
+                Err(other) => Error::Transport(other.to_string()),
+            },
+        }
+    }
+}
+
+/// This service's error, to hand to the network engine and get back unchanged.
+pub fn to_engine(e: Error) -> deadhop_netengine::error::Error {
+    deadhop_netengine::error::Error::Host(Box::new(e))
+}
+
 impl From<deadhop_common::error::Error> for Error {
     fn from(e: deadhop_common::error::Error) -> Self {
         match e {
@@ -96,6 +116,46 @@ impl Error {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn an_error_handed_to_the_network_engine_comes_back_as_it_was() {
+        use deadhop_netengine::error::Error as Engine;
+        let own: Vec<Error> = vec![
+            Error::Config("c".into()),
+            Error::InvalidParams("p".into()),
+            Error::Pow("w".into()),
+            Error::RateLimited,
+            Error::Unauthorized,
+            Error::NotFound,
+            Error::Capacity,
+            Error::Paused,
+            Error::Unavailable,
+            Error::Chain("x".into()),
+            Error::Db(rusqlite::Error::InvalidQuery),
+            Error::Io(std::io::Error::other("disk")),
+            Error::Transport("t".into()),
+        ];
+        for e in own {
+            let (variant, code, text) = (std::mem::discriminant(&e), e.code(), e.to_string());
+            let through = to_engine(e);
+            assert_eq!(through.to_string(), text, "the engine shows the host's own text");
+            let back = Error::from(through);
+            assert_eq!(
+                (std::mem::discriminant(&back), back.code(), back.to_string()),
+                (variant, code, text)
+            );
+        }
+        // The engine's own refusals keep their variant and text.
+        let refused = Error::from(Engine::InvalidParams("bad".into()));
+        assert!(matches!(&refused, Error::InvalidParams(m) if m == "bad"));
+        assert_eq!(refused.to_string(), "invalid parameters: bad");
+        assert!(matches!(Error::from(Engine::RateLimited), Error::RateLimited));
+        assert_eq!(Engine::RateLimited.to_string(), Error::RateLimited.to_string());
+        // Something that is not this service's error is an internal failure.
+        let foreign = Error::from(Engine::Host(Box::new(std::io::Error::other("elsewhere"))));
+        assert!(matches!(&foreign, Error::Transport(m) if m == "elsewhere"));
+        assert_eq!(foreign.public_message(), "internal error");
+    }
 
     #[test]
     fn shared_crate_errors_keep_their_variant_and_text() {
