@@ -19,22 +19,32 @@ use serde_json::json;
 /// it: the Nostr transport replaces every inbound id with a 64-hex event id.
 pub const LOCAL_INIT_ID: &str = "deadhop-local-init";
 
+/// The handshake as this service performs it: its own request id, client
+/// name and version.
+pub fn local<T>(inner: T) -> LocalHandshake<T> {
+    LocalHandshake::new(inner, LOCAL_INIT_ID, "deadhop-local", env!("CARGO_PKG_VERSION"))
+}
+
 /// Transport wrapper that performs the handshake on behalf of the peer.
 pub struct LocalHandshake<T> {
     inner: T,
     pending: VecDeque<RxJsonRpcMessage<RoleServer>>,
+    init_id: String,
 }
 
 impl<T> LocalHandshake<T> {
-    pub fn new(inner: T) -> Self {
+    /// `init_id` is the request id of the synthetic `initialize` (one no real
+    /// request can carry); `client_name` and `client_version` are what the
+    /// service reports as the client of its own handshake.
+    pub fn new(inner: T, init_id: &str, client_name: &str, client_version: &str) -> Self {
         let initialize = json!({
             "jsonrpc": "2.0",
-            "id": LOCAL_INIT_ID,
+            "id": init_id,
             "method": "initialize",
             "params": {
                 "protocolVersion": "2025-03-26",
                 "capabilities": {},
-                "clientInfo": { "name": "deadhop-local", "version": env!("CARGO_PKG_VERSION") }
+                "clientInfo": { "name": client_name, "version": client_version }
             }
         });
         let initialized = json!({ "jsonrpc": "2.0", "method": "notifications/initialized" });
@@ -42,17 +52,21 @@ impl<T> LocalHandshake<T> {
             .into_iter()
             .map(|m| serde_json::from_value(m).expect("static handshake messages are valid"))
             .collect();
-        LocalHandshake { inner, pending }
+        LocalHandshake {
+            inner,
+            pending,
+            init_id: init_id.to_string(),
+        }
     }
 }
 
-fn is_local_reply(item: &TxJsonRpcMessage<RoleServer>) -> bool {
+fn is_local_reply(item: &TxJsonRpcMessage<RoleServer>, init_id: &str) -> bool {
     let id = match item {
         JsonRpcMessage::Response(r) => Some(&r.id),
         JsonRpcMessage::Error(e) => e.id.as_ref(),
         _ => None,
     };
-    matches!(id, Some(NumberOrString::String(s)) if s.as_ref() == LOCAL_INIT_ID)
+    matches!(id, Some(NumberOrString::String(s)) if s.as_ref() == init_id)
 }
 
 impl<T: Transport<RoleServer>> Transport<RoleServer> for LocalHandshake<T> {
@@ -63,7 +77,7 @@ impl<T: Transport<RoleServer>> Transport<RoleServer> for LocalHandshake<T> {
         item: TxJsonRpcMessage<RoleServer>,
     ) -> impl Future<Output = Result<(), Self::Error>> + Send + 'static {
         // The reply to our own `initialize` has no recipient.
-        let forward = if is_local_reply(&item) {
+        let forward = if is_local_reply(&item, &self.init_id) {
             None
         } else {
             Some(self.inner.send(item))
@@ -144,6 +158,13 @@ pub(crate) mod tests {
         serde_json::from_value(value).unwrap()
     }
 
+    /// The handshake of some service: its id, name and version are its own.
+    const INIT: &str = "test-local-init";
+
+    fn wrap<T>(inner: T) -> LocalHandshake<T> {
+        LocalHandshake::new(inner, INIT, "test-local", "9.9.9")
+    }
+
     fn reply(id: &str) -> TxJsonRpcMessage<RoleServer> {
         serde_json::from_value(json!({ "jsonrpc": "2.0", "id": id, "result": {} })).unwrap()
     }
@@ -151,7 +172,7 @@ pub(crate) mod tests {
     #[tokio::test]
     async fn yields_the_handshake_first_then_the_network() {
         let (inner, (tx, _, _)) = scripted();
-        let mut t = LocalHandshake::new(inner);
+        let mut t = wrap(inner);
         tx.send(rx(
             json!({ "jsonrpc": "2.0", "method": "notifications/cancelled", "params": { "requestId": 1 } }),
         ))
@@ -171,12 +192,12 @@ pub(crate) mod tests {
     #[tokio::test]
     async fn swallows_replies_to_the_local_handshake_only() {
         let (inner, (_tx, sent, closed)) = scripted();
-        let mut t = LocalHandshake::new(inner);
+        let mut t = wrap(inner);
 
-        t.send(reply(LOCAL_INIT_ID)).await.unwrap();
+        t.send(reply(INIT)).await.unwrap();
         let failed = JsonRpcMessage::Error(JsonRpcError {
             jsonrpc: JsonRpcVersion2_0,
-            id: Some(NumberOrString::String(LOCAL_INIT_ID.into())),
+            id: Some(NumberOrString::String(INIT.into())),
             error: ErrorData::new(ErrorCode(-32603), "x", None),
         });
         t.send(failed).await.unwrap();

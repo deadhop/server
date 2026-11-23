@@ -23,7 +23,6 @@ use crate::config::Config;
 use crate::db::Db;
 use crate::electrum::{Chain, Electrum};
 use crate::error::{Error, Result};
-use crate::handshake::LocalHandshake;
 use crate::keyholder;
 use crate::keys::{open_identities, Identity, KeyDef, INVOICES};
 use crate::manage::BACKUP_DIR;
@@ -287,7 +286,7 @@ impl Link {
             .with_oversized_enabled(false)
             .with_server_info(ServerInfo::default().with_name(svc.settings().name.clone()));
         let transport = NostrServerTransport::with_relay_pool(transport_config, pool.clone()).await?;
-        let transport = LocalHandshake::new(IntoTransport::<RoleServer, _, _>::into_transport(transport));
+        let transport = crate::handshake::local(IntoTransport::<RoleServer, _, _>::into_transport(transport));
         let cancel = CancellationToken::new();
         let ended = CancellationToken::new();
         let task = tokio::spawn({
@@ -2284,6 +2283,36 @@ mod tests {
         app.stop().await;
     }
 
+    /// What the service reports in its own handshake is visible to the MCP
+    /// layer: the request id, the client name and this crate's version.
+    #[tokio::test]
+    async fn the_local_handshake_reports_this_service() {
+        use crate::handshake::tests::scripted;
+        use rmcp::transport::Transport;
+        let (inner, _handle) = scripted();
+        let mut t = crate::handshake::local(inner);
+        let first = serde_json::to_value(t.receive().await.unwrap()).unwrap();
+        assert_eq!(
+            first,
+            json!({
+                "jsonrpc": "2.0",
+                "id": "deadhop-local-init",
+                "method": "initialize",
+                "params": {
+                    "protocolVersion": "2025-03-26",
+                    "capabilities": {},
+                    "clientInfo": { "name": "deadhop-local", "version": env!("CARGO_PKG_VERSION") }
+                }
+            })
+        );
+        assert_eq!(env!("CARGO_PKG_NAME"), "deadhop");
+        let second = serde_json::to_value(t.receive().await.unwrap()).unwrap();
+        assert_eq!(
+            second,
+            json!({ "jsonrpc": "2.0", "method": "notifications/initialized" })
+        );
+    }
+
     #[tokio::test]
     async fn request_loop_reports_why_it_ended() {
         use crate::handshake::tests::scripted;
@@ -2294,7 +2323,7 @@ mod tests {
         drop(tx);
         let ended = serve(
             PayServer::new(r.svc.clone(), crate::keys::def(crate::keys::INVOICES).unwrap()),
-            LocalHandshake::new(transport),
+            crate::handshake::local(transport),
             CancellationToken::new(),
         )
         .await;
