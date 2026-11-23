@@ -1,0 +1,38 @@
+{
+  "a key left without a relay": {
+    "code": "invalid_params",
+    "public_message": "invalid parameters: no relay is assigned to the administration key, which could then not be reached"
+  },
+  "a proxy for a key that does not exist": {
+    "code": "invalid_params",
+    "public_message": "invalid parameters: proxy: there is no key 'nobody'"
+  },
+  "a proxy that names a key twice": {
+    "code": "invalid_params",
+    "public_message": "invalid parameters: proxy: key 'admin' is named twice"
+  },
+  "a relay for a key that does not exist": {
+    "code": "invalid_params",
+    "public_message": "invalid parameters: relay: there is no key 'nobody'"
+  },
+  "a rule for a key that does not exist": {
+    "code": "invalid_params",
+    "public_message": "invalid parameters: rule 1: there is no key 'nobody'"
+  },
+  "a rule sends an onion relay straight": {
+    "code": "invalid_params",
+    "public_message": "invalid parameters: rule 1: Tor and I2P relays can only be reached through a proxy, never directly"
+  },
+  "every relay of a key is blocked": {
+    "code": "invalid_params",
+    "public_message": "invalid parameters: the rules block every relay of the Administration key; it could not be reached"
+  },
+  "the default route has no proxy for a key": {
+    "code": "invalid_params",
+    "public_message": "invalid parameters: no proxy in the default route is assigned to the administration key, which would connect without one"
+  },
+  "the strategy is turned off while a key's first proxy is down": {
+    "code": "invalid_params",
+    "public_message": "invalid parameters: the first proxy in the Public invoices key's default route is down, so turning the strategy off would cut that key off now; move a reachable proxy first or wait until it is back"
+  }
+}

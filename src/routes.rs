@@ -21,7 +21,7 @@ use rmcp::schemars::{self, JsonSchema};
 use serde::{Deserialize, Serialize};
 
 use crate::error::{Error, Result};
-use crate::settings::{ProxySettings, Settings};
+use crate::network::{assigned, Topology};
 
 /// Most rules in the list.
 pub const MAX_RULES: usize = 16;
@@ -188,7 +188,7 @@ fn names_tor_or_i2p(pattern: &str) -> bool {
 impl Rule {
     /// Whether this rule applies to `key` and matches `relay`.
     pub fn applies(&self, key: &str, relay: &str) -> bool {
-        crate::keys::assigned(&self.keys, key) && self.patterns.iter().any(|p| matches(p, relay))
+        assigned(&self.keys, key) && self.patterns.iter().any(|p| matches(p, relay))
     }
 }
 
@@ -199,7 +199,8 @@ pub fn first_rule(rules: &[Rule], key: &str, relay: &str) -> Option<usize> {
 
 /// Check the rule list against the proxy list and the relays. `relays_for`
 /// gives each key's relays.
-pub fn check_rules(proxies: &ProxySettings, settings: &Settings) -> Result<()> {
+pub fn check_rules(settings: &Topology) -> Result<()> {
+    let proxies = &settings.proxies;
     let rules = &proxies.rules;
     if rules.len() > MAX_RULES {
         return Err(Error::InvalidParams(format!("at most {MAX_RULES} routing rules")));
@@ -217,7 +218,7 @@ pub fn check_rules(proxies: &ProxySettings, settings: &Settings) -> Result<()> {
         if let Some(why) = r.patterns.iter().find_map(|p| pattern_problem(p)) {
             return Err(Error::InvalidParams(format!("rule {n}: {why}")));
         }
-        if let Some(k) = r.keys.iter().find(|k| crate::keys::def(k).is_none()) {
+        if let Some(k) = r.keys.iter().find(|k| !settings.lanes.iter().any(|l| &l.id == *k)) {
             return Err(Error::InvalidParams(format!("rule {n}: there is no key '{k}'")));
         }
         match &r.to {
@@ -235,11 +236,11 @@ pub fn check_rules(proxies: &ProxySettings, settings: &Settings) -> Result<()> {
         }
     }
     // Every key keeps a relay that no rule blocks.
-    for key in crate::keys::KEYS {
-        let relays = settings.relays_for(key.id);
+    for key in &settings.lanes {
+        let relays = settings.relays_for(&key.id);
         let open = relays.iter().any(|relay| {
             !matches!(
-                first_rule(rules, key.id, relay).map(|i| &rules[i].to),
+                first_rule(rules, &key.id, relay).map(|i| &rules[i].to),
                 Some(RouteTo::Block)
             )
         });
@@ -323,7 +324,7 @@ impl DefaultRoute {
 
 /// Where each of `key`'s relays goes, in list order. `up` says whether a
 /// proxy (by id) answered its last probe.
-pub fn resolve(settings: &Settings, key: &str, default: &DefaultRoute, up: &dyn Fn(&str) -> bool) -> Vec<Resolved> {
+pub fn resolve(settings: &Topology, key: &str, default: &DefaultRoute, up: &dyn Fn(&str) -> bool) -> Vec<Resolved> {
     let proxies = &settings.proxies;
     let rules = &proxies.rules;
     settings
@@ -383,7 +384,7 @@ pub fn resolve(settings: &Settings, key: &str, default: &DefaultRoute, up: &dyn 
 /// Whether some relay of `key` may take the default route (a rule-free relay,
 /// a rule to the pool, or a rule whose proxy falls back to it). When none can,
 /// the pool being empty or down does not matter for that key.
-pub fn uses_default(settings: &Settings, key: &str) -> bool {
+pub fn uses_default(settings: &Topology, key: &str) -> bool {
     let rules = &settings.proxies.rules;
     settings
         .relays_for(key)
@@ -399,7 +400,7 @@ pub fn uses_default(settings: &Settings, key: &str) -> bool {
 /// The relays that may be sent through proxy `id` (for any key), in list
 /// order: what a probe of that proxy should try, so a proxy is never tried
 /// against a relay it would not carry.
-pub fn relays_through_proxy(settings: &Settings, id: &str) -> Vec<String> {
+pub fn relays_through_proxy(settings: &Topology, id: &str) -> Vec<String> {
     let proxies = &settings.proxies;
     let Some(entry) = proxies.list.iter().find(|e| e.id == id) else {
         return Vec::new();
@@ -411,7 +412,7 @@ pub fn relays_through_proxy(settings: &Settings, id: &str) -> Vec<String> {
         .filter(|relay| {
             settings.relay_users(relay).iter().any(|key| {
                 let rule = first_rule(rules, key, relay).map(|i| &rules[i]);
-                let in_pool = entry.pool && crate::keys::assigned(&entry.keys, key);
+                let in_pool = entry.pool && assigned(&entry.keys, key);
                 match rule {
                     Some(Rule {
                         to: RouteTo::Proxy(p),
@@ -514,8 +515,8 @@ mod tests {
     const VPN_RELAY: &str = "wss://relay.contextvm.org";
     const PLAIN: &str = "wss://bucket.coracle.social";
 
-    fn settings(rules: Vec<Rule>) -> Settings {
-        let mut s = crate::settings::tests::defaults();
+    fn settings(rules: Vec<Rule>) -> Topology {
+        let mut s = crate::settings::tests::defaults().topology();
         s.relays = vec![VPN_RELAY.into(), PLAIN.into(), ONION.into(), LAN.into()];
         s.proxies.list = vec![entry("tor", true), entry("vpn", true), entry("i2p", false)];
         s.proxies.rules = rules;
@@ -530,7 +531,7 @@ mod tests {
     }
 
     fn table(
-        s: &Settings,
+        s: &Topology,
         key: &str,
         default: &DefaultRoute,
         up: &dyn Fn(&str) -> bool,
@@ -648,7 +649,7 @@ mod tests {
     fn rule_lists_are_checked() {
         let check = |rules: Vec<Rule>| {
             let s = settings(rules);
-            check_rules(&s.proxies, &s).map_err(|e| e.to_string())
+            check_rules(&s).map_err(|e| e.to_string())
         };
         assert!(check(vec![
             rule(&["*.onion"], RouteTo::Proxy("tor".into())),

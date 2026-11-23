@@ -404,7 +404,7 @@ impl Service {
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .applied
             .iter()
-            .any(|(k, a)| a.state == PoolState::Offline && crate::routes::uses_default(&settings, k));
+            .any(|(k, a)| a.state == PoolState::Offline && crate::routes::uses_default(&settings.topology(), k));
         if offline {
             Posture::offline(self.settings().proxies.offline)
         } else {
@@ -485,7 +485,7 @@ impl Service {
                 .map(|e| {
                     (
                         e.id.clone(),
-                        crate::routes::relays_through_proxy(&settings, &e.id),
+                        crate::routes::relays_through_proxy(&settings.topology(), &e.id),
                         parse_proxy(&e.url).ok().flatten(),
                         redact(&e.url),
                     )
@@ -606,7 +606,7 @@ impl Service {
             // Only a key whose relays may use the default route is hurt by it being down.
             let offline = decided
                 .iter()
-                .any(|(k, a)| a.state == PoolState::Offline && crate::routes::uses_default(&settings, k));
+                .any(|(k, a)| a.state == PoolState::Offline && crate::routes::uses_default(&settings.topology(), k));
             // A change that left a key with nothing reachable is undone once;
             // one that works (or a probation that ran out) ends the probation.
             let revert_to = match pool.probation.clone() {
@@ -698,7 +698,7 @@ impl Service {
                     .iter()
                     .filter(|e| e.pool && crate::keys::assigned(&e.keys, k.id))
                     .collect();
-                crate::routes::uses_default(next, k.id)
+                crate::routes::uses_default(&next.topology(), k.id)
                     && lane.first().map(up) == Some(Some(false))
                     && lane.iter().skip(1).any(|e| up(e) == Some(true))
             })
@@ -732,7 +732,7 @@ impl Service {
             .filter(|(_, p)| p.up)
             .map(|(id, _)| id.clone())
             .collect();
-        crate::routes::resolve(&settings, key, &default, &|id| up.contains(id))
+        crate::routes::resolve(&settings.topology(), key, &default, &|id| up.contains(id))
     }
 
     /// The pool as the dashboard shows it.
@@ -754,7 +754,7 @@ impl Service {
                     active: a.active.clone(),
                     reachable: a.reachable,
                     next_switch_at: a.next_switch_at,
-                    uses_default: crate::routes::uses_default(&settings, k.id),
+                    uses_default: crate::routes::uses_default(&settings.topology(), k.id),
                 },
                 _ => LaneHealth {
                     key: k.id.to_string(),
@@ -766,7 +766,7 @@ impl Service {
                     active: None,
                     reachable: 0,
                     next_switch_at: None,
-                    uses_default: crate::routes::uses_default(&settings, k.id),
+                    uses_default: crate::routes::uses_default(&settings.topology(), k.id),
                 },
             })
             .collect();
