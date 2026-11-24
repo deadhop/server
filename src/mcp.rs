@@ -61,7 +61,7 @@ pub struct PayServer {
 impl PayServer {
     /// Every tool: this service's own and the network tools of its engine.
     pub fn tool_router() -> ToolRouter<Self> {
-        Self::own_tools() + deadhop_netengine::tools::network_router()
+        Self::own_tools() + deadhop_netengine::tools::network_router::<PayServer>()
     }
 
     pub fn new(svc: Arc<Service>, key: &'static KeyDef) -> Self {
@@ -477,6 +477,35 @@ mod tests {
             assert_eq!(e.data.unwrap()["code"], name);
             assert!(!e.message.contains("10.1.2.3"));
         }
+    }
+
+    /// `check_proxy` and the other network tools open connections from this
+    /// machine: a key anyone may use must never serve them, whatever a future
+    /// row in `KEYS` says about its tools.
+    #[tokio::test]
+    async fn no_public_key_serves_a_network_tool() {
+        let r = crate::service::tests::rig(|_| {}).await;
+        let network: Vec<String> = deadhop_netengine::tools::network_router::<PayServer>()
+            .list_all()
+            .iter()
+            .map(|t| t.name.to_string())
+            .collect();
+        assert!(network.len() >= 5, "{network:?}");
+        assert!(network.iter().any(|n| n == "check_proxy"));
+        let mut public = 0;
+        for key in crate::keys::KEYS.iter().filter(|k| !k.operators_only) {
+            public += 1;
+            let served: Vec<String> = PayServer::new(r.svc.clone(), key)
+                .router
+                .list_all()
+                .iter()
+                .map(|t| t.name.to_string())
+                .collect();
+            for tool in &network {
+                assert!(!served.contains(tool), "the public key {:?} serves {tool}", key.id);
+            }
+        }
+        assert!(public > 0, "the table has a public key to check");
     }
 
     #[test]
