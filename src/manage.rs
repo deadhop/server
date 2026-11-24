@@ -1462,6 +1462,22 @@ pub(crate) mod tests {
     }
 
     #[tokio::test]
+    async fn the_replay_cache_follows_the_window_and_the_creation_rate() {
+        let r = rig(|_| {}).await;
+        assert_eq!(r.svc.pow.capacity(), crate::pow::MIN_CAPACITY);
+        r.svc
+            .update_settings(
+                &r.admin(),
+                patch(serde_json::json!({ "pow_window_secs": 3_600, "rate_global_per_min": 10_000 })),
+            )
+            .unwrap();
+        assert_eq!(r.svc.pow.capacity(), crate::pow::capacity_for(10_000, 3_600));
+        assert!(r.svc.pow.capacity() > crate::pow::MIN_CAPACITY);
+        r.svc.reset_settings(&r.admin()).unwrap();
+        assert_eq!(r.svc.pow.capacity(), crate::pow::MIN_CAPACITY);
+    }
+
+    #[tokio::test]
     async fn settings_change_live_persist_and_reset() {
         let r = rig(|_| {}).await;
         let v = r.svc.get_settings(&r.admin()).unwrap();

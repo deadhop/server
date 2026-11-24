@@ -24,7 +24,6 @@ pub const MAX_PAGE: u32 = 200;
 /// Scripts queried per chain round trip.
 const POLL_CHUNK: usize = 50;
 /// Request events remembered for replay protection.
-const POW_CACHE: usize = 100_000;
 /// Window of the per-day invoice cap, in seconds.
 pub(crate) const DAY_SECS: u64 = 86_400;
 /// `meta` keys.
@@ -313,7 +312,12 @@ impl Service {
         }
         let paused = db.meta_get(META_PAUSED)?.is_some();
         let svc = Service {
-            pow: PowGuard::new(settings.pow_bits, settings.pow_window_secs, POW_CACHE, server_pubkey),
+            pow: PowGuard::new(
+                settings.pow_bits,
+                settings.pow_window_secs,
+                crate::pow::capacity_for(settings.rate_global_per_min, settings.pow_window_secs),
+                server_pubkey,
+            ),
             create_limiter: RateLimiter::new(settings.rate_global_per_min, settings.rate_per_key_per_min),
             request_limiter: RateLimiter::new(settings.rate_requests_per_min, settings.rate_requests_per_key_per_min),
             settings: RwLock::new(settings),
@@ -345,7 +349,11 @@ impl Service {
 
     /// Make `s` the live settings (it must already be validated).
     pub(crate) fn apply_settings(&self, s: Settings) {
-        self.pow.set_policy(s.pow_bits, s.pow_window_secs);
+        self.pow.set_policy(
+            s.pow_bits,
+            s.pow_window_secs,
+            crate::pow::capacity_for(s.rate_global_per_min, s.pow_window_secs),
+        );
         self.create_limiter
             .set_limits(s.rate_global_per_min, s.rate_per_key_per_min);
         self.request_limiter

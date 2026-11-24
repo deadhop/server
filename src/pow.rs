@@ -10,7 +10,7 @@
 //! signed operator request captured anywhere could be replayed here forever.
 
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicU64, AtomicU8, Ordering};
+use std::sync::atomic::{AtomicU64, AtomicU8, AtomicUsize, Ordering};
 use std::sync::Mutex;
 
 use nostr_sdk::Event;
@@ -54,11 +54,28 @@ fn addressed_to(event: &Event, pubkey: &str) -> bool {
     })
 }
 
+/// The replay cache never holds fewer entries than this.
+pub const MIN_CAPACITY: usize = 100_000;
+/// Nor more (about 100 MB): past it the oldest entries are forgotten early,
+/// and the database's record of used requests still refuses their replays.
+pub const MAX_CAPACITY: usize = 1_500_000;
+
+/// How many request events the replay cache should hold for these settings:
+/// an entry is kept for twice the window, and at most `rate_per_min` events
+/// are accepted a minute, so this is twice the steady-state occupancy at the
+/// full rate, within [`MIN_CAPACITY`] and [`MAX_CAPACITY`].
+pub fn capacity_for(rate_per_min: u32, window_secs: u64) -> usize {
+    let steady = u64::from(rate_per_min).saturating_mul(2 * window_secs) / 60;
+    usize::try_from(steady.saturating_mul(2))
+        .unwrap_or(usize::MAX)
+        .clamp(MIN_CAPACITY, MAX_CAPACITY)
+}
+
 /// Verifies request events and remembers them to stop replays.
 pub struct PowGuard {
     bits: AtomicU8,
     window_secs: AtomicU64,
-    capacity: usize,
+    capacity: AtomicUsize,
     /// Hex public keys of this service (one per key it has): a request may be
     /// addressed to any of them.
     audience: std::sync::RwLock<Vec<String>>,
@@ -73,7 +90,7 @@ impl PowGuard {
         PowGuard {
             bits: AtomicU8::new(bits),
             window_secs: AtomicU64::new(window_secs),
-            capacity,
+            capacity: AtomicUsize::new(capacity),
             audience: std::sync::RwLock::new(vec![audience]),
             seen: Mutex::new(HashMap::new()),
         }
@@ -98,10 +115,16 @@ impl PowGuard {
         self.window_secs.load(Ordering::Relaxed)
     }
 
-    /// Change the difficulty and window for requests from now on.
-    pub fn set_policy(&self, bits: u8, window_secs: u64) {
+    /// How many used events the cache holds before it forgets the oldest.
+    pub fn capacity(&self) -> usize {
+        self.capacity.load(Ordering::Relaxed)
+    }
+
+    /// Change the difficulty, window and cache size for requests from now on.
+    pub fn set_policy(&self, bits: u8, window_secs: u64, capacity: usize) {
         self.bits.store(bits, Ordering::Relaxed);
         self.window_secs.store(window_secs, Ordering::Relaxed);
+        self.capacity.store(capacity, Ordering::Relaxed);
     }
 
     /// Accept `event` as the one-time carrier of a request by `caller` (hex
@@ -159,10 +182,23 @@ impl PowGuard {
         let (id, created) = (event.id.to_bytes(), event.created_at.as_secs());
         let window_secs = self.window_secs();
         let mut seen = self.seen.lock().unwrap_or_else(|p| p.into_inner());
-        if seen.len() >= self.capacity {
+        let capacity = self.capacity().max(1);
+        if seen.len() >= capacity {
             seen.retain(|_, forget_at| *forget_at > now);
-            if seen.len() >= self.capacity {
-                return Err(Error::Capacity);
+            if seen.len() >= capacity {
+                // Still full: forget the oldest eighth early rather than refuse
+                // every request. The caller's database record of used requests
+                // still refuses a replay of any of them.
+                let mut ages: Vec<u64> = seen.values().copied().collect();
+                let drop = (capacity / 8).max(seen.len() + 1 - capacity);
+                let (_, cutoff, _) = ages.select_nth_unstable(drop - 1);
+                let cutoff = *cutoff;
+                let mut dropped = 0;
+                seen.retain(|_, forget_at| {
+                    let keep = *forget_at > cutoff || dropped >= drop;
+                    dropped += usize::from(!keep);
+                    keep
+                });
             }
         }
         // Keep the id for as long as its timestamp could still be accepted.
@@ -350,14 +386,56 @@ pub(crate) mod tests {
         guard.check(&a, &me, 1_000, false).unwrap();
         assert!(guard.check(&a, &me, 1_000, false).is_err());
         guard.check(&mined(&keys, 0, 1_001), &me, 1_000, false).unwrap();
-        // Full, and nothing has aged out yet.
-        assert!(matches!(
-            guard.check(&mined(&keys, 0, 1_002), &me, 1_000, false),
-            Err(Error::Capacity)
-        ));
+        // Full, and nothing has aged out yet: the oldest is forgotten early
+        // instead of every request being refused.
+        guard.check(&mined(&keys, 0, 1_002), &me, 1_000, false).unwrap();
+        {
+            let seen = guard.seen.lock().unwrap();
+            assert_eq!(seen.len(), 2);
+            assert!(!seen.contains_key(&a.id.to_bytes()), "the oldest went");
+        }
         // Later the old entries are forgotten and there is room again.
         guard.check(&mined(&keys, 0, 1_300), &me, 1_300, false).unwrap();
         assert_eq!(guard.seen.lock().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn the_cache_is_sized_from_the_window_and_rate() {
+        // The defaults (30 a minute, a 600 s window) keep the old floor.
+        assert_eq!(capacity_for(30, 600), MIN_CAPACITY);
+        assert_eq!(capacity_for(10_000, 600), 400_000);
+        // The operator maximums are bounded; eviction covers the rest.
+        assert_eq!(capacity_for(100_000, 3_600), MAX_CAPACITY);
+        assert_eq!(capacity_for(u32::MAX, u64::MAX / 4), MAX_CAPACITY);
+        let g = guard(0, 60, 10);
+        g.set_policy(3, 120, 99);
+        assert_eq!((g.bits(), g.window_secs(), g.capacity()), (3, 120, 99));
+    }
+
+    #[test]
+    fn a_long_window_and_high_rate_never_refuse_for_capacity() {
+        let keys = Keys::generate();
+        let me = keys.public_key().to_hex();
+        let guard = guard(0, 3_600, capacity_for(100_000, 3_600));
+        // More events still remembered than the old fixed limit of 100 000,
+        // none of them old enough to forget.
+        {
+            let mut seen = guard.seen.lock().unwrap();
+            for i in 0..150_000u64 {
+                let mut id = [0xffu8; 32];
+                id[..8].copy_from_slice(&i.to_be_bytes());
+                seen.insert(id, 1_000 + 7_200);
+            }
+        }
+        for t in 0..5 {
+            guard.check(&mined(&keys, 0, 1_000 + t), &me, 1_000, false).unwrap();
+        }
+        assert_eq!(guard.seen.lock().unwrap().len(), 150_005);
+        // And when even the bounded cache fills, requests still succeed.
+        let full = std::sync::Arc::new(guard);
+        full.set_policy(0, 3_600, 150_005);
+        full.check(&mined(&keys, 0, 1_010), &me, 1_000, false).unwrap();
+        assert!(full.seen.lock().unwrap().len() <= 150_005);
     }
 
     #[test]
