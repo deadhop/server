@@ -5,8 +5,8 @@
 //! is the seconds elapsed in the current minute, so the previous minute's use
 //! fades out over the following minute instead of vanishing at the boundary.
 //! A caller that spends its whole budget just before a boundary gets it back
-//! gradually, not all at once: a burst is capped at about one budget (at most
-//! `budget + budget / 60` across a boundary), not two.
+//! gradually, not all at once: a burst across the boundary is capped at one
+//! budget, and after that the budget returns at about `budget / 60` a second.
 //!
 //! The estimate assumes the previous minute's requests were spread evenly, so
 //! it is not a strict "at most N in any 60 seconds"; a caller that spends its
@@ -161,6 +161,10 @@ mod tests {
         assert_eq!(first, 30);
         assert_eq!(second, 0, "the previous minute still counts in full");
         assert_eq!(first + second, 30);
+        // After that it comes back about one-sixtieth of the budget a second.
+        assert_eq!(burst(&rl, "attacker", 61, 100), 1);
+        assert_eq!(burst(&rl, "attacker", 62, 100), 0, "half a request a second");
+        assert_eq!(burst(&rl, "attacker", 63, 100), 1);
 
         // The same holds for the global budget, spread over many keys.
         let rl = RateLimiter::new(30, 1);
