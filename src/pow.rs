@@ -107,6 +107,15 @@ impl PowGuard {
     /// Accept `event` as the one-time carrier of a request by `caller` (hex
     /// pubkey). `exempt` callers (operators) owe no work.
     pub fn check(&self, event: &Event, caller: &str, now: u64, exempt: bool) -> Result<()> {
+        self.verify(event, caller, now, exempt)?;
+        self.remember(event, now)
+    }
+
+    /// Every check of [`check`](Self::check) without using the event up: a
+    /// request that fails a later step (its rate budget) can be sent again.
+    /// An event already used is refused here too, so replaying one costs
+    /// nothing downstream.
+    pub fn verify(&self, event: &Event, caller: &str, now: u64, exempt: bool) -> Result<()> {
         if event.pubkey.to_hex() != caller {
             return Err(Error::Pow("event is not signed by the caller".into()));
         }
@@ -134,11 +143,21 @@ impl PowGuard {
                 return Err(Error::Pow(format!("nonce tag must commit to at least {required} bits")));
             }
         }
+        if self.seen.lock().unwrap_or_else(|p| p.into_inner()).contains_key(&id) {
+            return Err(Error::Pow("event already used".into()));
+        }
         // Cheap checks first; signature verification is the expensive one.
         if event.verify().is_err() {
             return Err(Error::Pow("invalid event id or signature".into()));
         }
+        Ok(())
+    }
 
+    /// Use `event` up: it is never accepted again while its timestamp could be.
+    /// Only for an event [`verify`](Self::verify) accepted.
+    pub fn remember(&self, event: &Event, now: u64) -> Result<()> {
+        let (id, created) = (event.id.to_bytes(), event.created_at.as_secs());
+        let window_secs = self.window_secs();
         let mut seen = self.seen.lock().unwrap_or_else(|p| p.into_inner());
         if seen.len() >= self.capacity {
             seen.retain(|_, forget_at| *forget_at > now);
@@ -223,6 +242,14 @@ pub(crate) mod tests {
         assert!(msg(guard.check(&ev, &me, 1_100, false)).contains("already used"));
         // More work than required is fine.
         guard.check(&mined(&keys, 12, 1_001), &me, 1_100, false).unwrap();
+        // Verifying uses nothing up; of two requests verified together, only
+        // the first to be remembered is accepted.
+        let ev = mined(&keys, 8, 1_002);
+        guard.verify(&ev, &me, 1_100, false).unwrap();
+        guard.verify(&ev, &me, 1_100, false).unwrap();
+        guard.remember(&ev, 1_100).unwrap();
+        assert!(msg(guard.remember(&ev, 1_100)).contains("already used"));
+        assert!(msg(guard.verify(&ev, &me, 1_100, false)).contains("already used"));
     }
 
     #[test]
