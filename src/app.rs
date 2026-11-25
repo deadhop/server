@@ -2310,10 +2310,14 @@ mod tests {
             app.svc.settings().relays == env_relays
         })
         .await;
-        let last = app.svc.db.audit_recent(1).unwrap().remove(0);
-        assert_eq!(
-            (last.action.as_str(), last.detail.as_str()),
-            ("revert_connection", "no relay connected with the new relays")
+        // The restart's check undid it (the watchdog would give another
+        // reason). Other entries may follow it on a loaded machine.
+        let recent = app.svc.db.audit_recent(10).unwrap();
+        assert!(
+            recent
+                .iter()
+                .any(|e| e.action == "revert_connection" && e.detail == "no relay connected with the new relays"),
+            "{recent:?}"
         );
         app.stop().await;
     }
