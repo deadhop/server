@@ -7,6 +7,8 @@
 pub mod error;
 #[cfg(test)]
 mod hosttests;
+#[cfg(test)]
+mod goldentests;
 pub mod i2p;
 pub mod netruntime;
 pub mod network;

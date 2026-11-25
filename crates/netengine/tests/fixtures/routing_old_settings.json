@@ -1,0 +1,433 @@
+{
+ "direct_block": {
+  "chaos_max_secs": 900,
+  "chaos_min_secs": 300,
+  "list": [
+   {
+    "i2p": false,
+    "id": "p1",
+    "keys": [],
+    "name": "",
+    "pool": true,
+    "url": "socks5://p1:1"
+   }
+  ],
+  "mode": "off",
+  "offline": "kill_switch",
+  "rotate_secs": 3600,
+  "rules": [
+   {
+    "fallback": "offline",
+    "keys": [],
+    "match": [
+     "a.example"
+    ],
+    "name": "",
+    "to": "direct"
+   },
+   {
+    "fallback": "offline",
+    "keys": [],
+    "match": [
+     "b.example"
+    ],
+    "name": "",
+    "to": "block"
+   }
+  ],
+  "transparent": false
+ },
+ "failover": {
+  "chaos_max_secs": 900,
+  "chaos_min_secs": 300,
+  "list": [
+   {
+    "i2p": false,
+    "id": "p1",
+    "keys": [],
+    "name": "",
+    "pool": true,
+    "url": "socks5://p1:1"
+   },
+   {
+    "i2p": false,
+    "id": "p2",
+    "keys": [],
+    "name": "",
+    "pool": true,
+    "url": "socks5://p2:1"
+   }
+  ],
+  "mode": "failover",
+  "offline": "kill_switch",
+  "rotate_secs": 3600,
+  "rules": [],
+  "transparent": false
+ },
+ "none": {
+  "chaos_max_secs": 900,
+  "chaos_min_secs": 300,
+  "list": [],
+  "mode": "off",
+  "offline": "kill_switch",
+  "rotate_secs": 3600,
+  "rules": [],
+  "transparent": false
+ },
+ "off_two": {
+  "chaos_max_secs": 900,
+  "chaos_min_secs": 300,
+  "list": [
+   {
+    "i2p": false,
+    "id": "p1",
+    "keys": [],
+    "name": "",
+    "pool": true,
+    "url": "socks5://p1:1"
+   },
+   {
+    "i2p": false,
+    "id": "p2",
+    "keys": [],
+    "name": "",
+    "pool": true,
+    "url": "socks5://p2:1"
+   }
+  ],
+  "mode": "off",
+  "offline": "kill_switch",
+  "rotate_secs": 3600,
+  "rules": [],
+  "transparent": false
+ },
+ "one": {
+  "chaos_max_secs": 900,
+  "chaos_min_secs": 300,
+  "list": [
+   {
+    "i2p": false,
+    "id": "p1",
+    "keys": [],
+    "name": "",
+    "pool": true,
+    "url": "socks5://p1:1"
+   }
+  ],
+  "mode": "off",
+  "offline": "kill_switch",
+  "rotate_secs": 3600,
+  "rules": [],
+  "transparent": false
+ },
+ "per_key": {
+  "chaos_max_secs": 900,
+  "chaos_min_secs": 300,
+  "list": [
+   {
+    "i2p": false,
+    "id": "p1",
+    "keys": [
+     "invoices"
+    ],
+    "name": "",
+    "pool": true,
+    "url": "socks5://p1:1"
+   },
+   {
+    "i2p": false,
+    "id": "p2",
+    "keys": [
+     "admin"
+    ],
+    "name": "",
+    "pool": true,
+    "url": "socks5://p2:1"
+   }
+  ],
+  "mode": "failover",
+  "offline": "kill_switch",
+  "rotate_secs": 3600,
+  "rules": [],
+  "transparent": false
+ },
+ "per_key_shared": {
+  "chaos_max_secs": 900,
+  "chaos_min_secs": 300,
+  "list": [
+   {
+    "i2p": false,
+    "id": "p1",
+    "keys": [],
+    "name": "",
+    "pool": true,
+    "url": "socks5://p1:1"
+   },
+   {
+    "i2p": false,
+    "id": "p2",
+    "keys": [
+     "admin"
+    ],
+    "name": "",
+    "pool": true,
+    "url": "socks5://p2:1"
+   }
+  ],
+  "mode": "failover",
+  "offline": "kill_switch",
+  "rotate_secs": 3600,
+  "rules": [],
+  "transparent": false
+ },
+ "round_robin": {
+  "chaos_max_secs": 900,
+  "chaos_min_secs": 300,
+  "list": [
+   {
+    "i2p": false,
+    "id": "p1",
+    "keys": [],
+    "name": "",
+    "pool": true,
+    "url": "socks5://p1:1"
+   },
+   {
+    "i2p": false,
+    "id": "p2",
+    "keys": [],
+    "name": "",
+    "pool": true,
+    "url": "socks5://p2:1"
+   },
+   {
+    "i2p": false,
+    "id": "p3",
+    "keys": [],
+    "name": "",
+    "pool": true,
+    "url": "socks5://p3:1"
+   }
+  ],
+  "mode": "round_robin",
+  "offline": "kill_switch",
+  "rotate_secs": 3600,
+  "rules": [],
+  "transparent": false
+ },
+ "rule_fallback_pool": {
+  "chaos_max_secs": 900,
+  "chaos_min_secs": 300,
+  "list": [
+   {
+    "i2p": false,
+    "id": "p1",
+    "keys": [],
+    "name": "",
+    "pool": false,
+    "url": "socks5://p1:1"
+   },
+   {
+    "i2p": false,
+    "id": "p2",
+    "keys": [],
+    "name": "",
+    "pool": true,
+    "url": "socks5://p2:1"
+   },
+   {
+    "i2p": false,
+    "id": "p3",
+    "keys": [],
+    "name": "",
+    "pool": true,
+    "url": "socks5://p3:1"
+   }
+  ],
+  "mode": "round_robin",
+  "offline": "kill_switch",
+  "rotate_secs": 3600,
+  "rules": [
+   {
+    "fallback": "pool",
+    "keys": [],
+    "match": [
+     "a.example"
+    ],
+    "name": "",
+    "to": {
+     "proxy": "p1"
+    }
+   }
+  ],
+  "transparent": false
+ },
+ "rule_fallback_pool_per_key": {
+  "chaos_max_secs": 900,
+  "chaos_min_secs": 300,
+  "list": [
+   {
+    "i2p": false,
+    "id": "p1",
+    "keys": [],
+    "name": "",
+    "pool": false,
+    "url": "socks5://p1:1"
+   },
+   {
+    "i2p": false,
+    "id": "p2",
+    "keys": [
+     "invoices"
+    ],
+    "name": "",
+    "pool": true,
+    "url": "socks5://p2:1"
+   },
+   {
+    "i2p": false,
+    "id": "p3",
+    "keys": [
+     "admin"
+    ],
+    "name": "",
+    "pool": true,
+    "url": "socks5://p3:1"
+   }
+  ],
+  "mode": "failover",
+  "offline": "kill_switch",
+  "rotate_secs": 3600,
+  "rules": [
+   {
+    "fallback": "pool",
+    "keys": [],
+    "match": [
+     "a.example"
+    ],
+    "name": "",
+    "to": {
+     "proxy": "p1"
+    }
+   },
+   {
+    "fallback": "offline",
+    "keys": [
+     "admin"
+    ],
+    "match": [
+     "b.example"
+    ],
+    "name": "",
+    "to": "pool"
+   }
+  ],
+  "transparent": false
+ },
+ "rules_only": {
+  "chaos_max_secs": 900,
+  "chaos_min_secs": 300,
+  "list": [
+   {
+    "i2p": false,
+    "id": "p1",
+    "keys": [],
+    "name": "",
+    "pool": false,
+    "url": "socks5://p1:1"
+   }
+  ],
+  "mode": "off",
+  "offline": "kill_switch",
+  "rotate_secs": 3600,
+  "rules": [
+   {
+    "fallback": "offline",
+    "keys": [],
+    "match": [
+     "*"
+    ],
+    "name": "",
+    "to": {
+     "proxy": "p1"
+    }
+   }
+  ],
+  "transparent": false
+ },
+ "rules_tor": {
+  "chaos_max_secs": 900,
+  "chaos_min_secs": 300,
+  "list": [
+   {
+    "i2p": false,
+    "id": "p1",
+    "keys": [],
+    "name": "",
+    "pool": true,
+    "url": "socks5://p1:1"
+   },
+   {
+    "i2p": false,
+    "id": "p2",
+    "keys": [],
+    "name": "",
+    "pool": true,
+    "url": "socks5://p2:1"
+   },
+   {
+    "i2p": false,
+    "id": "tor",
+    "keys": [],
+    "name": "",
+    "pool": false,
+    "url": "socks5://tor:1"
+   }
+  ],
+  "mode": "failover",
+  "offline": "kill_switch",
+  "rotate_secs": 3600,
+  "rules": [
+   {
+    "fallback": "offline",
+    "keys": [],
+    "match": [
+     "*.onion"
+    ],
+    "name": "",
+    "to": {
+     "proxy": "tor"
+    }
+   },
+   {
+    "fallback": "offline",
+    "keys": [],
+    "match": [
+     "b.example"
+    ],
+    "name": "",
+    "to": "pool"
+   }
+  ],
+  "transparent": false
+ },
+ "transparent": {
+  "chaos_max_secs": 900,
+  "chaos_min_secs": 300,
+  "list": [
+   {
+    "i2p": false,
+    "id": "p1",
+    "keys": [],
+    "name": "",
+    "pool": true,
+    "url": "socks5://p1:1"
+   }
+  ],
+  "mode": "failover",
+  "offline": "kill_switch",
+  "rotate_secs": 3600,
+  "rules": [],
+  "transparent": true
+ }
+}

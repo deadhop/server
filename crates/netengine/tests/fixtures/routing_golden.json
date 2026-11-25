@@ -1,0 +1,2342 @@
+{
+  "direct_block admin_only all_down": {
+    "lanes": {
+      "admin": [
+        "wss://a.example direct Rule",
+        "wss://b.example off Blocked",
+        "wss://x.onion off NeverDirect"
+      ],
+      "invoices": [
+        "wss://a.example direct Rule",
+        "wss://b.example off Blocked",
+        "wss://x.onion off PoolOffline"
+      ]
+    },
+    "posture": "AdminOnly"
+  },
+  "direct_block admin_only all_up": {
+    "lanes": {
+      "admin": [
+        "wss://a.example direct Rule",
+        "wss://b.example off Blocked",
+        "wss://x.onion proxy:p1 Default"
+      ],
+      "invoices": [
+        "wss://a.example direct Rule",
+        "wss://b.example off Blocked",
+        "wss://x.onion proxy:p1 Default"
+      ]
+    },
+    "posture": "Normal"
+  },
+  "direct_block admin_only first_down": {
+    "lanes": {
+      "admin": [
+        "wss://a.example direct Rule",
+        "wss://b.example off Blocked",
+        "wss://x.onion off NeverDirect"
+      ],
+      "invoices": [
+        "wss://a.example direct Rule",
+        "wss://b.example off Blocked",
+        "wss://x.onion off PoolOffline"
+      ]
+    },
+    "posture": "AdminOnly"
+  },
+  "direct_block invoicing_only all_down": {
+    "lanes": {
+      "admin": [
+        "wss://a.example direct Rule",
+        "wss://b.example off Blocked",
+        "wss://x.onion off PoolOffline"
+      ],
+      "invoices": [
+        "wss://a.example direct Rule",
+        "wss://b.example off Blocked",
+        "wss://x.onion off NeverDirect"
+      ]
+    },
+    "posture": "InvoicingOnly"
+  },
+  "direct_block invoicing_only all_up": {
+    "lanes": {
+      "admin": [
+        "wss://a.example direct Rule",
+        "wss://b.example off Blocked",
+        "wss://x.onion proxy:p1 Default"
+      ],
+      "invoices": [
+        "wss://a.example direct Rule",
+        "wss://b.example off Blocked",
+        "wss://x.onion proxy:p1 Default"
+      ]
+    },
+    "posture": "Normal"
+  },
+  "direct_block invoicing_only first_down": {
+    "lanes": {
+      "admin": [
+        "wss://a.example direct Rule",
+        "wss://b.example off Blocked",
+        "wss://x.onion off PoolOffline"
+      ],
+      "invoices": [
+        "wss://a.example direct Rule",
+        "wss://b.example off Blocked",
+        "wss://x.onion off NeverDirect"
+      ]
+    },
+    "posture": "InvoicingOnly"
+  },
+  "direct_block kill_switch all_down": {
+    "lanes": {
+      "admin": [
+        "wss://a.example direct Rule",
+        "wss://b.example off Blocked",
+        "wss://x.onion off PoolOffline"
+      ],
+      "invoices": [
+        "wss://a.example direct Rule",
+        "wss://b.example off Blocked",
+        "wss://x.onion off PoolOffline"
+      ]
+    },
+    "posture": "Off"
+  },
+  "direct_block kill_switch all_up": {
+    "lanes": {
+      "admin": [
+        "wss://a.example direct Rule",
+        "wss://b.example off Blocked",
+        "wss://x.onion proxy:p1 Default"
+      ],
+      "invoices": [
+        "wss://a.example direct Rule",
+        "wss://b.example off Blocked",
+        "wss://x.onion proxy:p1 Default"
+      ]
+    },
+    "posture": "Normal"
+  },
+  "direct_block kill_switch first_down": {
+    "lanes": {
+      "admin": [
+        "wss://a.example direct Rule",
+        "wss://b.example off Blocked",
+        "wss://x.onion off PoolOffline"
+      ],
+      "invoices": [
+        "wss://a.example direct Rule",
+        "wss://b.example off Blocked",
+        "wss://x.onion off PoolOffline"
+      ]
+    },
+    "posture": "Off"
+  },
+  "direct_block open all_down": {
+    "lanes": {
+      "admin": [
+        "wss://a.example direct Rule",
+        "wss://b.example off Blocked",
+        "wss://x.onion off NeverDirect"
+      ],
+      "invoices": [
+        "wss://a.example direct Rule",
+        "wss://b.example off Blocked",
+        "wss://x.onion off NeverDirect"
+      ]
+    },
+    "posture": "Open"
+  },
+  "direct_block open all_up": {
+    "lanes": {
+      "admin": [
+        "wss://a.example direct Rule",
+        "wss://b.example off Blocked",
+        "wss://x.onion proxy:p1 Default"
+      ],
+      "invoices": [
+        "wss://a.example direct Rule",
+        "wss://b.example off Blocked",
+        "wss://x.onion proxy:p1 Default"
+      ]
+    },
+    "posture": "Normal"
+  },
+  "direct_block open first_down": {
+    "lanes": {
+      "admin": [
+        "wss://a.example direct Rule",
+        "wss://b.example off Blocked",
+        "wss://x.onion off NeverDirect"
+      ],
+      "invoices": [
+        "wss://a.example direct Rule",
+        "wss://b.example off Blocked",
+        "wss://x.onion off NeverDirect"
+      ]
+    },
+    "posture": "Open"
+  },
+  "failover admin_only all_down": {
+    "lanes": {
+      "admin": [
+        "wss://a.example direct Default",
+        "wss://b.example direct Default",
+        "wss://x.onion off NeverDirect"
+      ],
+      "invoices": [
+        "wss://a.example off PoolOffline",
+        "wss://b.example off PoolOffline",
+        "wss://x.onion off PoolOffline"
+      ]
+    },
+    "posture": "AdminOnly"
+  },
+  "failover admin_only all_up": {
+    "lanes": {
+      "admin": [
+        "wss://a.example proxy:p1 Default",
+        "wss://b.example proxy:p1 Default",
+        "wss://x.onion proxy:p1 Default"
+      ],
+      "invoices": [
+        "wss://a.example proxy:p1 Default",
+        "wss://b.example proxy:p1 Default",
+        "wss://x.onion proxy:p1 Default"
+      ]
+    },
+    "posture": "Normal"
+  },
+  "failover admin_only first_down": {
+    "lanes": {
+      "admin": [
+        "wss://a.example proxy:p2 Default",
+        "wss://b.example proxy:p2 Default",
+        "wss://x.onion proxy:p2 Default"
+      ],
+      "invoices": [
+        "wss://a.example proxy:p2 Default",
+        "wss://b.example proxy:p2 Default",
+        "wss://x.onion proxy:p2 Default"
+      ]
+    },
+    "posture": "Normal"
+  },
+  "failover invoicing_only all_down": {
+    "lanes": {
+      "admin": [
+        "wss://a.example off PoolOffline",
+        "wss://b.example off PoolOffline",
+        "wss://x.onion off PoolOffline"
+      ],
+      "invoices": [
+        "wss://a.example direct Default",
+        "wss://b.example direct Default",
+        "wss://x.onion off NeverDirect"
+      ]
+    },
+    "posture": "InvoicingOnly"
+  },
+  "failover invoicing_only all_up": {
+    "lanes": {
+      "admin": [
+        "wss://a.example proxy:p1 Default",
+        "wss://b.example proxy:p1 Default",
+        "wss://x.onion proxy:p1 Default"
+      ],
+      "invoices": [
+        "wss://a.example proxy:p1 Default",
+        "wss://b.example proxy:p1 Default",
+        "wss://x.onion proxy:p1 Default"
+      ]
+    },
+    "posture": "Normal"
+  },
+  "failover invoicing_only first_down": {
+    "lanes": {
+      "admin": [
+        "wss://a.example proxy:p2 Default",
+        "wss://b.example proxy:p2 Default",
+        "wss://x.onion proxy:p2 Default"
+      ],
+      "invoices": [
+        "wss://a.example proxy:p2 Default",
+        "wss://b.example proxy:p2 Default",
+        "wss://x.onion proxy:p2 Default"
+      ]
+    },
+    "posture": "Normal"
+  },
+  "failover kill_switch all_down": {
+    "lanes": {
+      "admin": [
+        "wss://a.example off PoolOffline",
+        "wss://b.example off PoolOffline",
+        "wss://x.onion off PoolOffline"
+      ],
+      "invoices": [
+        "wss://a.example off PoolOffline",
+        "wss://b.example off PoolOffline",
+        "wss://x.onion off PoolOffline"
+      ]
+    },
+    "posture": "Off"
+  },
+  "failover kill_switch all_up": {
+    "lanes": {
+      "admin": [
+        "wss://a.example proxy:p1 Default",
+        "wss://b.example proxy:p1 Default",
+        "wss://x.onion proxy:p1 Default"
+      ],
+      "invoices": [
+        "wss://a.example proxy:p1 Default",
+        "wss://b.example proxy:p1 Default",
+        "wss://x.onion proxy:p1 Default"
+      ]
+    },
+    "posture": "Normal"
+  },
+  "failover kill_switch first_down": {
+    "lanes": {
+      "admin": [
+        "wss://a.example proxy:p2 Default",
+        "wss://b.example proxy:p2 Default",
+        "wss://x.onion proxy:p2 Default"
+      ],
+      "invoices": [
+        "wss://a.example proxy:p2 Default",
+        "wss://b.example proxy:p2 Default",
+        "wss://x.onion proxy:p2 Default"
+      ]
+    },
+    "posture": "Normal"
+  },
+  "failover open all_down": {
+    "lanes": {
+      "admin": [
+        "wss://a.example direct Default",
+        "wss://b.example direct Default",
+        "wss://x.onion off NeverDirect"
+      ],
+      "invoices": [
+        "wss://a.example direct Default",
+        "wss://b.example direct Default",
+        "wss://x.onion off NeverDirect"
+      ]
+    },
+    "posture": "Open"
+  },
+  "failover open all_up": {
+    "lanes": {
+      "admin": [
+        "wss://a.example proxy:p1 Default",
+        "wss://b.example proxy:p1 Default",
+        "wss://x.onion proxy:p1 Default"
+      ],
+      "invoices": [
+        "wss://a.example proxy:p1 Default",
+        "wss://b.example proxy:p1 Default",
+        "wss://x.onion proxy:p1 Default"
+      ]
+    },
+    "posture": "Normal"
+  },
+  "failover open first_down": {
+    "lanes": {
+      "admin": [
+        "wss://a.example proxy:p2 Default",
+        "wss://b.example proxy:p2 Default",
+        "wss://x.onion proxy:p2 Default"
+      ],
+      "invoices": [
+        "wss://a.example proxy:p2 Default",
+        "wss://b.example proxy:p2 Default",
+        "wss://x.onion proxy:p2 Default"
+      ]
+    },
+    "posture": "Normal"
+  },
+  "none admin_only all_down": {
+    "lanes": {
+      "admin": [
+        "wss://a.example direct Default",
+        "wss://b.example direct Default",
+        "wss://x.onion off NeverDirect"
+      ],
+      "invoices": [
+        "wss://a.example direct Default",
+        "wss://b.example direct Default",
+        "wss://x.onion off NeverDirect"
+      ]
+    },
+    "posture": "Normal"
+  },
+  "none admin_only all_up": {
+    "lanes": {
+      "admin": [
+        "wss://a.example direct Default",
+        "wss://b.example direct Default",
+        "wss://x.onion off NeverDirect"
+      ],
+      "invoices": [
+        "wss://a.example direct Default",
+        "wss://b.example direct Default",
+        "wss://x.onion off NeverDirect"
+      ]
+    },
+    "posture": "Normal"
+  },
+  "none admin_only first_down": {
+    "lanes": {
+      "admin": [
+        "wss://a.example direct Default",
+        "wss://b.example direct Default",
+        "wss://x.onion off NeverDirect"
+      ],
+      "invoices": [
+        "wss://a.example direct Default",
+        "wss://b.example direct Default",
+        "wss://x.onion off NeverDirect"
+      ]
+    },
+    "posture": "Normal"
+  },
+  "none invoicing_only all_down": {
+    "lanes": {
+      "admin": [
+        "wss://a.example direct Default",
+        "wss://b.example direct Default",
+        "wss://x.onion off NeverDirect"
+      ],
+      "invoices": [
+        "wss://a.example direct Default",
+        "wss://b.example direct Default",
+        "wss://x.onion off NeverDirect"
+      ]
+    },
+    "posture": "Normal"
+  },
+  "none invoicing_only all_up": {
+    "lanes": {
+      "admin": [
+        "wss://a.example direct Default",
+        "wss://b.example direct Default",
+        "wss://x.onion off NeverDirect"
+      ],
+      "invoices": [
+        "wss://a.example direct Default",
+        "wss://b.example direct Default",
+        "wss://x.onion off NeverDirect"
+      ]
+    },
+    "posture": "Normal"
+  },
+  "none invoicing_only first_down": {
+    "lanes": {
+      "admin": [
+        "wss://a.example direct Default",
+        "wss://b.example direct Default",
+        "wss://x.onion off NeverDirect"
+      ],
+      "invoices": [
+        "wss://a.example direct Default",
+        "wss://b.example direct Default",
+        "wss://x.onion off NeverDirect"
+      ]
+    },
+    "posture": "Normal"
+  },
+  "none kill_switch all_down": {
+    "lanes": {
+      "admin": [
+        "wss://a.example direct Default",
+        "wss://b.example direct Default",
+        "wss://x.onion off NeverDirect"
+      ],
+      "invoices": [
+        "wss://a.example direct Default",
+        "wss://b.example direct Default",
+        "wss://x.onion off NeverDirect"
+      ]
+    },
+    "posture": "Normal"
+  },
+  "none kill_switch all_up": {
+    "lanes": {
+      "admin": [
+        "wss://a.example direct Default",
+        "wss://b.example direct Default",
+        "wss://x.onion off NeverDirect"
+      ],
+      "invoices": [
+        "wss://a.example direct Default",
+        "wss://b.example direct Default",
+        "wss://x.onion off NeverDirect"
+      ]
+    },
+    "posture": "Normal"
+  },
+  "none kill_switch first_down": {
+    "lanes": {
+      "admin": [
+        "wss://a.example direct Default",
+        "wss://b.example direct Default",
+        "wss://x.onion off NeverDirect"
+      ],
+      "invoices": [
+        "wss://a.example direct Default",
+        "wss://b.example direct Default",
+        "wss://x.onion off NeverDirect"
+      ]
+    },
+    "posture": "Normal"
+  },
+  "none open all_down": {
+    "lanes": {
+      "admin": [
+        "wss://a.example direct Default",
+        "wss://b.example direct Default",
+        "wss://x.onion off NeverDirect"
+      ],
+      "invoices": [
+        "wss://a.example direct Default",
+        "wss://b.example direct Default",
+        "wss://x.onion off NeverDirect"
+      ]
+    },
+    "posture": "Normal"
+  },
+  "none open all_up": {
+    "lanes": {
+      "admin": [
+        "wss://a.example direct Default",
+        "wss://b.example direct Default",
+        "wss://x.onion off NeverDirect"
+      ],
+      "invoices": [
+        "wss://a.example direct Default",
+        "wss://b.example direct Default",
+        "wss://x.onion off NeverDirect"
+      ]
+    },
+    "posture": "Normal"
+  },
+  "none open first_down": {
+    "lanes": {
+      "admin": [
+        "wss://a.example direct Default",
+        "wss://b.example direct Default",
+        "wss://x.onion off NeverDirect"
+      ],
+      "invoices": [
+        "wss://a.example direct Default",
+        "wss://b.example direct Default",
+        "wss://x.onion off NeverDirect"
+      ]
+    },
+    "posture": "Normal"
+  },
+  "off_two admin_only all_down": {
+    "lanes": {
+      "admin": [
+        "wss://a.example direct Default",
+        "wss://b.example direct Default",
+        "wss://x.onion off NeverDirect"
+      ],
+      "invoices": [
+        "wss://a.example off PoolOffline",
+        "wss://b.example off PoolOffline",
+        "wss://x.onion off PoolOffline"
+      ]
+    },
+    "posture": "AdminOnly"
+  },
+  "off_two admin_only all_up": {
+    "lanes": {
+      "admin": [
+        "wss://a.example proxy:p1 Default",
+        "wss://b.example proxy:p1 Default",
+        "wss://x.onion proxy:p1 Default"
+      ],
+      "invoices": [
+        "wss://a.example proxy:p1 Default",
+        "wss://b.example proxy:p1 Default",
+        "wss://x.onion proxy:p1 Default"
+      ]
+    },
+    "posture": "Normal"
+  },
+  "off_two admin_only first_down": {
+    "lanes": {
+      "admin": [
+        "wss://a.example direct Default",
+        "wss://b.example direct Default",
+        "wss://x.onion off NeverDirect"
+      ],
+      "invoices": [
+        "wss://a.example off PoolOffline",
+        "wss://b.example off PoolOffline",
+        "wss://x.onion off PoolOffline"
+      ]
+    },
+    "posture": "AdminOnly"
+  },
+  "off_two invoicing_only all_down": {
+    "lanes": {
+      "admin": [
+        "wss://a.example off PoolOffline",
+        "wss://b.example off PoolOffline",
+        "wss://x.onion off PoolOffline"
+      ],
+      "invoices": [
+        "wss://a.example direct Default",
+        "wss://b.example direct Default",
+        "wss://x.onion off NeverDirect"
+      ]
+    },
+    "posture": "InvoicingOnly"
+  },
+  "off_two invoicing_only all_up": {
+    "lanes": {
+      "admin": [
+        "wss://a.example proxy:p1 Default",
+        "wss://b.example proxy:p1 Default",
+        "wss://x.onion proxy:p1 Default"
+      ],
+      "invoices": [
+        "wss://a.example proxy:p1 Default",
+        "wss://b.example proxy:p1 Default",
+        "wss://x.onion proxy:p1 Default"
+      ]
+    },
+    "posture": "Normal"
+  },
+  "off_two invoicing_only first_down": {
+    "lanes": {
+      "admin": [
+        "wss://a.example off PoolOffline",
+        "wss://b.example off PoolOffline",
+        "wss://x.onion off PoolOffline"
+      ],
+      "invoices": [
+        "wss://a.example direct Default",
+        "wss://b.example direct Default",
+        "wss://x.onion off NeverDirect"
+      ]
+    },
+    "posture": "InvoicingOnly"
+  },
+  "off_two kill_switch all_down": {
+    "lanes": {
+      "admin": [
+        "wss://a.example off PoolOffline",
+        "wss://b.example off PoolOffline",
+        "wss://x.onion off PoolOffline"
+      ],
+      "invoices": [
+        "wss://a.example off PoolOffline",
+        "wss://b.example off PoolOffline",
+        "wss://x.onion off PoolOffline"
+      ]
+    },
+    "posture": "Off"
+  },
+  "off_two kill_switch all_up": {
+    "lanes": {
+      "admin": [
+        "wss://a.example proxy:p1 Default",
+        "wss://b.example proxy:p1 Default",
+        "wss://x.onion proxy:p1 Default"
+      ],
+      "invoices": [
+        "wss://a.example proxy:p1 Default",
+        "wss://b.example proxy:p1 Default",
+        "wss://x.onion proxy:p1 Default"
+      ]
+    },
+    "posture": "Normal"
+  },
+  "off_two kill_switch first_down": {
+    "lanes": {
+      "admin": [
+        "wss://a.example off PoolOffline",
+        "wss://b.example off PoolOffline",
+        "wss://x.onion off PoolOffline"
+      ],
+      "invoices": [
+        "wss://a.example off PoolOffline",
+        "wss://b.example off PoolOffline",
+        "wss://x.onion off PoolOffline"
+      ]
+    },
+    "posture": "Off"
+  },
+  "off_two open all_down": {
+    "lanes": {
+      "admin": [
+        "wss://a.example direct Default",
+        "wss://b.example direct Default",
+        "wss://x.onion off NeverDirect"
+      ],
+      "invoices": [
+        "wss://a.example direct Default",
+        "wss://b.example direct Default",
+        "wss://x.onion off NeverDirect"
+      ]
+    },
+    "posture": "Open"
+  },
+  "off_two open all_up": {
+    "lanes": {
+      "admin": [
+        "wss://a.example proxy:p1 Default",
+        "wss://b.example proxy:p1 Default",
+        "wss://x.onion proxy:p1 Default"
+      ],
+      "invoices": [
+        "wss://a.example proxy:p1 Default",
+        "wss://b.example proxy:p1 Default",
+        "wss://x.onion proxy:p1 Default"
+      ]
+    },
+    "posture": "Normal"
+  },
+  "off_two open first_down": {
+    "lanes": {
+      "admin": [
+        "wss://a.example direct Default",
+        "wss://b.example direct Default",
+        "wss://x.onion off NeverDirect"
+      ],
+      "invoices": [
+        "wss://a.example direct Default",
+        "wss://b.example direct Default",
+        "wss://x.onion off NeverDirect"
+      ]
+    },
+    "posture": "Open"
+  },
+  "one admin_only all_down": {
+    "lanes": {
+      "admin": [
+        "wss://a.example direct Default",
+        "wss://b.example direct Default",
+        "wss://x.onion off NeverDirect"
+      ],
+      "invoices": [
+        "wss://a.example off PoolOffline",
+        "wss://b.example off PoolOffline",
+        "wss://x.onion off PoolOffline"
+      ]
+    },
+    "posture": "AdminOnly"
+  },
+  "one admin_only all_up": {
+    "lanes": {
+      "admin": [
+        "wss://a.example proxy:p1 Default",
+        "wss://b.example proxy:p1 Default",
+        "wss://x.onion proxy:p1 Default"
+      ],
+      "invoices": [
+        "wss://a.example proxy:p1 Default",
+        "wss://b.example proxy:p1 Default",
+        "wss://x.onion proxy:p1 Default"
+      ]
+    },
+    "posture": "Normal"
+  },
+  "one admin_only first_down": {
+    "lanes": {
+      "admin": [
+        "wss://a.example direct Default",
+        "wss://b.example direct Default",
+        "wss://x.onion off NeverDirect"
+      ],
+      "invoices": [
+        "wss://a.example off PoolOffline",
+        "wss://b.example off PoolOffline",
+        "wss://x.onion off PoolOffline"
+      ]
+    },
+    "posture": "AdminOnly"
+  },
+  "one invoicing_only all_down": {
+    "lanes": {
+      "admin": [
+        "wss://a.example off PoolOffline",
+        "wss://b.example off PoolOffline",
+        "wss://x.onion off PoolOffline"
+      ],
+      "invoices": [
+        "wss://a.example direct Default",
+        "wss://b.example direct Default",
+        "wss://x.onion off NeverDirect"
+      ]
+    },
+    "posture": "InvoicingOnly"
+  },
+  "one invoicing_only all_up": {
+    "lanes": {
+      "admin": [
+        "wss://a.example proxy:p1 Default",
+        "wss://b.example proxy:p1 Default",
+        "wss://x.onion proxy:p1 Default"
+      ],
+      "invoices": [
+        "wss://a.example proxy:p1 Default",
+        "wss://b.example proxy:p1 Default",
+        "wss://x.onion proxy:p1 Default"
+      ]
+    },
+    "posture": "Normal"
+  },
+  "one invoicing_only first_down": {
+    "lanes": {
+      "admin": [
+        "wss://a.example off PoolOffline",
+        "wss://b.example off PoolOffline",
+        "wss://x.onion off PoolOffline"
+      ],
+      "invoices": [
+        "wss://a.example direct Default",
+        "wss://b.example direct Default",
+        "wss://x.onion off NeverDirect"
+      ]
+    },
+    "posture": "InvoicingOnly"
+  },
+  "one kill_switch all_down": {
+    "lanes": {
+      "admin": [
+        "wss://a.example off PoolOffline",
+        "wss://b.example off PoolOffline",
+        "wss://x.onion off PoolOffline"
+      ],
+      "invoices": [
+        "wss://a.example off PoolOffline",
+        "wss://b.example off PoolOffline",
+        "wss://x.onion off PoolOffline"
+      ]
+    },
+    "posture": "Off"
+  },
+  "one kill_switch all_up": {
+    "lanes": {
+      "admin": [
+        "wss://a.example proxy:p1 Default",
+        "wss://b.example proxy:p1 Default",
+        "wss://x.onion proxy:p1 Default"
+      ],
+      "invoices": [
+        "wss://a.example proxy:p1 Default",
+        "wss://b.example proxy:p1 Default",
+        "wss://x.onion proxy:p1 Default"
+      ]
+    },
+    "posture": "Normal"
+  },
+  "one kill_switch first_down": {
+    "lanes": {
+      "admin": [
+        "wss://a.example off PoolOffline",
+        "wss://b.example off PoolOffline",
+        "wss://x.onion off PoolOffline"
+      ],
+      "invoices": [
+        "wss://a.example off PoolOffline",
+        "wss://b.example off PoolOffline",
+        "wss://x.onion off PoolOffline"
+      ]
+    },
+    "posture": "Off"
+  },
+  "one open all_down": {
+    "lanes": {
+      "admin": [
+        "wss://a.example direct Default",
+        "wss://b.example direct Default",
+        "wss://x.onion off NeverDirect"
+      ],
+      "invoices": [
+        "wss://a.example direct Default",
+        "wss://b.example direct Default",
+        "wss://x.onion off NeverDirect"
+      ]
+    },
+    "posture": "Open"
+  },
+  "one open all_up": {
+    "lanes": {
+      "admin": [
+        "wss://a.example proxy:p1 Default",
+        "wss://b.example proxy:p1 Default",
+        "wss://x.onion proxy:p1 Default"
+      ],
+      "invoices": [
+        "wss://a.example proxy:p1 Default",
+        "wss://b.example proxy:p1 Default",
+        "wss://x.onion proxy:p1 Default"
+      ]
+    },
+    "posture": "Normal"
+  },
+  "one open first_down": {
+    "lanes": {
+      "admin": [
+        "wss://a.example direct Default",
+        "wss://b.example direct Default",
+        "wss://x.onion off NeverDirect"
+      ],
+      "invoices": [
+        "wss://a.example direct Default",
+        "wss://b.example direct Default",
+        "wss://x.onion off NeverDirect"
+      ]
+    },
+    "posture": "Open"
+  },
+  "per_key admin_only all_down": {
+    "lanes": {
+      "admin": [
+        "wss://a.example direct Default",
+        "wss://b.example direct Default",
+        "wss://x.onion off NeverDirect"
+      ],
+      "invoices": [
+        "wss://a.example off PoolOffline",
+        "wss://b.example off PoolOffline",
+        "wss://x.onion off PoolOffline"
+      ]
+    },
+    "posture": "AdminOnly"
+  },
+  "per_key admin_only all_up": {
+    "lanes": {
+      "admin": [
+        "wss://a.example proxy:p2 Default",
+        "wss://b.example proxy:p2 Default",
+        "wss://x.onion proxy:p2 Default"
+      ],
+      "invoices": [
+        "wss://a.example proxy:p1 Default",
+        "wss://b.example proxy:p1 Default",
+        "wss://x.onion proxy:p1 Default"
+      ]
+    },
+    "posture": "Normal"
+  },
+  "per_key admin_only first_down": {
+    "lanes": {
+      "admin": [
+        "wss://a.example proxy:p2 Default",
+        "wss://b.example proxy:p2 Default",
+        "wss://x.onion proxy:p2 Default"
+      ],
+      "invoices": [
+        "wss://a.example off PoolOffline",
+        "wss://b.example off PoolOffline",
+        "wss://x.onion off PoolOffline"
+      ]
+    },
+    "posture": "AdminOnly"
+  },
+  "per_key invoicing_only all_down": {
+    "lanes": {
+      "admin": [
+        "wss://a.example off PoolOffline",
+        "wss://b.example off PoolOffline",
+        "wss://x.onion off PoolOffline"
+      ],
+      "invoices": [
+        "wss://a.example direct Default",
+        "wss://b.example direct Default",
+        "wss://x.onion off NeverDirect"
+      ]
+    },
+    "posture": "InvoicingOnly"
+  },
+  "per_key invoicing_only all_up": {
+    "lanes": {
+      "admin": [
+        "wss://a.example proxy:p2 Default",
+        "wss://b.example proxy:p2 Default",
+        "wss://x.onion proxy:p2 Default"
+      ],
+      "invoices": [
+        "wss://a.example proxy:p1 Default",
+        "wss://b.example proxy:p1 Default",
+        "wss://x.onion proxy:p1 Default"
+      ]
+    },
+    "posture": "Normal"
+  },
+  "per_key invoicing_only first_down": {
+    "lanes": {
+      "admin": [
+        "wss://a.example proxy:p2 Default",
+        "wss://b.example proxy:p2 Default",
+        "wss://x.onion proxy:p2 Default"
+      ],
+      "invoices": [
+        "wss://a.example direct Default",
+        "wss://b.example direct Default",
+        "wss://x.onion off NeverDirect"
+      ]
+    },
+    "posture": "InvoicingOnly"
+  },
+  "per_key kill_switch all_down": {
+    "lanes": {
+      "admin": [
+        "wss://a.example off PoolOffline",
+        "wss://b.example off PoolOffline",
+        "wss://x.onion off PoolOffline"
+      ],
+      "invoices": [
+        "wss://a.example off PoolOffline",
+        "wss://b.example off PoolOffline",
+        "wss://x.onion off PoolOffline"
+      ]
+    },
+    "posture": "Off"
+  },
+  "per_key kill_switch all_up": {
+    "lanes": {
+      "admin": [
+        "wss://a.example proxy:p2 Default",
+        "wss://b.example proxy:p2 Default",
+        "wss://x.onion proxy:p2 Default"
+      ],
+      "invoices": [
+        "wss://a.example proxy:p1 Default",
+        "wss://b.example proxy:p1 Default",
+        "wss://x.onion proxy:p1 Default"
+      ]
+    },
+    "posture": "Normal"
+  },
+  "per_key kill_switch first_down": {
+    "lanes": {
+      "admin": [
+        "wss://a.example proxy:p2 Default",
+        "wss://b.example proxy:p2 Default",
+        "wss://x.onion proxy:p2 Default"
+      ],
+      "invoices": [
+        "wss://a.example off PoolOffline",
+        "wss://b.example off PoolOffline",
+        "wss://x.onion off PoolOffline"
+      ]
+    },
+    "posture": "Off"
+  },
+  "per_key open all_down": {
+    "lanes": {
+      "admin": [
+        "wss://a.example direct Default",
+        "wss://b.example direct Default",
+        "wss://x.onion off NeverDirect"
+      ],
+      "invoices": [
+        "wss://a.example direct Default",
+        "wss://b.example direct Default",
+        "wss://x.onion off NeverDirect"
+      ]
+    },
+    "posture": "Open"
+  },
+  "per_key open all_up": {
+    "lanes": {
+      "admin": [
+        "wss://a.example proxy:p2 Default",
+        "wss://b.example proxy:p2 Default",
+        "wss://x.onion proxy:p2 Default"
+      ],
+      "invoices": [
+        "wss://a.example proxy:p1 Default",
+        "wss://b.example proxy:p1 Default",
+        "wss://x.onion proxy:p1 Default"
+      ]
+    },
+    "posture": "Normal"
+  },
+  "per_key open first_down": {
+    "lanes": {
+      "admin": [
+        "wss://a.example proxy:p2 Default",
+        "wss://b.example proxy:p2 Default",
+        "wss://x.onion proxy:p2 Default"
+      ],
+      "invoices": [
+        "wss://a.example direct Default",
+        "wss://b.example direct Default",
+        "wss://x.onion off NeverDirect"
+      ]
+    },
+    "posture": "Open"
+  },
+  "per_key_shared admin_only all_down": {
+    "lanes": {
+      "admin": [
+        "wss://a.example direct Default",
+        "wss://b.example direct Default",
+        "wss://x.onion off NeverDirect"
+      ],
+      "invoices": [
+        "wss://a.example off PoolOffline",
+        "wss://b.example off PoolOffline",
+        "wss://x.onion off PoolOffline"
+      ]
+    },
+    "posture": "AdminOnly"
+  },
+  "per_key_shared admin_only all_up": {
+    "lanes": {
+      "admin": [
+        "wss://a.example proxy:p1 Default",
+        "wss://b.example proxy:p1 Default",
+        "wss://x.onion proxy:p1 Default"
+      ],
+      "invoices": [
+        "wss://a.example proxy:p1 Default",
+        "wss://b.example proxy:p1 Default",
+        "wss://x.onion proxy:p1 Default"
+      ]
+    },
+    "posture": "Normal"
+  },
+  "per_key_shared admin_only first_down": {
+    "lanes": {
+      "admin": [
+        "wss://a.example proxy:p2 Default",
+        "wss://b.example proxy:p2 Default",
+        "wss://x.onion proxy:p2 Default"
+      ],
+      "invoices": [
+        "wss://a.example off PoolOffline",
+        "wss://b.example off PoolOffline",
+        "wss://x.onion off PoolOffline"
+      ]
+    },
+    "posture": "AdminOnly"
+  },
+  "per_key_shared invoicing_only all_down": {
+    "lanes": {
+      "admin": [
+        "wss://a.example off PoolOffline",
+        "wss://b.example off PoolOffline",
+        "wss://x.onion off PoolOffline"
+      ],
+      "invoices": [
+        "wss://a.example direct Default",
+        "wss://b.example direct Default",
+        "wss://x.onion off NeverDirect"
+      ]
+    },
+    "posture": "InvoicingOnly"
+  },
+  "per_key_shared invoicing_only all_up": {
+    "lanes": {
+      "admin": [
+        "wss://a.example proxy:p1 Default",
+        "wss://b.example proxy:p1 Default",
+        "wss://x.onion proxy:p1 Default"
+      ],
+      "invoices": [
+        "wss://a.example proxy:p1 Default",
+        "wss://b.example proxy:p1 Default",
+        "wss://x.onion proxy:p1 Default"
+      ]
+    },
+    "posture": "Normal"
+  },
+  "per_key_shared invoicing_only first_down": {
+    "lanes": {
+      "admin": [
+        "wss://a.example proxy:p2 Default",
+        "wss://b.example proxy:p2 Default",
+        "wss://x.onion proxy:p2 Default"
+      ],
+      "invoices": [
+        "wss://a.example direct Default",
+        "wss://b.example direct Default",
+        "wss://x.onion off NeverDirect"
+      ]
+    },
+    "posture": "InvoicingOnly"
+  },
+  "per_key_shared kill_switch all_down": {
+    "lanes": {
+      "admin": [
+        "wss://a.example off PoolOffline",
+        "wss://b.example off PoolOffline",
+        "wss://x.onion off PoolOffline"
+      ],
+      "invoices": [
+        "wss://a.example off PoolOffline",
+        "wss://b.example off PoolOffline",
+        "wss://x.onion off PoolOffline"
+      ]
+    },
+    "posture": "Off"
+  },
+  "per_key_shared kill_switch all_up": {
+    "lanes": {
+      "admin": [
+        "wss://a.example proxy:p1 Default",
+        "wss://b.example proxy:p1 Default",
+        "wss://x.onion proxy:p1 Default"
+      ],
+      "invoices": [
+        "wss://a.example proxy:p1 Default",
+        "wss://b.example proxy:p1 Default",
+        "wss://x.onion proxy:p1 Default"
+      ]
+    },
+    "posture": "Normal"
+  },
+  "per_key_shared kill_switch first_down": {
+    "lanes": {
+      "admin": [
+        "wss://a.example proxy:p2 Default",
+        "wss://b.example proxy:p2 Default",
+        "wss://x.onion proxy:p2 Default"
+      ],
+      "invoices": [
+        "wss://a.example off PoolOffline",
+        "wss://b.example off PoolOffline",
+        "wss://x.onion off PoolOffline"
+      ]
+    },
+    "posture": "Off"
+  },
+  "per_key_shared open all_down": {
+    "lanes": {
+      "admin": [
+        "wss://a.example direct Default",
+        "wss://b.example direct Default",
+        "wss://x.onion off NeverDirect"
+      ],
+      "invoices": [
+        "wss://a.example direct Default",
+        "wss://b.example direct Default",
+        "wss://x.onion off NeverDirect"
+      ]
+    },
+    "posture": "Open"
+  },
+  "per_key_shared open all_up": {
+    "lanes": {
+      "admin": [
+        "wss://a.example proxy:p1 Default",
+        "wss://b.example proxy:p1 Default",
+        "wss://x.onion proxy:p1 Default"
+      ],
+      "invoices": [
+        "wss://a.example proxy:p1 Default",
+        "wss://b.example proxy:p1 Default",
+        "wss://x.onion proxy:p1 Default"
+      ]
+    },
+    "posture": "Normal"
+  },
+  "per_key_shared open first_down": {
+    "lanes": {
+      "admin": [
+        "wss://a.example proxy:p2 Default",
+        "wss://b.example proxy:p2 Default",
+        "wss://x.onion proxy:p2 Default"
+      ],
+      "invoices": [
+        "wss://a.example direct Default",
+        "wss://b.example direct Default",
+        "wss://x.onion off NeverDirect"
+      ]
+    },
+    "posture": "Open"
+  },
+  "round_robin admin_only all_down": {
+    "lanes": {
+      "admin": [
+        "wss://a.example direct Default",
+        "wss://b.example direct Default",
+        "wss://x.onion off NeverDirect"
+      ],
+      "invoices": [
+        "wss://a.example off PoolOffline",
+        "wss://b.example off PoolOffline",
+        "wss://x.onion off PoolOffline"
+      ]
+    },
+    "posture": "AdminOnly"
+  },
+  "round_robin admin_only all_up": {
+    "lanes": {
+      "admin": [
+        "wss://a.example proxy:p1 Default",
+        "wss://b.example proxy:p1 Default",
+        "wss://x.onion proxy:p1 Default"
+      ],
+      "invoices": [
+        "wss://a.example proxy:p1 Default",
+        "wss://b.example proxy:p1 Default",
+        "wss://x.onion proxy:p1 Default"
+      ]
+    },
+    "posture": "Normal"
+  },
+  "round_robin admin_only first_down": {
+    "lanes": {
+      "admin": [
+        "wss://a.example proxy:p2 Default",
+        "wss://b.example proxy:p2 Default",
+        "wss://x.onion proxy:p2 Default"
+      ],
+      "invoices": [
+        "wss://a.example proxy:p2 Default",
+        "wss://b.example proxy:p2 Default",
+        "wss://x.onion proxy:p2 Default"
+      ]
+    },
+    "posture": "Normal"
+  },
+  "round_robin invoicing_only all_down": {
+    "lanes": {
+      "admin": [
+        "wss://a.example off PoolOffline",
+        "wss://b.example off PoolOffline",
+        "wss://x.onion off PoolOffline"
+      ],
+      "invoices": [
+        "wss://a.example direct Default",
+        "wss://b.example direct Default",
+        "wss://x.onion off NeverDirect"
+      ]
+    },
+    "posture": "InvoicingOnly"
+  },
+  "round_robin invoicing_only all_up": {
+    "lanes": {
+      "admin": [
+        "wss://a.example proxy:p1 Default",
+        "wss://b.example proxy:p1 Default",
+        "wss://x.onion proxy:p1 Default"
+      ],
+      "invoices": [
+        "wss://a.example proxy:p1 Default",
+        "wss://b.example proxy:p1 Default",
+        "wss://x.onion proxy:p1 Default"
+      ]
+    },
+    "posture": "Normal"
+  },
+  "round_robin invoicing_only first_down": {
+    "lanes": {
+      "admin": [
+        "wss://a.example proxy:p2 Default",
+        "wss://b.example proxy:p2 Default",
+        "wss://x.onion proxy:p2 Default"
+      ],
+      "invoices": [
+        "wss://a.example proxy:p2 Default",
+        "wss://b.example proxy:p2 Default",
+        "wss://x.onion proxy:p2 Default"
+      ]
+    },
+    "posture": "Normal"
+  },
+  "round_robin kill_switch all_down": {
+    "lanes": {
+      "admin": [
+        "wss://a.example off PoolOffline",
+        "wss://b.example off PoolOffline",
+        "wss://x.onion off PoolOffline"
+      ],
+      "invoices": [
+        "wss://a.example off PoolOffline",
+        "wss://b.example off PoolOffline",
+        "wss://x.onion off PoolOffline"
+      ]
+    },
+    "posture": "Off"
+  },
+  "round_robin kill_switch all_up": {
+    "lanes": {
+      "admin": [
+        "wss://a.example proxy:p1 Default",
+        "wss://b.example proxy:p1 Default",
+        "wss://x.onion proxy:p1 Default"
+      ],
+      "invoices": [
+        "wss://a.example proxy:p1 Default",
+        "wss://b.example proxy:p1 Default",
+        "wss://x.onion proxy:p1 Default"
+      ]
+    },
+    "posture": "Normal"
+  },
+  "round_robin kill_switch first_down": {
+    "lanes": {
+      "admin": [
+        "wss://a.example proxy:p2 Default",
+        "wss://b.example proxy:p2 Default",
+        "wss://x.onion proxy:p2 Default"
+      ],
+      "invoices": [
+        "wss://a.example proxy:p2 Default",
+        "wss://b.example proxy:p2 Default",
+        "wss://x.onion proxy:p2 Default"
+      ]
+    },
+    "posture": "Normal"
+  },
+  "round_robin open all_down": {
+    "lanes": {
+      "admin": [
+        "wss://a.example direct Default",
+        "wss://b.example direct Default",
+        "wss://x.onion off NeverDirect"
+      ],
+      "invoices": [
+        "wss://a.example direct Default",
+        "wss://b.example direct Default",
+        "wss://x.onion off NeverDirect"
+      ]
+    },
+    "posture": "Open"
+  },
+  "round_robin open all_up": {
+    "lanes": {
+      "admin": [
+        "wss://a.example proxy:p1 Default",
+        "wss://b.example proxy:p1 Default",
+        "wss://x.onion proxy:p1 Default"
+      ],
+      "invoices": [
+        "wss://a.example proxy:p1 Default",
+        "wss://b.example proxy:p1 Default",
+        "wss://x.onion proxy:p1 Default"
+      ]
+    },
+    "posture": "Normal"
+  },
+  "round_robin open first_down": {
+    "lanes": {
+      "admin": [
+        "wss://a.example proxy:p2 Default",
+        "wss://b.example proxy:p2 Default",
+        "wss://x.onion proxy:p2 Default"
+      ],
+      "invoices": [
+        "wss://a.example proxy:p2 Default",
+        "wss://b.example proxy:p2 Default",
+        "wss://x.onion proxy:p2 Default"
+      ]
+    },
+    "posture": "Normal"
+  },
+  "rule_fallback_pool admin_only all_down": {
+    "lanes": {
+      "admin": [
+        "wss://a.example direct Fallback",
+        "wss://b.example direct Default",
+        "wss://x.onion off NeverDirect"
+      ],
+      "invoices": [
+        "wss://a.example off PoolOffline",
+        "wss://b.example off PoolOffline",
+        "wss://x.onion off PoolOffline"
+      ]
+    },
+    "posture": "AdminOnly"
+  },
+  "rule_fallback_pool admin_only all_up": {
+    "lanes": {
+      "admin": [
+        "wss://a.example proxy:p1 Rule",
+        "wss://b.example proxy:p2 Default",
+        "wss://x.onion proxy:p2 Default"
+      ],
+      "invoices": [
+        "wss://a.example proxy:p1 Rule",
+        "wss://b.example proxy:p2 Default",
+        "wss://x.onion proxy:p2 Default"
+      ]
+    },
+    "posture": "Normal"
+  },
+  "rule_fallback_pool admin_only first_down": {
+    "lanes": {
+      "admin": [
+        "wss://a.example proxy:p2 Fallback",
+        "wss://b.example proxy:p2 Default",
+        "wss://x.onion proxy:p2 Default"
+      ],
+      "invoices": [
+        "wss://a.example proxy:p2 Fallback",
+        "wss://b.example proxy:p2 Default",
+        "wss://x.onion proxy:p2 Default"
+      ]
+    },
+    "posture": "Normal"
+  },
+  "rule_fallback_pool invoicing_only all_down": {
+    "lanes": {
+      "admin": [
+        "wss://a.example off PoolOffline",
+        "wss://b.example off PoolOffline",
+        "wss://x.onion off PoolOffline"
+      ],
+      "invoices": [
+        "wss://a.example direct Fallback",
+        "wss://b.example direct Default",
+        "wss://x.onion off NeverDirect"
+      ]
+    },
+    "posture": "InvoicingOnly"
+  },
+  "rule_fallback_pool invoicing_only all_up": {
+    "lanes": {
+      "admin": [
+        "wss://a.example proxy:p1 Rule",
+        "wss://b.example proxy:p2 Default",
+        "wss://x.onion proxy:p2 Default"
+      ],
+      "invoices": [
+        "wss://a.example proxy:p1 Rule",
+        "wss://b.example proxy:p2 Default",
+        "wss://x.onion proxy:p2 Default"
+      ]
+    },
+    "posture": "Normal"
+  },
+  "rule_fallback_pool invoicing_only first_down": {
+    "lanes": {
+      "admin": [
+        "wss://a.example proxy:p2 Fallback",
+        "wss://b.example proxy:p2 Default",
+        "wss://x.onion proxy:p2 Default"
+      ],
+      "invoices": [
+        "wss://a.example proxy:p2 Fallback",
+        "wss://b.example proxy:p2 Default",
+        "wss://x.onion proxy:p2 Default"
+      ]
+    },
+    "posture": "Normal"
+  },
+  "rule_fallback_pool kill_switch all_down": {
+    "lanes": {
+      "admin": [
+        "wss://a.example off PoolOffline",
+        "wss://b.example off PoolOffline",
+        "wss://x.onion off PoolOffline"
+      ],
+      "invoices": [
+        "wss://a.example off PoolOffline",
+        "wss://b.example off PoolOffline",
+        "wss://x.onion off PoolOffline"
+      ]
+    },
+    "posture": "Off"
+  },
+  "rule_fallback_pool kill_switch all_up": {
+    "lanes": {
+      "admin": [
+        "wss://a.example proxy:p1 Rule",
+        "wss://b.example proxy:p2 Default",
+        "wss://x.onion proxy:p2 Default"
+      ],
+      "invoices": [
+        "wss://a.example proxy:p1 Rule",
+        "wss://b.example proxy:p2 Default",
+        "wss://x.onion proxy:p2 Default"
+      ]
+    },
+    "posture": "Normal"
+  },
+  "rule_fallback_pool kill_switch first_down": {
+    "lanes": {
+      "admin": [
+        "wss://a.example proxy:p2 Fallback",
+        "wss://b.example proxy:p2 Default",
+        "wss://x.onion proxy:p2 Default"
+      ],
+      "invoices": [
+        "wss://a.example proxy:p2 Fallback",
+        "wss://b.example proxy:p2 Default",
+        "wss://x.onion proxy:p2 Default"
+      ]
+    },
+    "posture": "Normal"
+  },
+  "rule_fallback_pool open all_down": {
+    "lanes": {
+      "admin": [
+        "wss://a.example direct Fallback",
+        "wss://b.example direct Default",
+        "wss://x.onion off NeverDirect"
+      ],
+      "invoices": [
+        "wss://a.example direct Fallback",
+        "wss://b.example direct Default",
+        "wss://x.onion off NeverDirect"
+      ]
+    },
+    "posture": "Open"
+  },
+  "rule_fallback_pool open all_up": {
+    "lanes": {
+      "admin": [
+        "wss://a.example proxy:p1 Rule",
+        "wss://b.example proxy:p2 Default",
+        "wss://x.onion proxy:p2 Default"
+      ],
+      "invoices": [
+        "wss://a.example proxy:p1 Rule",
+        "wss://b.example proxy:p2 Default",
+        "wss://x.onion proxy:p2 Default"
+      ]
+    },
+    "posture": "Normal"
+  },
+  "rule_fallback_pool open first_down": {
+    "lanes": {
+      "admin": [
+        "wss://a.example proxy:p2 Fallback",
+        "wss://b.example proxy:p2 Default",
+        "wss://x.onion proxy:p2 Default"
+      ],
+      "invoices": [
+        "wss://a.example proxy:p2 Fallback",
+        "wss://b.example proxy:p2 Default",
+        "wss://x.onion proxy:p2 Default"
+      ]
+    },
+    "posture": "Normal"
+  },
+  "rule_fallback_pool_per_key admin_only all_down": {
+    "lanes": {
+      "admin": [
+        "wss://a.example direct Fallback",
+        "wss://b.example direct Rule",
+        "wss://x.onion off NeverDirect"
+      ],
+      "invoices": [
+        "wss://a.example off PoolOffline",
+        "wss://b.example off PoolOffline",
+        "wss://x.onion off PoolOffline"
+      ]
+    },
+    "posture": "AdminOnly"
+  },
+  "rule_fallback_pool_per_key admin_only all_up": {
+    "lanes": {
+      "admin": [
+        "wss://a.example proxy:p1 Rule",
+        "wss://b.example proxy:p3 Rule",
+        "wss://x.onion proxy:p3 Default"
+      ],
+      "invoices": [
+        "wss://a.example proxy:p1 Rule",
+        "wss://b.example proxy:p2 Default",
+        "wss://x.onion proxy:p2 Default"
+      ]
+    },
+    "posture": "Normal"
+  },
+  "rule_fallback_pool_per_key admin_only first_down": {
+    "lanes": {
+      "admin": [
+        "wss://a.example proxy:p3 Fallback",
+        "wss://b.example proxy:p3 Rule",
+        "wss://x.onion proxy:p3 Default"
+      ],
+      "invoices": [
+        "wss://a.example proxy:p2 Fallback",
+        "wss://b.example proxy:p2 Default",
+        "wss://x.onion proxy:p2 Default"
+      ]
+    },
+    "posture": "Normal"
+  },
+  "rule_fallback_pool_per_key invoicing_only all_down": {
+    "lanes": {
+      "admin": [
+        "wss://a.example off PoolOffline",
+        "wss://b.example off PoolOffline",
+        "wss://x.onion off PoolOffline"
+      ],
+      "invoices": [
+        "wss://a.example direct Fallback",
+        "wss://b.example direct Default",
+        "wss://x.onion off NeverDirect"
+      ]
+    },
+    "posture": "InvoicingOnly"
+  },
+  "rule_fallback_pool_per_key invoicing_only all_up": {
+    "lanes": {
+      "admin": [
+        "wss://a.example proxy:p1 Rule",
+        "wss://b.example proxy:p3 Rule",
+        "wss://x.onion proxy:p3 Default"
+      ],
+      "invoices": [
+        "wss://a.example proxy:p1 Rule",
+        "wss://b.example proxy:p2 Default",
+        "wss://x.onion proxy:p2 Default"
+      ]
+    },
+    "posture": "Normal"
+  },
+  "rule_fallback_pool_per_key invoicing_only first_down": {
+    "lanes": {
+      "admin": [
+        "wss://a.example proxy:p3 Fallback",
+        "wss://b.example proxy:p3 Rule",
+        "wss://x.onion proxy:p3 Default"
+      ],
+      "invoices": [
+        "wss://a.example proxy:p2 Fallback",
+        "wss://b.example proxy:p2 Default",
+        "wss://x.onion proxy:p2 Default"
+      ]
+    },
+    "posture": "Normal"
+  },
+  "rule_fallback_pool_per_key kill_switch all_down": {
+    "lanes": {
+      "admin": [
+        "wss://a.example off PoolOffline",
+        "wss://b.example off PoolOffline",
+        "wss://x.onion off PoolOffline"
+      ],
+      "invoices": [
+        "wss://a.example off PoolOffline",
+        "wss://b.example off PoolOffline",
+        "wss://x.onion off PoolOffline"
+      ]
+    },
+    "posture": "Off"
+  },
+  "rule_fallback_pool_per_key kill_switch all_up": {
+    "lanes": {
+      "admin": [
+        "wss://a.example proxy:p1 Rule",
+        "wss://b.example proxy:p3 Rule",
+        "wss://x.onion proxy:p3 Default"
+      ],
+      "invoices": [
+        "wss://a.example proxy:p1 Rule",
+        "wss://b.example proxy:p2 Default",
+        "wss://x.onion proxy:p2 Default"
+      ]
+    },
+    "posture": "Normal"
+  },
+  "rule_fallback_pool_per_key kill_switch first_down": {
+    "lanes": {
+      "admin": [
+        "wss://a.example proxy:p3 Fallback",
+        "wss://b.example proxy:p3 Rule",
+        "wss://x.onion proxy:p3 Default"
+      ],
+      "invoices": [
+        "wss://a.example proxy:p2 Fallback",
+        "wss://b.example proxy:p2 Default",
+        "wss://x.onion proxy:p2 Default"
+      ]
+    },
+    "posture": "Normal"
+  },
+  "rule_fallback_pool_per_key open all_down": {
+    "lanes": {
+      "admin": [
+        "wss://a.example direct Fallback",
+        "wss://b.example direct Rule",
+        "wss://x.onion off NeverDirect"
+      ],
+      "invoices": [
+        "wss://a.example direct Fallback",
+        "wss://b.example direct Default",
+        "wss://x.onion off NeverDirect"
+      ]
+    },
+    "posture": "Open"
+  },
+  "rule_fallback_pool_per_key open all_up": {
+    "lanes": {
+      "admin": [
+        "wss://a.example proxy:p1 Rule",
+        "wss://b.example proxy:p3 Rule",
+        "wss://x.onion proxy:p3 Default"
+      ],
+      "invoices": [
+        "wss://a.example proxy:p1 Rule",
+        "wss://b.example proxy:p2 Default",
+        "wss://x.onion proxy:p2 Default"
+      ]
+    },
+    "posture": "Normal"
+  },
+  "rule_fallback_pool_per_key open first_down": {
+    "lanes": {
+      "admin": [
+        "wss://a.example proxy:p3 Fallback",
+        "wss://b.example proxy:p3 Rule",
+        "wss://x.onion proxy:p3 Default"
+      ],
+      "invoices": [
+        "wss://a.example proxy:p2 Fallback",
+        "wss://b.example proxy:p2 Default",
+        "wss://x.onion proxy:p2 Default"
+      ]
+    },
+    "posture": "Normal"
+  },
+  "rules_only admin_only all_down": {
+    "lanes": {
+      "admin": [
+        "wss://a.example proxy:p1 Rule",
+        "wss://b.example proxy:p1 Rule",
+        "wss://x.onion proxy:p1 Rule"
+      ],
+      "invoices": [
+        "wss://a.example proxy:p1 Rule",
+        "wss://b.example proxy:p1 Rule",
+        "wss://x.onion proxy:p1 Rule"
+      ]
+    },
+    "posture": "Normal"
+  },
+  "rules_only admin_only all_up": {
+    "lanes": {
+      "admin": [
+        "wss://a.example proxy:p1 Rule",
+        "wss://b.example proxy:p1 Rule",
+        "wss://x.onion proxy:p1 Rule"
+      ],
+      "invoices": [
+        "wss://a.example proxy:p1 Rule",
+        "wss://b.example proxy:p1 Rule",
+        "wss://x.onion proxy:p1 Rule"
+      ]
+    },
+    "posture": "Normal"
+  },
+  "rules_only admin_only first_down": {
+    "lanes": {
+      "admin": [
+        "wss://a.example proxy:p1 Rule",
+        "wss://b.example proxy:p1 Rule",
+        "wss://x.onion proxy:p1 Rule"
+      ],
+      "invoices": [
+        "wss://a.example proxy:p1 Rule",
+        "wss://b.example proxy:p1 Rule",
+        "wss://x.onion proxy:p1 Rule"
+      ]
+    },
+    "posture": "Normal"
+  },
+  "rules_only invoicing_only all_down": {
+    "lanes": {
+      "admin": [
+        "wss://a.example proxy:p1 Rule",
+        "wss://b.example proxy:p1 Rule",
+        "wss://x.onion proxy:p1 Rule"
+      ],
+      "invoices": [
+        "wss://a.example proxy:p1 Rule",
+        "wss://b.example proxy:p1 Rule",
+        "wss://x.onion proxy:p1 Rule"
+      ]
+    },
+    "posture": "Normal"
+  },
+  "rules_only invoicing_only all_up": {
+    "lanes": {
+      "admin": [
+        "wss://a.example proxy:p1 Rule",
+        "wss://b.example proxy:p1 Rule",
+        "wss://x.onion proxy:p1 Rule"
+      ],
+      "invoices": [
+        "wss://a.example proxy:p1 Rule",
+        "wss://b.example proxy:p1 Rule",
+        "wss://x.onion proxy:p1 Rule"
+      ]
+    },
+    "posture": "Normal"
+  },
+  "rules_only invoicing_only first_down": {
+    "lanes": {
+      "admin": [
+        "wss://a.example proxy:p1 Rule",
+        "wss://b.example proxy:p1 Rule",
+        "wss://x.onion proxy:p1 Rule"
+      ],
+      "invoices": [
+        "wss://a.example proxy:p1 Rule",
+        "wss://b.example proxy:p1 Rule",
+        "wss://x.onion proxy:p1 Rule"
+      ]
+    },
+    "posture": "Normal"
+  },
+  "rules_only kill_switch all_down": {
+    "lanes": {
+      "admin": [
+        "wss://a.example proxy:p1 Rule",
+        "wss://b.example proxy:p1 Rule",
+        "wss://x.onion proxy:p1 Rule"
+      ],
+      "invoices": [
+        "wss://a.example proxy:p1 Rule",
+        "wss://b.example proxy:p1 Rule",
+        "wss://x.onion proxy:p1 Rule"
+      ]
+    },
+    "posture": "Normal"
+  },
+  "rules_only kill_switch all_up": {
+    "lanes": {
+      "admin": [
+        "wss://a.example proxy:p1 Rule",
+        "wss://b.example proxy:p1 Rule",
+        "wss://x.onion proxy:p1 Rule"
+      ],
+      "invoices": [
+        "wss://a.example proxy:p1 Rule",
+        "wss://b.example proxy:p1 Rule",
+        "wss://x.onion proxy:p1 Rule"
+      ]
+    },
+    "posture": "Normal"
+  },
+  "rules_only kill_switch first_down": {
+    "lanes": {
+      "admin": [
+        "wss://a.example proxy:p1 Rule",
+        "wss://b.example proxy:p1 Rule",
+        "wss://x.onion proxy:p1 Rule"
+      ],
+      "invoices": [
+        "wss://a.example proxy:p1 Rule",
+        "wss://b.example proxy:p1 Rule",
+        "wss://x.onion proxy:p1 Rule"
+      ]
+    },
+    "posture": "Normal"
+  },
+  "rules_only open all_down": {
+    "lanes": {
+      "admin": [
+        "wss://a.example proxy:p1 Rule",
+        "wss://b.example proxy:p1 Rule",
+        "wss://x.onion proxy:p1 Rule"
+      ],
+      "invoices": [
+        "wss://a.example proxy:p1 Rule",
+        "wss://b.example proxy:p1 Rule",
+        "wss://x.onion proxy:p1 Rule"
+      ]
+    },
+    "posture": "Normal"
+  },
+  "rules_only open all_up": {
+    "lanes": {
+      "admin": [
+        "wss://a.example proxy:p1 Rule",
+        "wss://b.example proxy:p1 Rule",
+        "wss://x.onion proxy:p1 Rule"
+      ],
+      "invoices": [
+        "wss://a.example proxy:p1 Rule",
+        "wss://b.example proxy:p1 Rule",
+        "wss://x.onion proxy:p1 Rule"
+      ]
+    },
+    "posture": "Normal"
+  },
+  "rules_only open first_down": {
+    "lanes": {
+      "admin": [
+        "wss://a.example proxy:p1 Rule",
+        "wss://b.example proxy:p1 Rule",
+        "wss://x.onion proxy:p1 Rule"
+      ],
+      "invoices": [
+        "wss://a.example proxy:p1 Rule",
+        "wss://b.example proxy:p1 Rule",
+        "wss://x.onion proxy:p1 Rule"
+      ]
+    },
+    "posture": "Normal"
+  },
+  "rules_tor admin_only all_down": {
+    "lanes": {
+      "admin": [
+        "wss://a.example direct Default",
+        "wss://b.example direct Rule",
+        "wss://x.onion proxy:tor Rule"
+      ],
+      "invoices": [
+        "wss://a.example off PoolOffline",
+        "wss://b.example off PoolOffline",
+        "wss://x.onion proxy:tor Rule"
+      ]
+    },
+    "posture": "AdminOnly"
+  },
+  "rules_tor admin_only all_up": {
+    "lanes": {
+      "admin": [
+        "wss://a.example proxy:p1 Default",
+        "wss://b.example proxy:p1 Rule",
+        "wss://x.onion proxy:tor Rule"
+      ],
+      "invoices": [
+        "wss://a.example proxy:p1 Default",
+        "wss://b.example proxy:p1 Rule",
+        "wss://x.onion proxy:tor Rule"
+      ]
+    },
+    "posture": "Normal"
+  },
+  "rules_tor admin_only first_down": {
+    "lanes": {
+      "admin": [
+        "wss://a.example proxy:p2 Default",
+        "wss://b.example proxy:p2 Rule",
+        "wss://x.onion proxy:tor Rule"
+      ],
+      "invoices": [
+        "wss://a.example proxy:p2 Default",
+        "wss://b.example proxy:p2 Rule",
+        "wss://x.onion proxy:tor Rule"
+      ]
+    },
+    "posture": "Normal"
+  },
+  "rules_tor invoicing_only all_down": {
+    "lanes": {
+      "admin": [
+        "wss://a.example off PoolOffline",
+        "wss://b.example off PoolOffline",
+        "wss://x.onion proxy:tor Rule"
+      ],
+      "invoices": [
+        "wss://a.example direct Default",
+        "wss://b.example direct Rule",
+        "wss://x.onion proxy:tor Rule"
+      ]
+    },
+    "posture": "InvoicingOnly"
+  },
+  "rules_tor invoicing_only all_up": {
+    "lanes": {
+      "admin": [
+        "wss://a.example proxy:p1 Default",
+        "wss://b.example proxy:p1 Rule",
+        "wss://x.onion proxy:tor Rule"
+      ],
+      "invoices": [
+        "wss://a.example proxy:p1 Default",
+        "wss://b.example proxy:p1 Rule",
+        "wss://x.onion proxy:tor Rule"
+      ]
+    },
+    "posture": "Normal"
+  },
+  "rules_tor invoicing_only first_down": {
+    "lanes": {
+      "admin": [
+        "wss://a.example proxy:p2 Default",
+        "wss://b.example proxy:p2 Rule",
+        "wss://x.onion proxy:tor Rule"
+      ],
+      "invoices": [
+        "wss://a.example proxy:p2 Default",
+        "wss://b.example proxy:p2 Rule",
+        "wss://x.onion proxy:tor Rule"
+      ]
+    },
+    "posture": "Normal"
+  },
+  "rules_tor kill_switch all_down": {
+    "lanes": {
+      "admin": [
+        "wss://a.example off PoolOffline",
+        "wss://b.example off PoolOffline",
+        "wss://x.onion proxy:tor Rule"
+      ],
+      "invoices": [
+        "wss://a.example off PoolOffline",
+        "wss://b.example off PoolOffline",
+        "wss://x.onion proxy:tor Rule"
+      ]
+    },
+    "posture": "Off"
+  },
+  "rules_tor kill_switch all_up": {
+    "lanes": {
+      "admin": [
+        "wss://a.example proxy:p1 Default",
+        "wss://b.example proxy:p1 Rule",
+        "wss://x.onion proxy:tor Rule"
+      ],
+      "invoices": [
+        "wss://a.example proxy:p1 Default",
+        "wss://b.example proxy:p1 Rule",
+        "wss://x.onion proxy:tor Rule"
+      ]
+    },
+    "posture": "Normal"
+  },
+  "rules_tor kill_switch first_down": {
+    "lanes": {
+      "admin": [
+        "wss://a.example proxy:p2 Default",
+        "wss://b.example proxy:p2 Rule",
+        "wss://x.onion proxy:tor Rule"
+      ],
+      "invoices": [
+        "wss://a.example proxy:p2 Default",
+        "wss://b.example proxy:p2 Rule",
+        "wss://x.onion proxy:tor Rule"
+      ]
+    },
+    "posture": "Normal"
+  },
+  "rules_tor open all_down": {
+    "lanes": {
+      "admin": [
+        "wss://a.example direct Default",
+        "wss://b.example direct Rule",
+        "wss://x.onion proxy:tor Rule"
+      ],
+      "invoices": [
+        "wss://a.example direct Default",
+        "wss://b.example direct Rule",
+        "wss://x.onion proxy:tor Rule"
+      ]
+    },
+    "posture": "Open"
+  },
+  "rules_tor open all_up": {
+    "lanes": {
+      "admin": [
+        "wss://a.example proxy:p1 Default",
+        "wss://b.example proxy:p1 Rule",
+        "wss://x.onion proxy:tor Rule"
+      ],
+      "invoices": [
+        "wss://a.example proxy:p1 Default",
+        "wss://b.example proxy:p1 Rule",
+        "wss://x.onion proxy:tor Rule"
+      ]
+    },
+    "posture": "Normal"
+  },
+  "rules_tor open first_down": {
+    "lanes": {
+      "admin": [
+        "wss://a.example proxy:p2 Default",
+        "wss://b.example proxy:p2 Rule",
+        "wss://x.onion proxy:tor Rule"
+      ],
+      "invoices": [
+        "wss://a.example proxy:p2 Default",
+        "wss://b.example proxy:p2 Rule",
+        "wss://x.onion proxy:tor Rule"
+      ]
+    },
+    "posture": "Normal"
+  },
+  "transparent admin_only all_down": {
+    "lanes": {
+      "admin": [
+        "wss://a.example direct Transparent",
+        "wss://b.example direct Transparent",
+        "wss://x.onion direct Transparent"
+      ],
+      "invoices": [
+        "wss://a.example direct Transparent",
+        "wss://b.example direct Transparent",
+        "wss://x.onion direct Transparent"
+      ]
+    },
+    "posture": "Normal"
+  },
+  "transparent admin_only all_up": {
+    "lanes": {
+      "admin": [
+        "wss://a.example direct Transparent",
+        "wss://b.example direct Transparent",
+        "wss://x.onion direct Transparent"
+      ],
+      "invoices": [
+        "wss://a.example direct Transparent",
+        "wss://b.example direct Transparent",
+        "wss://x.onion direct Transparent"
+      ]
+    },
+    "posture": "Normal"
+  },
+  "transparent admin_only first_down": {
+    "lanes": {
+      "admin": [
+        "wss://a.example direct Transparent",
+        "wss://b.example direct Transparent",
+        "wss://x.onion direct Transparent"
+      ],
+      "invoices": [
+        "wss://a.example direct Transparent",
+        "wss://b.example direct Transparent",
+        "wss://x.onion direct Transparent"
+      ]
+    },
+    "posture": "Normal"
+  },
+  "transparent invoicing_only all_down": {
+    "lanes": {
+      "admin": [
+        "wss://a.example direct Transparent",
+        "wss://b.example direct Transparent",
+        "wss://x.onion direct Transparent"
+      ],
+      "invoices": [
+        "wss://a.example direct Transparent",
+        "wss://b.example direct Transparent",
+        "wss://x.onion direct Transparent"
+      ]
+    },
+    "posture": "Normal"
+  },
+  "transparent invoicing_only all_up": {
+    "lanes": {
+      "admin": [
+        "wss://a.example direct Transparent",
+        "wss://b.example direct Transparent",
+        "wss://x.onion direct Transparent"
+      ],
+      "invoices": [
+        "wss://a.example direct Transparent",
+        "wss://b.example direct Transparent",
+        "wss://x.onion direct Transparent"
+      ]
+    },
+    "posture": "Normal"
+  },
+  "transparent invoicing_only first_down": {
+    "lanes": {
+      "admin": [
+        "wss://a.example direct Transparent",
+        "wss://b.example direct Transparent",
+        "wss://x.onion direct Transparent"
+      ],
+      "invoices": [
+        "wss://a.example direct Transparent",
+        "wss://b.example direct Transparent",
+        "wss://x.onion direct Transparent"
+      ]
+    },
+    "posture": "Normal"
+  },
+  "transparent kill_switch all_down": {
+    "lanes": {
+      "admin": [
+        "wss://a.example direct Transparent",
+        "wss://b.example direct Transparent",
+        "wss://x.onion direct Transparent"
+      ],
+      "invoices": [
+        "wss://a.example direct Transparent",
+        "wss://b.example direct Transparent",
+        "wss://x.onion direct Transparent"
+      ]
+    },
+    "posture": "Normal"
+  },
+  "transparent kill_switch all_up": {
+    "lanes": {
+      "admin": [
+        "wss://a.example direct Transparent",
+        "wss://b.example direct Transparent",
+        "wss://x.onion direct Transparent"
+      ],
+      "invoices": [
+        "wss://a.example direct Transparent",
+        "wss://b.example direct Transparent",
+        "wss://x.onion direct Transparent"
+      ]
+    },
+    "posture": "Normal"
+  },
+  "transparent kill_switch first_down": {
+    "lanes": {
+      "admin": [
+        "wss://a.example direct Transparent",
+        "wss://b.example direct Transparent",
+        "wss://x.onion direct Transparent"
+      ],
+      "invoices": [
+        "wss://a.example direct Transparent",
+        "wss://b.example direct Transparent",
+        "wss://x.onion direct Transparent"
+      ]
+    },
+    "posture": "Normal"
+  },
+  "transparent open all_down": {
+    "lanes": {
+      "admin": [
+        "wss://a.example direct Transparent",
+        "wss://b.example direct Transparent",
+        "wss://x.onion direct Transparent"
+      ],
+      "invoices": [
+        "wss://a.example direct Transparent",
+        "wss://b.example direct Transparent",
+        "wss://x.onion direct Transparent"
+      ]
+    },
+    "posture": "Normal"
+  },
+  "transparent open all_up": {
+    "lanes": {
+      "admin": [
+        "wss://a.example direct Transparent",
+        "wss://b.example direct Transparent",
+        "wss://x.onion direct Transparent"
+      ],
+      "invoices": [
+        "wss://a.example direct Transparent",
+        "wss://b.example direct Transparent",
+        "wss://x.onion direct Transparent"
+      ]
+    },
+    "posture": "Normal"
+  },
+  "transparent open first_down": {
+    "lanes": {
+      "admin": [
+        "wss://a.example direct Transparent",
+        "wss://b.example direct Transparent",
+        "wss://x.onion direct Transparent"
+      ],
+      "invoices": [
+        "wss://a.example direct Transparent",
+        "wss://b.example direct Transparent",
+        "wss://x.onion direct Transparent"
+      ]
+    },
+    "posture": "Normal"
+  }
+}
