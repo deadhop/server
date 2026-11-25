@@ -126,7 +126,7 @@ impl Service {
         self.net.routes_for(self, key)
     }
 
-    /// The pool as the dashboard shows it.
+    /// The proxies and routes as the dashboard shows them.
     pub fn pool_health(&self) -> PoolHealth {
         self.net.pool_health(self)
     }

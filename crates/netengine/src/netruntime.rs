@@ -675,7 +675,7 @@ impl NetworkRuntime {
             .applied
             .values()
             .all(|a| a.state != crate::proxypool::PoolState::Offline);
-        // Only a different list can be a mistake worth undoing; a changed mode or
+        // Only a different list can be a mistake worth undoing; a changed group, route or
         // policy is not, and must not be undone when the same proxies fail later.
         if list_changed && was_working && !previous.transparent && !previous.list.is_empty() {
             self.pool

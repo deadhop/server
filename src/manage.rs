@@ -833,7 +833,7 @@ impl Service {
             px.groups = Some(Vec::new());
             px.default_keys = Some(Default::default());
         }
-        // Every proxy setting (the list, the mode, what happens when none
+        // Every proxy setting (the list, groups, routes, what happens when none
         // works, and the transparent claim) decides where relay traffic goes
         // and who can see this machine, so one lock covers them all.
         if self.cfg.proxy_locked && patch.proxies.is_some() {

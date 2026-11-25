@@ -740,6 +740,30 @@ async fn a_proxy_change_that_leaves_nothing_reachable_is_undone_once() {
 }
 
 #[tokio::test]
+async fn a_bad_list_is_undone_when_rules_leave_their_relays_to_the_policy() {
+    // Every relay is ruled (as settings converted from a rule to the old pool
+    // are), so the default route is unused; the rule's proxy failing leaves
+    // its relays to the offline policy, which is what probation looks at.
+    let r = rig(&[A, B]);
+    let (net, host) = (&r.net, &r.host);
+    let ruled = |t: &mut Topology, id: &str| {
+        t.proxies.list = vec![entry(id)];
+        t.proxies.default = proxy(id);
+        t.proxies.rules = vec![rule(&["*"], proxy(id), Fallback::Policy)];
+    };
+    r.set(|t| ruled(t, "tor"));
+    r.probe("tor", true);
+    r.replan();
+    let working = r.proxies();
+    r.set(|t| ruled(t, "typo"));
+    net.begin_probation(host, working.clone());
+    r.probe("typo", false);
+    r.replan();
+    assert_eq!(r.proxies(), working, "the previous proxies are back");
+    assert_eq!(host.reverts.lock().unwrap().len(), 1);
+}
+
+#[tokio::test]
 async fn a_default_route_that_has_nothing_up_would_strand_a_key() {
     let r = rig(&[A]);
     let (net, host) = (&r.net, &r.host);

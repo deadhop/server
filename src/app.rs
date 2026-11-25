@@ -1749,20 +1749,19 @@ mod tests {
         .await;
         app.svc.pool.lock().unwrap().probation = None;
         // Each relay holds one connection per key; the proxy probes open
-        // short ones all the time, so only those older than a probe count.
-        let open_since = |log: &Opened, t: std::time::Instant| {
+        // short ones all the time. Take the ones open now...
+        let open = |log: &Opened| -> Vec<Arc<AtomicBool>> {
             log.lock()
                 .unwrap()
                 .iter()
-                .filter(|(at, open)| *at + Duration::from_millis(500) <= t && open.load(Ordering::SeqCst))
-                .count()
+                .filter(|(_, open)| open.load(Ordering::SeqCst))
+                .map(|(_, open)| open.clone())
+                .collect()
         };
+        let still = |conns: &[Arc<AtomicBool>]| conns.iter().filter(|c| c.load(Ordering::SeqCst)).count();
         tokio::time::sleep(Duration::from_secs(1)).await;
-        let before = std::time::Instant::now();
-        assert_eq!(
-            (open_since(&pinned_log, before), open_since(&pooled_log, before)),
-            (2, 2)
-        );
+        let (pinned_before, pooled_before) = (open(&pinned_log), open(&pooled_log));
+        assert!(pinned_before.len() >= 2 && pooled_before.len() >= 2);
 
         // The first proxy dies: the default route moves to the second.
         first.abort();
@@ -1773,11 +1772,11 @@ mod tests {
         })
         .await;
         tokio::time::sleep(Duration::from_secs(1)).await;
-        // The pinned relay kept both its connections; the pooled one has none
-        // from before the switch.
-        assert_eq!(open_since(&pinned_log, before), 2);
-        assert_eq!(open_since(&pooled_log, before), 0);
-        assert!(open_since(&pooled_log, std::time::Instant::now()) >= 2);
+        // ...the pinned relay kept both of its key connections (probes from
+        // then have closed); the pooled one kept none, and has new ones.
+        assert_eq!(still(&pinned_before), 2);
+        assert_eq!(still(&pooled_before), 0);
+        assert!(open(&pooled_log).len() >= 2);
         // Requests still arrive over the moved relay alone.
         let transport = NostrClientTransport::new(
             MiningSigner {

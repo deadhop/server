@@ -539,8 +539,9 @@ impl NetworkRuntime {
         let settings = host.topology();
         let cfg = settings.proxies.clone();
         let now = host.now();
-        let (decided, plans, revert_to) = {
+        let (changed, kept) = {
             let mut pool = self.pool.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+            let kept = (pool.applied.clone(), pool.groups.clone(), pool.probes.clone());
             pool.probes.retain(|id, _| cfg.list.iter().any(|e| &e.id == id));
             let reach = |pool: &PoolRuntime, id: &str| {
                 pool.probes.get(id).map_or(
@@ -602,39 +603,6 @@ impl NetworkRuntime {
             }
             // A key and group no longer planned starts over if it comes back.
             pool.rot.retain(|at, _| plans.contains_key(at));
-            // Only a key whose relays take the default route is hurt by it being down.
-            let offline = decided
-                .iter()
-                .any(|(k, a)| a.state == PoolState::Offline && crate::routes::uses_default(&settings, k));
-            // A change that left a key with nothing reachable is undone once;
-            // one that works (or a probation that ran out) ends the probation.
-            let revert_to = match pool.probation.clone() {
-                Some(p) if offline && now < p.until && p.previous != cfg => Some(p.previous),
-                Some(p) if !offline || now >= p.until => {
-                    pool.probation = None;
-                    None
-                }
-                _ => None,
-            };
-            (decided, plans, revert_to)
-        };
-        let reverted = revert_to.is_some_and(|previous| {
-            host.revert_proxies(
-                previous,
-                "none of the new proxies was reachable; back to the previous ones",
-            )
-            .is_ok()
-        });
-        if reverted {
-            self.pool
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner)
-                .probation = None;
-            self.wake_pool();
-            return;
-        }
-        let changed = {
-            let mut pool = self.pool.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
             let shape = |m: &HashMap<String, Applied>, g: &HashMap<LaneGroup, Applied>| {
                 let mut v: Vec<_> = m
                     .iter()
@@ -650,8 +618,43 @@ impl NetworkRuntime {
             let before = shape(&pool.applied, &pool.groups);
             pool.applied = decided.into_iter().collect();
             pool.groups = plans;
-            before != shape(&pool.applied, &pool.groups)
+            (before != shape(&pool.applied, &pool.groups), kept)
         };
+        // A change that left the offline policy deciding where some relay
+        // goes (nothing it may use is reachable) is undone once; one that
+        // works (or a probation that ran out) ends the probation.
+        let offline = settings
+            .lanes
+            .iter()
+            .any(|k| self.routes_for(host, &k.id).iter().any(|r| r.by_policy));
+        let revert_to = {
+            let mut pool = self.pool.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+            match pool.probation.clone() {
+                Some(p) if offline && now < p.until && p.previous != cfg => Some(p.previous),
+                Some(p) if !offline || now >= p.until => {
+                    pool.probation = None;
+                    None
+                }
+                _ => None,
+            }
+        };
+        let reverted = revert_to.is_some_and(|previous| {
+            host.revert_proxies(
+                previous,
+                "none of the new proxies was reachable; back to the previous ones",
+            )
+            .is_ok()
+        });
+        if reverted {
+            // Back to the plan (and probes) of the previous settings until
+            // they are probed and planned again.
+            let mut pool = self.pool.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+            pool.probation = None;
+            (pool.applied, pool.groups, pool.probes) = kept;
+            drop(pool);
+            self.wake_pool();
+            return;
+        }
         // A rule's own proxy going up or down moves relays even when no
         // plan changed.
         let routes = self.route_shape(host);
