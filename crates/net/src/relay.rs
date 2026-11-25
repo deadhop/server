@@ -324,13 +324,15 @@ impl RoutingTransport {
     fn route(&self, url: &Url) -> Option<Option<&ProxyTransport>> {
         self.routes
             .iter()
-            .find(|(relay, _)| same_relay_ci(relay, url.as_str()))
+            .find(|(relay, _)| same_relay(relay, url.as_str()))
             .map(|(_, p)| p.as_ref())
     }
 }
 
-/// Whether two relay addresses name the same relay, ignoring case and a trailing slash.
-fn same_relay_ci(a: &str, b: &str) -> bool {
+/// Whether two relay addresses name the same relay, ignoring case and a
+/// trailing slash (`wss://a`, `WSS://A/`). Routing and `publish_to` both use
+/// it, so a relay that routes also receives what is sent to it by name.
+fn same_relay(a: &str, b: &str) -> bool {
     a.trim_end_matches('/').eq_ignore_ascii_case(b.trim_end_matches('/'))
 }
 
@@ -517,11 +519,6 @@ impl Pool {
             format!("every relay refused the event ({})", refused.join("; "))
         }))
     }
-}
-
-/// Whether two relay addresses name the same relay (`wss://a` and `wss://a/`).
-fn same_relay(a: &str, b: &str) -> bool {
-    a.trim_end_matches('/') == b.trim_end_matches('/')
 }
 
 #[cfg(feature = "contextvm")]
@@ -1054,6 +1051,11 @@ mod tests {
         assert!(only_bad.unwrap_err().to_string().contains("every relay refused"));
         assert!(pool
             .publish_to(&[format!("{good_url}/")], EventBuilder::text_note("c"))
+            .await
+            .is_ok());
+        // The name is matched ignoring case, as routing matches it.
+        assert!(pool
+            .publish_to(&[good_url.to_ascii_uppercase()], EventBuilder::text_note("c2"))
             .await
             .is_ok());
         assert!(pool
