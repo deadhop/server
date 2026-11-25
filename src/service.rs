@@ -568,8 +568,7 @@ impl Service {
             .event
             .as_ref()
             .ok_or_else(|| Error::Pow("request event unavailable".into()))?;
-        self.check_event(event, pubkey, now, admin)?;
-        self.spend_creation_budget(admin, pubkey, now)?;
+        self.accept_request(event, pubkey, now, admin)?;
 
         let mut raw = [0u8; 16];
         // Without OS randomness invoice ids would be guessable; never continue.
@@ -594,6 +593,22 @@ impl Service {
     /// be replayed after a restart either.
     pub(crate) fn check_event(&self, event: &Event, pubkey: &str, now: u64, exempt: bool) -> Result<()> {
         self.pow.check(event, pubkey, now, exempt)?;
+        self.remember_event(event, now)
+    }
+
+    /// Admit a request to create an invoice: check its event, spend a unit of
+    /// the creation budget, and only then use the event up. A request refused
+    /// for its budget keeps its proof of work and can be sent again; an event
+    /// that fails its checks (a replay included) spends no budget.
+    fn accept_request(&self, event: &Event, pubkey: &str, now: u64, admin: bool) -> Result<()> {
+        self.pow.verify(event, pubkey, now, admin)?;
+        self.spend_creation_budget(admin, pubkey, now)?;
+        self.pow.remember(event, now)?;
+        self.remember_event(event, now)
+    }
+
+    /// Record `event` in the database so it is refused after a restart too.
+    fn remember_event(&self, event: &Event, now: u64) -> Result<()> {
         let forget_at = event.created_at.as_secs() + 2 * self.pow.window_secs();
         if !self.db.remember_request(&event.id.to_hex(), forget_at, now)? {
             return Err(Error::Pow("event already used".into()));
@@ -1190,6 +1205,26 @@ pub(crate) mod tests {
         assert_eq!(code(r.svc.spend_creation_budget(false, "someone", T0)), "rate_limited");
         r.svc.spend_creation_budget(true, "operator", T0).unwrap();
         r.svc.spend_creation_budget(false, "someone", T0 + 60).unwrap();
+    }
+
+    #[tokio::test]
+    async fn a_request_refused_for_its_budget_keeps_its_work() {
+        let r = rig(|c| c.rate_global_per_min = 1).await;
+        let keys = Keys::generate();
+        let caller = public(&keys, 4, T0);
+        let event = caller.event.clone().unwrap();
+        let pubkey = keys.public_key().to_hex();
+        // Another request takes the last unit after this one passed the
+        // pre-check: the commit-time check refuses it ...
+        r.svc.spend_creation_budget(false, "someone", T0).unwrap();
+        assert_eq!(code(r.svc.accept_request(&event, &pubkey, T0, false)), "rate_limited");
+        // ... but its event is not used up: once budget returns, it is accepted.
+        r.set_now(T0 + 60);
+        r.svc.create_invoice(&caller, params(5_000)).unwrap();
+        // A replay is refused before it can spend anyone's budget.
+        r.set_now(T0 + 120);
+        assert_eq!(code(r.svc.create_invoice(&caller, params(5_000))), "pow_rejected");
+        assert!(r.svc.create_limiter.would_allow("someone else", T0 + 120));
     }
 
     #[tokio::test]
