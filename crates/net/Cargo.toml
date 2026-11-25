@@ -36,3 +36,8 @@ webpki-roots = "0.26"
 [dev-dependencies]
 nostr-relay-builder = "0.44"
 serde_json = "1"
+
+# rmcp 1.8.0 with the response-task reaping fix backported from rmcp 3.x
+# (#46). Drop when contextvm-sdk moves to rmcp 3.x.
+[patch.crates-io]
+rmcp = { path = "../../vendor/rmcp" }

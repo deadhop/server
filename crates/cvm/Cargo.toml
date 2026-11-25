@@ -21,3 +21,8 @@ tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "io-uti
 
 [dev-dependencies]
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "io-util", "time", "sync", "signal"] }
+
+# rmcp 1.8.0 with the response-task reaping fix backported from rmcp 3.x
+# (#46). Drop when contextvm-sdk moves to rmcp 3.x.
+[patch.crates-io]
+rmcp = { path = "../../vendor/rmcp" }
