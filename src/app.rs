@@ -201,11 +201,7 @@ impl Link {
             let svc = svc.clone();
             Arc::new(move |relay, ok, ms| svc.record_relay_event(relay, "send", ok, Some(ms)))
         };
-        let specs = routes
-            .iter()
-            .map(|(r, p)| Ok((r.clone(), parse_proxy(p)?)))
-            .collect::<Result<Vec<_>>>()?;
-        let pool = Arc::new(Pool::routed(id.keys.clone(), specs).with_sink(sink));
+        let pool = Arc::new(Pool::routed(id.keys.clone(), specs(&routes)?).with_sink(sink));
         // The administration key is never announced, whatever the setting:
         // nothing public may lead to it.
         let announce = cfg.announce && id.def.announce;
@@ -245,11 +241,29 @@ impl Link {
         })
     }
 
+    /// Move the relays whose route changed to their new one; the others keep
+    /// their connections, and the request loop runs on.
+    async fn reroute(&mut self, routes: Routes) -> Result<()> {
+        self.pool.reroute(specs(&routes)?).await?;
+        self.routes = routes;
+        Ok(())
+    }
+
     async fn close(self) {
         self.cancel.cancel();
         let _ = self.task.await;
         self.pool.client().disconnect().await;
     }
+}
+
+/// Each relay and its parsed proxy.
+fn specs(routes: &Routes) -> Result<Vec<(String, Option<crate::relay::ProxySpec>)>> {
+    routes.iter().map(|(r, p)| Ok((r.clone(), parse_proxy(p)?))).collect()
+}
+
+/// Whether two sets of routes name the same relays in the same order.
+fn same_relays(a: &Routes, b: &Routes) -> bool {
+    a.iter().map(|r| &r.0).eq(b.iter().map(|r| &r.0))
 }
 
 /// Whether any relay of `link` is connected within `limit`.
@@ -490,13 +504,15 @@ async fn supervise(
             _ = svc.pool_changed() => {
                 // The pool chose another proxy for some key, or none. Move
                 // only the keys whose connections differ from what they
-                // should be now.
+                // should be now, and of those only the relays whose route
+                // changed: a relay a rule keeps on its proxy stays connected.
                 let mut moved = false;
                 for id in &ids {
                     let at = links.iter().position(|l| l.key.id == id.def.id);
-                    let same = match (wanted(id.def.id, &svc), at) {
+                    let want = wanted(id.def.id, &svc);
+                    let same = match (&want, at) {
                         (None, None) => true,
-                        (Some(routes), Some(i)) => links[i].routes == routes,
+                        (Some(routes), Some(i)) => &links[i].routes == routes,
                         _ => false,
                     };
                     if same {
@@ -505,6 +521,15 @@ async fn supervise(
                     if !moved {
                         tokio::time::sleep(RESTART_GRACE).await;
                         moved = true;
+                    }
+                    // The same relays on other routes: the link stays up. (A
+                    // different set of relays needs a new link, which also
+                    // announces the right relay list.)
+                    if let (Some(i), Some(routes)) = (at, want) {
+                        if same_relays(&links[i].routes, &routes) {
+                            let Some(()) = or_fail(links[i].reroute(routes).await, "could not switch the relay connections", &failed) else { return };
+                            continue;
+                        }
                     }
                     if let Some(i) = at {
                         links.remove(i).close().await;
@@ -825,6 +850,7 @@ mod tests {
     use serde_json::{json, Value};
     use std::collections::HashMap;
     use std::os::unix::fs::PermissionsExt;
+    use std::sync::atomic::{AtomicBool, Ordering};
 
     /// Client signer that mines NIP-13 work into every event it signs, the
     /// same way the dashboard does in the browser.
@@ -1625,6 +1651,121 @@ mod tests {
         assert_eq!(h["proxy_pool"]["reachable"], 1);
         assert_eq!(h["proxy_pool"]["proxies"][0]["reachable"], false);
         assert_eq!(h["proxy_pool"]["active"], h["proxy_pool"]["proxies"][1]["id"]);
+        app.stop().await;
+    }
+
+    /// When each connection opened, and whether it is still open.
+    type Opened = Arc<std::sync::Mutex<Vec<(std::time::Instant, Arc<AtomicBool>)>>>;
+
+    /// A port in front of the relay at `target` that keeps, for every
+    /// connection made through it, when it opened and whether it is open.
+    async fn tracked(target: &str) -> (String, Opened) {
+        let to = nostr_sdk::Url::parse(target).unwrap();
+        let to = (to.host_str().unwrap().to_string(), to.port().unwrap());
+        let l = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("ws://127.0.0.1:{}", l.local_addr().unwrap().port());
+        let seen = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let log = seen.clone();
+        tokio::spawn(async move {
+            loop {
+                let (mut a, _) = l.accept().await.unwrap();
+                let open = Arc::new(AtomicBool::new(true));
+                log.lock().unwrap().push((std::time::Instant::now(), open.clone()));
+                let mut b = tokio::net::TcpStream::connect((to.0.as_str(), to.1)).await.unwrap();
+                tokio::spawn(async move {
+                    let _ = tokio::io::copy_bidirectional(&mut a, &mut b).await;
+                    open.store(false, Ordering::SeqCst);
+                });
+            }
+        });
+        (url, seen)
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_proxy_switch_reconnects_only_the_relays_it_moves() {
+        let mut s = stack().await;
+        let other = MockRelay::run().await.unwrap();
+        let other_url = other.url().await.to_string();
+        // `pinned` goes through Tor by a rule; `pooled` takes the default route.
+        let (pinned, pinned_log) = tracked(&s.relay_url).await;
+        let (pooled, pooled_log) = tracked(&other_url).await;
+        let (p1, first) = crate::relay::tests::socks5_proxy(None).await;
+        let (p2, _second) = crate::relay::tests::socks5_proxy(None).await;
+        let (tor, _tor) = crate::relay::tests::socks5_proxy(None).await;
+        s.env.insert("DEADHOP_RELAYS", format!("{pinned},{pooled}"));
+        s.env.insert("DEADHOP_PROXY", format!("socks5://127.0.0.1:{p1}"));
+        s.env.insert("DEADHOP_PROXIES", format!("socks5://127.0.0.1:{p2}"));
+        s.env.insert("DEADHOP_PROXY_MODE", "failover".into());
+        let app = App::start(load(&s.env).unwrap()).await.unwrap();
+        let admin = connect(&s, &app.admin_pubkey, s.admin.clone()).await;
+        health_until(&admin, |h| h["relays"][0]["connected"] == true).await;
+        call(
+            &admin,
+            "update_settings",
+            json!({ "patch": { "proxies": {
+                "list": [
+                    { "id": "env1", "url": format!("socks5://127.0.0.1:{p1}") },
+                    { "id": "env2", "url": format!("socks5://127.0.0.1:{p2}") },
+                    { "id": "tor", "url": format!("socks5://127.0.0.1:{tor}"), "pool": false }
+                ],
+                "rules": [{ "match": [pinned.clone()], "to": { "proxy": "tor" } }]
+            } } }),
+        )
+        .await
+        .unwrap();
+        health_until(&admin, |h| {
+            let routes = h["proxy_pool"]["routes"].as_array().unwrap();
+            routes.iter().filter(|r| r["proxy"] == "tor").count() == 2
+                && routes.iter().filter(|r| r["proxy"] == "env1").count() == 2
+                && h["relays"].as_array().unwrap().iter().all(|r| r["connected"] == true)
+        })
+        .await;
+        app.svc.pool.lock().unwrap().probation = None;
+        // Each relay holds one connection per key; the proxy probes open
+        // short ones all the time, so only those older than a probe count.
+        let open_since = |log: &Opened, t: std::time::Instant| {
+            log.lock()
+                .unwrap()
+                .iter()
+                .filter(|(at, open)| *at + Duration::from_millis(500) <= t && open.load(Ordering::SeqCst))
+                .count()
+        };
+        tokio::time::sleep(Duration::from_secs(1)).await;
+        let before = std::time::Instant::now();
+        assert_eq!(
+            (open_since(&pinned_log, before), open_since(&pooled_log, before)),
+            (2, 2)
+        );
+
+        // The first proxy dies: the default route moves to the second.
+        first.abort();
+        health_until(&admin, |h| {
+            let routes = h["proxy_pool"]["routes"].as_array().unwrap();
+            routes.iter().filter(|r| r["proxy"] == "env2").count() == 2
+                && h["relays"].as_array().unwrap().iter().all(|r| r["connected"] == true)
+        })
+        .await;
+        tokio::time::sleep(Duration::from_secs(1)).await;
+        // The pinned relay kept both its connections; the pooled one has none
+        // from before the switch.
+        assert_eq!(open_since(&pinned_log, before), 2);
+        assert_eq!(open_since(&pooled_log, before), 0);
+        assert!(open_since(&pooled_log, std::time::Instant::now()) >= 2);
+        // Requests still arrive over the moved relay alone.
+        let transport = NostrClientTransport::new(
+            MiningSigner {
+                keys: Keys::generate(),
+                bits: 8,
+            },
+            NostrClientTransportConfig::default()
+                .with_relay_urls(vec![other_url.clone()])
+                .with_server_pubkey(&app.pubkey)
+                .with_encryption_mode(EncryptionMode::Required),
+        )
+        .await
+        .unwrap();
+        let public: Client = ().serve(transport).await.unwrap();
+        assert_eq!(call(&public, "get_info", json!({})).await.unwrap()["is_admin"], false);
         app.stop().await;
     }
 
