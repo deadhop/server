@@ -740,6 +740,46 @@ async fn a_proxy_change_that_leaves_nothing_reachable_is_undone_once() {
 }
 
 #[tokio::test]
+async fn a_key_sent_to_a_proxy_that_turns_out_down_is_put_back() {
+    // Two proxies, only the first in use; the other was never probed.
+    let r = rig(&[A]);
+    let (net, host) = (&r.net, &r.host);
+    r.set(|t| {
+        t.proxies.list = vec![entry("tor"), entry("spare")];
+        t.proxies.default = proxy("tor");
+    });
+    r.probe("tor", true);
+    r.replan();
+    let working = r.proxies();
+    // The operators' key is sent to the unused one: nothing is known about it.
+    r.set(|t| {
+        t.proxies.default_keys.insert("admin".into(), proxy("spare"));
+    });
+    let before = Topology {
+        settings: NetworkSettings {
+            proxies: working.clone(),
+            ..host.topology().settings
+        },
+        ..host.topology()
+    };
+    assert_eq!(net.stranded(&before, &host.topology()), None, "not known to be down");
+    net.begin_probation(host, working.clone());
+    assert!(net.pool.lock().unwrap().probation.is_some());
+    // Until it is probed it is unknown, not down: nothing is undone yet.
+    r.replan();
+    assert_eq!(r.proxies().default_keys.len(), 1);
+    assert!(net.pool.lock().unwrap().probation.is_some());
+    // Its probe fails: the operators' key had a working route and lost it.
+    r.probe("spare", false);
+    r.replan();
+    assert_eq!(r.proxies(), working, "the previous proxies are back");
+    // A changed policy alone is not something to undo.
+    r.set(|t| t.proxies.offline = OfflinePolicy::Open);
+    net.begin_probation(host, working);
+    assert!(net.pool.lock().unwrap().probation.is_none());
+}
+
+#[tokio::test]
 async fn a_bad_list_is_undone_when_rules_leave_their_relays_to_the_policy() {
     // Every relay is ruled (as settings converted from a rule to the old pool
     // are), so the default route is unused; the rule's proxy failing leaves

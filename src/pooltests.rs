@@ -749,6 +749,31 @@ async fn a_default_route_cannot_be_pointed_at_a_proxy_that_is_down() {
 }
 
 #[tokio::test]
+async fn a_key_pointed_at_a_proxy_that_turns_out_down_is_put_back() {
+    let r = rig(|_| {}).await;
+    let save = |v: serde_json::Value| {
+        let patch = serde_json::from_value(v).unwrap();
+        r.svc
+            .update_settings(&r.admin(), crate::manage::UpdateSettingsParams { patch })
+    };
+    save(serde_json::json!({ "proxies": {
+        "list": [{ "id": "p0", "url": "socks5://h:1" }, { "id": "p1", "url": "socks5://h:2" }],
+        "default": { "proxy": "p0" }
+    } }))
+    .unwrap();
+    r.svc.pool.lock().unwrap().probation = None;
+    probe(&r, "p0", true);
+    r.svc.replan();
+    // p1 carries nothing and was never probed: the change is taken, on probation.
+    save(serde_json::json!({ "proxies": { "default_keys": { "admin": { "proxy": "p1" } } } })).unwrap();
+    assert!(r.svc.pool.lock().unwrap().probation.is_some());
+    probe(&r, "p1", false);
+    r.svc.replan();
+    assert!(r.svc.settings().proxies.default_keys.is_empty(), "put back");
+    assert_eq!(r.svc.connection_for("admin"), Connection::Via("socks5://h:1".into()));
+}
+
+#[tokio::test]
 async fn a_changed_policy_is_not_undone_when_the_same_proxies_fail_later() {
     let r = rig(|_| {}).await;
     let first = serde_json::from_value(serde_json::json!({

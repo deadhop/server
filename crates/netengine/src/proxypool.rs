@@ -629,7 +629,13 @@ impl NetworkRuntime {
             .any(|k| self.routes_for(host, &k.id).iter().any(|r| r.by_policy));
         let revert_to = {
             let mut pool = self.pool.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+            // A proxy the change puts to use that was never probed is not
+            // down yet, only unknown: wait for its probe.
+            let unknown = cfg.list.iter().any(|e| {
+                !pool.probes.contains_key(&e.id) && !crate::routes::relays_through_proxy(&settings, &e.id).is_empty()
+            });
             match pool.probation.clone() {
+                Some(p) if offline && unknown && now < p.until => None,
                 Some(p) if offline && now < p.until && p.previous != cfg => Some(p.previous),
                 Some(p) if !offline || now >= p.until => {
                     pool.probation = None;

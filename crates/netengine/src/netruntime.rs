@@ -683,7 +683,14 @@ impl NetworkRuntime {
     /// of the new ones is reachable: the proxies are the way back in.
     pub fn begin_probation(&self, host: &dyn NetworkHost, previous: ProxySettings) {
         let now = host.now();
-        let list_changed = previous.list != host.topology().proxies.list;
+        let now_set = host.topology().settings.proxies;
+        // What decides where relays go: the proxies, the groups, the default
+        // routes and the rules.
+        let routes_changed = previous.list != now_set.list
+            || previous.groups != now_set.groups
+            || previous.default != now_set.default
+            || previous.default_keys != now_set.default_keys
+            || previous.rules != now_set.rules;
         let was_working = self
             .pool
             .lock()
@@ -691,9 +698,10 @@ impl NetworkRuntime {
             .applied
             .values()
             .all(|a| a.state != crate::proxypool::PoolState::Offline);
-        // Only a different list can be a mistake worth undoing; a changed group, route or
-        // policy is not, and must not be undone when the same proxies fail later.
-        if list_changed && was_working && !previous.transparent && !previous.list.is_empty() {
+        // Only a change of where relays go can be a mistake worth undoing; a
+        // changed policy is not, and must not be undone when the same
+        // proxies fail later.
+        if routes_changed && was_working && !previous.transparent && !previous.list.is_empty() {
             self.pool
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner)
