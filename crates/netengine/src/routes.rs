@@ -255,7 +255,9 @@ pub fn check_rules(settings: &Topology) -> Result<()> {
         if let Fallback::To(d) = &r.fallback {
             check_destination(proxies, d, &format!("the fallback of rule {n}"), "the rule")?;
         }
-        let direct = r.to == Destination::Direct || r.fallback == Fallback::To(Destination::Direct);
+        // (A fallback is only ever taken from a proxy or a group.)
+        let direct =
+            r.to == Destination::Direct || (r.to.via_proxy() && r.fallback == Fallback::To(Destination::Direct));
         // (Behind a transparent proxy nothing goes straight.)
         if direct && !proxies.transparent && r.patterns.iter().any(|p| names_tor_or_i2p(p)) {
             return Err(Error::InvalidParams(format!(
@@ -360,6 +362,9 @@ pub fn resolve(
                 Some(Rule {
                     to: Destination::Block, ..
                 }) => (Via::Off, Reason::Blocked, false),
+                // A default route that blocks blocks, like a rule, even
+                // behind a transparent proxy.
+                None if *proxies.default_for(key) == Destination::Block => (Via::Off, Reason::Blocked, false),
                 _ if proxies.transparent => (Via::Direct, Reason::Transparent, false),
                 None => go(proxies.default_for(key), Reason::Default).unwrap_or_else(|| policy(Reason::Default)),
                 Some(r) => go(&r.to, Reason::Rule).unwrap_or_else(|| match &r.fallback {
@@ -754,6 +759,10 @@ mod tests {
         let t = table(&s, "invoices", NONE_UP, Some(false));
         assert_eq!(t[2], (ONION.into(), None, Via::Direct, Reason::Transparent));
         assert_eq!(t[3], (LAN.into(), Some(0), Via::Off, Reason::Blocked));
+        // A default route that blocks blocks there too.
+        s.proxies.default = Destination::Block;
+        let t = table(&s, "invoices", NONE_UP, Some(false));
+        assert_eq!(t[2], (ONION.into(), None, Via::Off, Reason::Blocked));
         // A rule to a proxy that is no longer listed counts as down.
         let s = settings(vec![rule(&["*.onion"], proxy("gone"))]);
         assert_eq!(
@@ -860,6 +869,10 @@ mod tests {
         assert!(check_rules(&s).is_ok());
         s.proxies.rules.clear();
         assert!(check_rules(&s).unwrap_err().to_string().contains("block every relay"));
+        // A fallback a rule never takes is not checked for being straight.
+        let mut blocked = rule(&["*.onion"], Destination::Block);
+        blocked.fallback = Fallback::To(Destination::Direct);
+        assert!(check(vec![blocked, rule(&[PLAIN], group("exits"))]).is_ok());
         // Behind a transparent proxy nothing is straight, so a Tor rule may say so.
         let mut s = settings(vec![rule(&["*.onion"], Destination::Direct)]);
         s.proxies.transparent = true;
