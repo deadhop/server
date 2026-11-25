@@ -475,6 +475,17 @@ impl Db {
         Ok(())
     }
 
+    /// Set several `meta` keys at once: all or none.
+    pub fn meta_set_all(&self, entries: &[(&str, &str)]) -> Result<()> {
+        let mut conn = self.lock();
+        let tx = conn.transaction()?;
+        for (key, value) in entries {
+            tx.execute(UPSERT_META, params![key, value])?;
+        }
+        tx.commit()?;
+        Ok(())
+    }
+
     /// Tie the database to one wallet account key. Invoice addresses are
     /// numbered per database, so a database reused with another key would hand
     /// out that key's addresses far beyond what a wallet scans by default.

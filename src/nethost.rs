@@ -80,7 +80,7 @@ impl NetworkHost for Service {
 
 impl Service {
     /// The posture the plan implies right now: the offline policy applies as
-    /// soon as any key has no reachable proxy.
+    /// soon as it decides where any relay goes.
     pub fn posture(&self) -> Posture {
         self.net.posture(self)
     }
@@ -115,9 +115,10 @@ impl Service {
         self.net.replan(self);
     }
 
-    /// The label of a key that turning the strategy off would cut off now.
-    pub fn stranded_by_off(&self, next: &Settings) -> Option<String> {
-        self.net.stranded_by_off(&next.topology())
+    /// The label of a key whose default route `next` would leave with
+    /// nothing reachable now (see [`crate::netruntime::NetworkRuntime::stranded`]).
+    pub fn stranded(&self, next: &Settings) -> Option<String> {
+        self.net.stranded(&self.settings().topology(), &next.topology())
     }
 
     /// Where each of one key's relays goes now, and why.
@@ -125,7 +126,7 @@ impl Service {
         self.net.routes_for(self, key)
     }
 
-    /// The pool as the dashboard shows it.
+    /// The proxies and routes as the dashboard shows them.
     pub fn pool_health(&self) -> PoolHealth {
         self.net.pool_health(self)
     }

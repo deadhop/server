@@ -1,19 +1,31 @@
 {
+  "a default route for a key that does not exist": {
+    "code": "invalid_params",
+    "public_message": "invalid parameters: default route: there is no key 'nobody'"
+  },
+  "a group of one proxy": {
+    "code": "invalid_params",
+    "public_message": "invalid parameters: group 'g' needs at least 2 proxies; point at a single proxy directly instead"
+  },
   "a key left without a relay": {
     "code": "invalid_params",
     "public_message": "invalid parameters: no relay is assigned to the administration key, which could then not be reached"
   },
-  "a proxy for a key that does not exist": {
+  "a key's default route blocks its every relay": {
     "code": "invalid_params",
-    "public_message": "invalid parameters: proxy: there is no key 'nobody'"
+    "public_message": "invalid parameters: the rules block every relay of the Administration key; it could not be reached"
   },
-  "a proxy that names a key twice": {
+  "a key's default route is pointed at a proxy that is down": {
     "code": "invalid_params",
-    "public_message": "invalid parameters: proxy: key 'admin' is named twice"
+    "public_message": "invalid parameters: the Public invoices key's default route would have nothing reachable now, which would cut that key off; point it at a proxy or group that is up, or wait until one is back"
   },
   "a relay for a key that does not exist": {
     "code": "invalid_params",
     "public_message": "invalid parameters: relay: there is no key 'nobody'"
+  },
+  "a rule falls back to sending an onion relay straight": {
+    "code": "invalid_params",
+    "public_message": "invalid parameters: rule 1: Tor and I2P relays can only be reached through a proxy, never directly"
   },
   "a rule for a key that does not exist": {
     "code": "invalid_params",
@@ -27,12 +39,8 @@
     "code": "invalid_params",
     "public_message": "invalid parameters: the rules block every relay of the Administration key; it could not be reached"
   },
-  "the default route has no proxy for a key": {
+  "the default route points at a group that does not exist": {
     "code": "invalid_params",
-    "public_message": "invalid parameters: no proxy in the default route is assigned to the administration key, which would connect without one"
-  },
-  "the strategy is turned off while a key's first proxy is down": {
-    "code": "invalid_params",
-    "public_message": "invalid parameters: the first proxy in the Public invoices key's default route is down, so turning the strategy off would cut that key off now; move a reachable proxy first or wait until it is back"
+    "public_message": "invalid parameters: the default route points at a group that does not exist; change it first"
   }
 }

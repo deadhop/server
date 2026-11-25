@@ -201,11 +201,7 @@ impl Link {
             let svc = svc.clone();
             Arc::new(move |relay, ok, ms| svc.record_relay_event(relay, "send", ok, Some(ms)))
         };
-        let specs = routes
-            .iter()
-            .map(|(r, p)| Ok((r.clone(), parse_proxy(p)?)))
-            .collect::<Result<Vec<_>>>()?;
-        let pool = Arc::new(Pool::routed(id.keys.clone(), specs).with_sink(sink));
+        let pool = Arc::new(Pool::routed(id.keys.clone(), specs(&routes)?).with_sink(sink));
         // The administration key is never announced, whatever the setting:
         // nothing public may lead to it.
         let announce = cfg.announce && id.def.announce;
@@ -245,11 +241,29 @@ impl Link {
         })
     }
 
+    /// Move the relays whose route changed to their new one; the others keep
+    /// their connections, and the request loop runs on.
+    async fn reroute(&mut self, routes: Routes) -> Result<()> {
+        self.pool.reroute(specs(&routes)?).await?;
+        self.routes = routes;
+        Ok(())
+    }
+
     async fn close(self) {
         self.cancel.cancel();
         let _ = self.task.await;
         self.pool.client().disconnect().await;
     }
+}
+
+/// Each relay and its parsed proxy.
+fn specs(routes: &Routes) -> Result<Vec<(String, Option<crate::relay::ProxySpec>)>> {
+    routes.iter().map(|(r, p)| Ok((r.clone(), parse_proxy(p)?))).collect()
+}
+
+/// Whether two sets of routes name the same relays in the same order.
+fn same_relays(a: &Routes, b: &Routes) -> bool {
+    a.iter().map(|r| &r.0).eq(b.iter().map(|r| &r.0))
 }
 
 /// Whether any relay of `link` is connected within `limit`.
@@ -490,13 +504,15 @@ async fn supervise(
             _ = svc.pool_changed() => {
                 // The pool chose another proxy for some key, or none. Move
                 // only the keys whose connections differ from what they
-                // should be now.
+                // should be now, and of those only the relays whose route
+                // changed: a relay a rule keeps on its proxy stays connected.
                 let mut moved = false;
                 for id in &ids {
                     let at = links.iter().position(|l| l.key.id == id.def.id);
-                    let same = match (wanted(id.def.id, &svc), at) {
+                    let want = wanted(id.def.id, &svc);
+                    let same = match (&want, at) {
                         (None, None) => true,
-                        (Some(routes), Some(i)) => links[i].routes == routes,
+                        (Some(routes), Some(i)) => &links[i].routes == routes,
                         _ => false,
                     };
                     if same {
@@ -505,6 +521,15 @@ async fn supervise(
                     if !moved {
                         tokio::time::sleep(RESTART_GRACE).await;
                         moved = true;
+                    }
+                    // The same relays on other routes: the link stays up. (A
+                    // different set of relays needs a new link, which also
+                    // announces the right relay list.)
+                    if let (Some(i), Some(routes)) = (at, want) {
+                        if same_relays(&links[i].routes, &routes) {
+                            let Some(()) = or_fail(links[i].reroute(routes).await, "could not switch the relay connections", &failed) else { return };
+                            continue;
+                        }
                     }
                     if let Some(i) = at {
                         links.remove(i).close().await;
@@ -804,27 +829,46 @@ mod tests {
     use nostr_sdk::prelude::{BoxedFuture, NostrSigner, PublicKey, SignerBackend, SignerError, Tag, UnsignedEvent};
     use nostr_sdk::{Keys, ToBech32};
 
-    /// Set (or clear) what every key's plan decided.
-    trait SetApplied {
-        fn set_applied(&mut self, a: Option<crate::proxypool::Applied>);
-    }
-
-    impl SetApplied for crate::proxypool::PoolRuntime {
-        fn set_applied(&mut self, a: Option<crate::proxypool::Applied>) {
-            self.applied = match a {
-                Some(a) => crate::keys::KEYS
-                    .iter()
-                    .map(|k| (k.id.to_string(), a.clone()))
-                    .collect(),
-                None => HashMap::new(),
-            };
-        }
+    /// Point the default route at proxy "x" (none: straight) and set (or
+    /// clear) what every key's plan decided for it.
+    fn set_applied(svc: &Service, a: Option<crate::proxypool::Applied>) {
+        let mut st = svc.settings().clone();
+        st.proxies.list = a
+            .iter()
+            .map(|_| crate::settings::ProxyEntry {
+                id: "x".into(),
+                name: String::new(),
+                url: "socks5://127.0.0.1:9".into(),
+                i2p: false,
+            })
+            .collect();
+        st.proxies.default = match &a {
+            Some(_) => crate::settings::Destination::Proxy("x".into()),
+            None => crate::settings::Destination::Direct,
+        };
+        svc.apply_settings(st);
+        // Stored too, so a revert of the relays keeps it.
+        let stored = a.as_ref().map(|_| {
+            json!({ "proxies": { "list": [{ "id": "x", "url": "socks5://127.0.0.1:9" }], "default": { "proxy": "x" } } })
+                .to_string()
+        });
+        svc.db
+            .meta_set(crate::service::META_SETTINGS, stored.as_deref())
+            .unwrap();
+        svc.pool.lock().unwrap().applied = match a {
+            Some(a) => crate::keys::KEYS
+                .iter()
+                .map(|k| (k.id.to_string(), a.clone()))
+                .collect(),
+            None => HashMap::new(),
+        };
     }
     use rmcp::model::{CallToolRequestParams, CallToolResult};
     use rmcp::service::{RoleClient, RunningService, ServiceError};
     use serde_json::{json, Value};
     use std::collections::HashMap;
     use std::os::unix::fs::PermissionsExt;
+    use std::sync::atomic::{AtomicBool, Ordering};
 
     /// Client signer that mines NIP-13 work into every event it signs, the
     /// same way the dashboard does in the browser.
@@ -1572,11 +1616,20 @@ mod tests {
         let shown = v["settings"]["proxies"]["list"][0]["url"].as_str().unwrap();
         assert!(!shown.contains("pw@"), "{shown}");
 
+        // A client from before proxy groups is told what replaced what it sends.
+        let old = call(
+            &admin,
+            "update_settings",
+            json!({ "patch": { "proxies": { "mode": "failover" } } }),
+        )
+        .await
+        .unwrap_err();
+        assert!(old.1.contains("from before proxy groups"), "{old:?}");
         // A proxy that is not there is undone, and the one that worked stays.
         call(
             &admin,
             "update_settings",
-            json!({ "patch": { "proxies": { "list": [{ "url": "socks5://127.0.0.1:9" }] } } }),
+            json!({ "patch": { "proxies": { "list": [{ "id": "b", "url": "socks5://127.0.0.1:9" }], "default": { "proxy": "b" } } } }),
         )
         .await
         .unwrap();
@@ -1628,6 +1681,120 @@ mod tests {
         app.stop().await;
     }
 
+    /// When each connection opened, and whether it is still open.
+    type Opened = Arc<std::sync::Mutex<Vec<(std::time::Instant, Arc<AtomicBool>)>>>;
+
+    /// A port in front of the relay at `target` that keeps, for every
+    /// connection made through it, when it opened and whether it is open.
+    async fn tracked(target: &str) -> (String, Opened) {
+        let to = nostr_sdk::Url::parse(target).unwrap();
+        let to = (to.host_str().unwrap().to_string(), to.port().unwrap());
+        let l = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("ws://127.0.0.1:{}", l.local_addr().unwrap().port());
+        let seen = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let log = seen.clone();
+        tokio::spawn(async move {
+            loop {
+                let (mut a, _) = l.accept().await.unwrap();
+                let open = Arc::new(AtomicBool::new(true));
+                log.lock().unwrap().push((std::time::Instant::now(), open.clone()));
+                let mut b = tokio::net::TcpStream::connect((to.0.as_str(), to.1)).await.unwrap();
+                tokio::spawn(async move {
+                    let _ = tokio::io::copy_bidirectional(&mut a, &mut b).await;
+                    open.store(false, Ordering::SeqCst);
+                });
+            }
+        });
+        (url, seen)
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_proxy_switch_reconnects_only_the_relays_it_moves() {
+        let mut s = stack().await;
+        let other = MockRelay::run().await.unwrap();
+        let other_url = other.url().await.to_string();
+        // `pinned` goes through Tor by a rule; `pooled` takes the default route.
+        let (pinned, pinned_log) = tracked(&s.relay_url).await;
+        let (pooled, pooled_log) = tracked(&other_url).await;
+        let (p1, first) = crate::relay::tests::socks5_proxy(None).await;
+        let (p2, _second) = crate::relay::tests::socks5_proxy(None).await;
+        let (tor, _tor) = crate::relay::tests::socks5_proxy(None).await;
+        s.env.insert("DEADHOP_RELAYS", format!("{pinned},{pooled}"));
+        s.env.insert("DEADHOP_PROXY", format!("socks5://127.0.0.1:{p1}"));
+        s.env.insert("DEADHOP_PROXIES", format!("socks5://127.0.0.1:{p2}"));
+        s.env.insert("DEADHOP_PROXY_MODE", "failover".into());
+        let app = App::start(load(&s.env).unwrap()).await.unwrap();
+        let admin = connect(&s, &app.admin_pubkey, s.admin.clone()).await;
+        health_until(&admin, |h| h["relays"][0]["connected"] == true).await;
+        call(
+            &admin,
+            "update_settings",
+            json!({ "patch": { "proxies": {
+                "list": [
+                    { "id": "env1", "url": format!("socks5://127.0.0.1:{p1}") },
+                    { "id": "env2", "url": format!("socks5://127.0.0.1:{p2}") },
+                    { "id": "tor", "url": format!("socks5://127.0.0.1:{tor}") }
+                ],
+                "rules": [{ "match": [pinned.clone()], "to": { "proxy": "tor" } }]
+            } } }),
+        )
+        .await
+        .unwrap();
+        health_until(&admin, |h| {
+            let routes = h["proxy_pool"]["routes"].as_array().unwrap();
+            routes.iter().filter(|r| r["proxy"] == "tor").count() == 2
+                && routes.iter().filter(|r| r["proxy"] == "env1").count() == 2
+                && h["relays"].as_array().unwrap().iter().all(|r| r["connected"] == true)
+        })
+        .await;
+        app.svc.pool.lock().unwrap().probation = None;
+        // Each relay holds one connection per key; the proxy probes open
+        // short ones all the time. Take the ones open now...
+        let open = |log: &Opened| -> Vec<Arc<AtomicBool>> {
+            log.lock()
+                .unwrap()
+                .iter()
+                .filter(|(_, open)| open.load(Ordering::SeqCst))
+                .map(|(_, open)| open.clone())
+                .collect()
+        };
+        let still = |conns: &[Arc<AtomicBool>]| conns.iter().filter(|c| c.load(Ordering::SeqCst)).count();
+        tokio::time::sleep(Duration::from_secs(1)).await;
+        let (pinned_before, pooled_before) = (open(&pinned_log), open(&pooled_log));
+        assert!(pinned_before.len() >= 2 && pooled_before.len() >= 2);
+
+        // The first proxy dies: the default route moves to the second.
+        first.abort();
+        health_until(&admin, |h| {
+            let routes = h["proxy_pool"]["routes"].as_array().unwrap();
+            routes.iter().filter(|r| r["proxy"] == "env2").count() == 2
+                && h["relays"].as_array().unwrap().iter().all(|r| r["connected"] == true)
+        })
+        .await;
+        tokio::time::sleep(Duration::from_secs(1)).await;
+        // ...the pinned relay kept both of its key connections (probes from
+        // then have closed); the pooled one kept none, and has new ones.
+        assert_eq!(still(&pinned_before), 2);
+        assert_eq!(still(&pooled_before), 0);
+        assert!(open(&pooled_log).len() >= 2);
+        // Requests still arrive over the moved relay alone.
+        let transport = NostrClientTransport::new(
+            MiningSigner {
+                keys: Keys::generate(),
+                bits: 8,
+            },
+            NostrClientTransportConfig::default()
+                .with_relay_urls(vec![other_url.clone()])
+                .with_server_pubkey(&app.pubkey)
+                .with_encryption_mode(EncryptionMode::Required),
+        )
+        .await
+        .unwrap();
+        let public: Client = ().serve(transport).await.unwrap();
+        assert_eq!(call(&public, "get_info", json!({})).await.unwrap()["is_admin"], false);
+        app.stop().await;
+    }
+
     #[tokio::test(flavor = "multi_thread")]
     async fn a_key_that_loses_its_proxy_does_not_take_the_other_key_down() {
         let mut s = stack().await;
@@ -1642,10 +1809,14 @@ mod tests {
         call(
             &admin,
             "update_settings",
-            json!({ "patch": { "proxies": { "list": [
-                { "id": "env1", "url": format!("socks5://127.0.0.1:{p1}"), "keys": ["invoices"] },
-                { "id": "env2", "url": format!("socks5://127.0.0.1:{p2}"), "keys": ["admin"] }
-            ] } } }),
+            json!({ "patch": { "proxies": {
+                "list": [
+                    { "id": "env1", "url": format!("socks5://127.0.0.1:{p1}") },
+                    { "id": "env2", "url": format!("socks5://127.0.0.1:{p2}") }
+                ],
+                "default": { "proxy": "env1" },
+                "default_keys": { "admin": { "proxy": "env2" } }
+            } } }),
         )
         .await
         .unwrap();
@@ -1654,7 +1825,7 @@ mod tests {
             lanes[0]["active"] == "env1" && lanes[1]["active"] == "env2" && h["relays"][0]["connected"] == true
         })
         .await;
-        assert_eq!(h["proxy_pool"]["proxies"][0]["keys"], json!(["invoices"]));
+        assert_eq!(h["proxy_pool"]["lanes"][1]["default"], json!({ "proxy": "env2" }));
         let public = connect(
             &s,
             &app.pubkey,
@@ -1952,28 +2123,19 @@ mod tests {
         // Not connected at all (kill switch): a different relay list has nothing to be checked against.
         {
             let mut st = app.svc.settings().clone();
-            st.proxies.list = vec![crate::settings::ProxyEntry {
-                id: "a".into(),
-                name: String::new(),
-                url: "socks5://127.0.0.1:9".into(),
-                keys: Vec::new(),
-                pool: true,
-                i2p: false,
-            }];
             st.relays = other.clone();
             app.svc.apply_settings(st);
         }
-        app.svc
-            .pool
-            .lock()
-            .unwrap()
-            .set_applied(Some(crate::proxypool::Applied {
+        set_applied(
+            &app.svc,
+            Some(crate::proxypool::Applied {
                 active: None,
                 active_url: None,
                 state: crate::proxypool::PoolState::Offline,
                 next_switch_at: None,
                 reachable: 0,
-            }));
+            }),
+        );
         assert!(relink(&ids, &cfg, &app.svc, (vec![s.relay_url.clone()], none.clone()))
             .await
             .unwrap()
@@ -1981,11 +2143,10 @@ mod tests {
         // A list that cannot even start is reverted to the previous one.
         {
             let mut st = app.svc.settings().clone();
-            st.proxies.list.clear();
             st.relays = vec!["unusable".into()];
             app.svc.apply_settings(st);
         }
-        app.svc.pool.lock().unwrap().set_applied(None);
+        set_applied(&app.svc, None);
         let mut links = relink(&ids, &cfg, &app.svc, (vec![s.relay_url.clone()], none.clone()))
             .await
             .unwrap();
@@ -1999,17 +2160,16 @@ mod tests {
         let mut st = app.svc.settings().clone();
         st.relays = other;
         app.svc.apply_settings(st);
-        app.svc
-            .pool
-            .lock()
-            .unwrap()
-            .set_applied(Some(crate::proxypool::Applied {
+        set_applied(
+            &app.svc,
+            Some(crate::proxypool::Applied {
                 active: Some("x".into()),
                 active_url: Some("unusable".into()),
                 state: crate::proxypool::PoolState::Active,
                 next_switch_at: None,
                 reachable: 1,
-            }));
+            }),
+        );
         assert!(relink(&ids, &cfg, &app.svc, (vec![s.relay_url.clone()], none))
             .await
             .is_err());
@@ -2035,17 +2195,16 @@ mod tests {
         let s = stack().await;
         let app = App::start(load(&s.env).unwrap()).await.unwrap();
         app.proxy_probe.abort();
-        app.svc
-            .pool
-            .lock()
-            .unwrap()
-            .set_applied(Some(crate::proxypool::Applied {
+        set_applied(
+            &app.svc,
+            Some(crate::proxypool::Applied {
                 active: Some("x".into()),
                 active_url: Some("unusable".into()),
                 state: crate::proxypool::PoolState::Active,
                 next_switch_at: None,
                 reachable: 1,
-            }));
+            }),
+        );
         app.svc.pool_switch.notify_one();
         let e = app
             .until(tokio::time::sleep(Duration::from_secs(20)))
@@ -2063,17 +2222,16 @@ mod tests {
         // database refuses the revert). The process must exit for its
         // supervisor rather than stay up unreachable.
         app.proxy_probe.abort();
-        app.svc
-            .pool
-            .lock()
-            .unwrap()
-            .set_applied(Some(crate::proxypool::Applied {
+        set_applied(
+            &app.svc,
+            Some(crate::proxypool::Applied {
                 active: Some("x".into()),
                 active_url: Some("unusable".into()),
                 state: crate::proxypool::PoolState::Active,
                 next_switch_at: None,
                 reachable: 1,
-            }));
+            }),
+        );
         app.svc.db.execute_raw("DROP TABLE meta");
         app.svc.schedule_restart();
         let e = app

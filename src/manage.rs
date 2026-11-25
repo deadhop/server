@@ -25,7 +25,7 @@ use crate::relayhealth::RelayHealth;
 use crate::service::{
     is_plain_text, Caller, RelayState, Service, DAY_SECS, META_LAST_BACKUP, META_PAUSED, META_SETTINGS,
 };
-use crate::settings::{check_relays, ProxyPatch, ProxySettings, Settings, SettingsPatch, SweepMode};
+use crate::settings::{check_relays, Destination, ProxyPatch, ProxySettings, Settings, SettingsPatch, SweepMode};
 
 /// Directory (inside the data directory) holding database backups.
 pub const BACKUP_DIR: &str = "backups";
@@ -695,11 +695,18 @@ impl Service {
         })
     }
 
+    /// The stored changes. Stored ones that cannot be read are an error, so
+    /// a change made on top of them never drops them silently (a reset
+    /// clears them).
     pub(crate) fn stored_patch(&self) -> Result<SettingsPatch> {
-        Ok(match self.db.meta_get(META_SETTINGS)? {
-            Some(json) => serde_json::from_str(&json).unwrap_or_default(),
-            None => SettingsPatch::default(),
-        })
+        match self.db.meta_get(META_SETTINGS)? {
+            Some(json) => serde_json::from_str(&json).map_err(|e| {
+                Error::InvalidParams(format!(
+                    "the saved settings could not be read ({e}); reset them before changing them"
+                ))
+            }),
+            None => Ok(SettingsPatch::default()),
+        }
     }
 
     fn operators_view(&self) -> Result<Vec<Operator>> {
@@ -737,7 +744,8 @@ impl Service {
         Ok(SettingsView {
             settings: hide(self.settings().clone()),
             defaults: hide(self.cfg.settings()),
-            overridden: self.stored_patch()?.names(),
+            // (Saved settings that cannot be read were not applied: nothing is overridden.)
+            overridden: self.stored_patch().unwrap_or_default().names(),
             fixed: FixedSettings {
                 network: self.cfg.network.to_string(),
                 electrum: self.cfg.electrum.clone(),
@@ -808,23 +816,24 @@ impl Service {
     pub fn update_settings(&self, caller: &Caller, p: UpdateSettingsParams) -> Result<SettingsView> {
         let actor = self.admit_change(caller)?;
         let mut patch = p.patch.clone();
-        // The old single-address form becomes a list of one (or none).
-        if let Some(old) = patch.proxy.take() {
-            let list = if old.trim().is_empty() {
-                Vec::new()
-            } else {
-                vec![crate::settings::ProxyEntryInput {
-                    id: None,
-                    name: None,
-                    url: old.trim().to_string(),
-                    keys: None,
-                    pool: None,
-                    i2p: None,
-                }]
-            };
-            patch.proxies.get_or_insert_with(ProxyPatch::default).list = Some(list);
+        // The old single-address form becomes the whole proxy setup: a list
+        // of one, the default route through it (or none, straight).
+        let single = patch.proxy.take().map(|old| old.trim().to_string());
+        if let Some(url) = &single {
+            let px = patch.proxies.get_or_insert_with(ProxyPatch::default);
+            px.list = Some(
+                (!url.is_empty())
+                    .then(|| crate::settings::ProxyEntryInput {
+                        url: url.clone(),
+                        ..Default::default()
+                    })
+                    .into_iter()
+                    .collect(),
+            );
+            px.groups = Some(Vec::new());
+            px.default_keys = Some(Default::default());
         }
-        // Every proxy setting (the list, the mode, what happens when none
+        // Every proxy setting (the list, groups, routes, what happens when none
         // works, and the transparent claim) decides where relay traffic goes
         // and who can see this machine, so one lock covers them all.
         if self.cfg.proxy_locked && patch.proxies.is_some() {
@@ -835,6 +844,23 @@ impl Service {
         let before = self.settings().proxies.clone();
         if let Some(px) = &mut patch.proxies {
             px.resolve(&before.list)?;
+            if single.is_some() {
+                let first = px.list.iter().flatten().next().and_then(|e| e.id.clone());
+                px.default = Some(first.map_or(Destination::Direct, Destination::Proxy));
+            }
+            // The first proxies of a setup that had none (and went direct)
+            // carry the default route unless the patch says otherwise, as
+            // new proxies used to join the pool: the first that is not an
+            // I2P router's.
+            if before.list.is_empty() && before.default == Destination::Direct && px.default.is_none() {
+                px.default = px
+                    .list
+                    .iter()
+                    .flatten()
+                    .find(|e| e.i2p != Some(true))
+                    .and_then(|e| e.id.clone())
+                    .map(Destination::Proxy);
+            }
         }
         let mut stored = self.stored_patch()?;
         stored.merge(&patch);
@@ -867,12 +893,12 @@ impl Service {
                 "the administration key must keep at least one relay from DEADHOP_RELAYS, the way back in if the others fail".into(),
             ));
         }
-        // Turning the strategy off while a key's first proxy is down would cut
-        // that key off at once, perhaps the operator's own way in.
-        if next.proxies.mode == crate::settings::ProxyMode::Off && before.mode != crate::settings::ProxyMode::Off {
-            if let Some(key) = self.stranded_by_off(&next) {
+        // Pointing a key's default route at a proxy or group that is down
+        // would cut that key off at once, perhaps the operator's own way in.
+        if next.proxies != before {
+            if let Some(key) = self.stranded(&next) {
                 return Err(Error::InvalidParams(format!(
-                    "the first proxy in the {key} key's default route is down, so turning the strategy off would cut that key off now; move a reachable proxy first or wait until it is back"
+                    "the {key} key's default route would have nothing reachable now, which would cut that key off; point it at a proxy or group that is up, or wait until one is back"
                 )));
             }
         }
@@ -933,18 +959,18 @@ impl Service {
 
     /// Put the proxy settings back as they were (the supervisor's own act).
     pub(crate) fn revert_proxies(&self, previous: ProxySettings, why: &str) -> Result<()> {
-        let mut stored = self.stored_patch()?;
-        stored.proxy = None;
+        // (Saved settings that cannot be read were not applied; these replace them.)
+        let mut stored = self.stored_patch().unwrap_or_default();
         stored.proxies = (previous != self.cfg.proxies).then(|| ProxyPatch {
             list: ProxyPatch::with_list(&previous.list).list,
-            mode: Some(previous.mode),
-            rotate_secs: Some(previous.rotate_secs),
-            chaos_min_secs: Some(previous.chaos_min_secs),
-            chaos_max_secs: Some(previous.chaos_max_secs),
+            groups: Some(previous.groups.clone()),
+            default: Some(previous.default.clone()),
+            default_keys: Some(previous.default_keys.clone()),
             offline: Some(previous.offline),
             transparent: Some(previous.transparent),
             rules: Some(previous.rules.clone()),
             i2p_registries: Some(previous.i2p_registries.clone()),
+            ..ProxyPatch::default()
         });
         let next = stored.apply(&self.cfg.settings());
         let json = serde_json::to_string(&stored).expect("settings always serialize");
@@ -961,7 +987,8 @@ impl Service {
         relay_keys: std::collections::BTreeMap<String, Vec<String>>,
         why: &str,
     ) -> Result<()> {
-        let mut stored = self.stored_patch()?;
+        // (Saved settings that cannot be read were not applied; these replace them.)
+        let mut stored = self.stored_patch().unwrap_or_default();
         stored.relays = (relays != self.cfg.relays).then_some(relays);
         stored.relay_keys = (!relay_keys.is_empty()).then_some(relay_keys);
         let next = stored.apply(&self.cfg.settings());
@@ -2252,7 +2279,9 @@ pub(crate) mod tests {
             serde_json::json!({ "proxies": { "list": [] } }),
             serde_json::json!({ "proxies": { "transparent": true } }),
             serde_json::json!({ "proxies": { "offline": "open" } }),
-            serde_json::json!({ "proxies": { "mode": "chaos" } }),
+            serde_json::json!({ "proxies": { "groups": [] } }),
+            serde_json::json!({ "proxies": { "default": "direct" } }),
+            serde_json::json!({ "proxies": { "default_keys": {} } }),
         ] {
             let out = locked.svc.update_settings(&locked.admin(), patch(p.clone()));
             assert!(msg(out).contains("locked on the host"), "{p}");
@@ -2548,22 +2577,46 @@ pub(crate) mod tests {
     }
 
     #[tokio::test]
-    async fn an_i2p_router_can_stay_out_of_the_default_route() {
+    async fn an_i2p_router_is_only_used_by_the_rules_that_name_it() {
         let r = rig(|_| {}).await;
-        let only = serde_json::json!({ "list": [{ "id": "i2p", "url": "http://127.0.0.1:4444", "i2p": true, "pool": false }] });
-        // Alone and out of the pool, the relays would have no default route.
-        let out = r
-            .svc
-            .update_settings(&r.admin(), patch(serde_json::json!({ "proxies": only })));
-        assert!(msg(out).contains("no proxy in the default route"));
-        // With a rule that sends every relay straight, it is accepted.
-        let mut with_rule = only.clone();
-        with_rule["rules"] = serde_json::json!([{ "match": ["*"], "to": "direct" }]);
+        let only = serde_json::json!({
+            "list": [{ "id": "i2p", "url": "http://127.0.0.1:4444", "i2p": true }],
+            "rules": [{ "match": ["*.i2p"], "to": { "proxy": "i2p" } }]
+        });
         let v = r
             .svc
-            .update_settings(&r.admin(), patch(serde_json::json!({ "proxies": with_rule })))
+            .update_settings(&r.admin(), patch(serde_json::json!({ "proxies": only })))
             .unwrap();
-        assert!(v.settings.proxies.list[0].i2p && !v.settings.proxies.list[0].pool);
+        assert!(v.settings.proxies.list[0].i2p);
+        assert_eq!(v.settings.proxies.default, Destination::Direct);
+    }
+
+    #[tokio::test]
+    async fn the_first_proxies_carry_the_default_route_unless_told_otherwise() {
+        let added = |default: Option<serde_json::Value>| async move {
+            let r = rig(|_| {}).await;
+            let mut px = serde_json::json!({ "list": [
+                { "id": "i2p", "url": "http://127.0.0.1:4444", "i2p": true },
+                { "url": "socks5://127.0.0.1:9050" }
+            ] });
+            if let Some(d) = default {
+                px["default"] = d;
+            }
+            let v = r
+                .svc
+                .update_settings(&r.admin(), patch(serde_json::json!({ "proxies": px })))
+                .unwrap();
+            (
+                v.settings.proxies.default.clone(),
+                v.settings.proxies.list[1].id.clone(),
+            )
+        };
+        // From none to some, no default given: the first that is not an I2P router.
+        let (default, id) = added(None).await;
+        assert_eq!(default, Destination::Proxy(id));
+        // Said otherwise: as said.
+        let (default, _) = added(Some(serde_json::json!("direct"))).await;
+        assert_eq!(default, Destination::Direct);
     }
 
     #[tokio::test]
@@ -2618,7 +2671,10 @@ pub(crate) mod tests {
         r.svc
             .update_settings(
                 &r.admin(),
-                patch(serde_json::json!({ "proxies": { "list": [{ "url": "socks5://127.0.0.1:9050" }] } })),
+                patch(serde_json::json!({ "proxies": {
+                    "list": [{ "id": "p", "url": "socks5://127.0.0.1:9050" }],
+                    "default": { "proxy": "p" }
+                } })),
             )
             .unwrap();
         let id = r.svc.settings().proxies.list[0].id.clone();
@@ -2813,6 +2869,13 @@ pub(crate) mod tests {
         // The second relay is for the public key only, and that key is cut off (kill switch).
         let mut s = r.svc.settings().clone();
         s.relay_keys = [("ws://127.0.0.1:9".to_string(), vec!["invoices".to_string()])].into();
+        s.proxies.list = vec![crate::settings::ProxyEntry {
+            id: "x".into(),
+            name: String::new(),
+            url: "socks5://127.0.0.1:9".into(),
+            i2p: false,
+        }];
+        s.proxies.default = crate::settings::Destination::Proxy("x".into());
         r.svc.apply_settings(s);
         {
             let mut pool = r.svc.pool.lock().unwrap();
@@ -2857,20 +2920,21 @@ pub(crate) mod tests {
             "proxies": {
                 "list": [
                     { "id": "tor", "name": "Tor", "url": "socks5://127.0.0.1:9050" },
-                    { "id": "vpn", "name": "VPN", "url": "socks5://user:secret@10.8.0.1:1080", "pool": false },
-                    { "id": "i2p", "name": "I2P router", "url": "http://127.0.0.1:4444", "pool": false, "i2p": true }
+                    { "id": "vpn", "name": "VPN", "url": "socks5://user:secret@10.8.0.1:1080" },
+                    { "id": "i2p", "name": "I2P router", "url": "http://127.0.0.1:4444", "i2p": true }
                 ],
-                "mode": "round_robin",
-                "rotate_secs": 1800,
-                "chaos_min_secs": 120,
-                "chaos_max_secs": 600,
+                "groups": [{
+                    "id": "exits", "name": "Exits", "proxies": ["tor", "vpn"], "strategy": "round_robin",
+                    "rotate_secs": 1800, "chaos_min_secs": 120, "chaos_max_secs": 600
+                }],
+                "default": { "proxy": "tor" },
                 "offline": "kill_switch",
                 "rules": [
                     { "name": "onions", "match": ["*.onion"], "to": { "proxy": "tor" }, "fallback": "offline" },
                     { "name": "i2p", "match": ["*.i2p"], "to": { "proxy": "i2p" } },
                     { "match": ["wss://relay-b.example"], "to": "direct" },
                     { "name": "never", "match": ["relay-c.example:7777"], "to": "block" },
-                    { "match": ["relay-a.example"], "to": "pool" }
+                    { "match": ["relay-a.example"], "to": { "group": "exits" }, "fallback": "policy" }
                 ],
                 "i2p_registries": ["http://notbob.i2p/cgi-bin/jump.cgi?q={name}", "http://reg.i2p/?a={name}"]
             }
@@ -2890,7 +2954,7 @@ pub(crate) mod tests {
         let raw = r.svc.db.meta_get(META_SETTINGS).unwrap().unwrap();
         assert_eq!(
             raw,
-            include_str!("../tests/fixtures/stored_settings_patch.json").trim_end()
+            include_str!("../tests/fixtures/stored_settings_groups.json").trim_end()
         );
         crate::snapshot::check("stored_settings_patch", &serde_json::from_str(&raw).unwrap());
         assert_eq!(serde_json::from_str::<SettingsPatch>(&raw).unwrap(), stored);
@@ -2900,11 +2964,146 @@ pub(crate) mod tests {
     fn a_stored_patch_written_by_earlier_code_reads_back_the_same() {
         // The exact text the service stored when it was last changed through
         // `full_patch`; a later version must read it and write it back unchanged.
-        let blob = include_str!("../tests/fixtures/stored_settings_patch.json").trim_end();
+        let blob = include_str!("../tests/fixtures/stored_settings_groups.json").trim_end();
         let read: SettingsPatch = serde_json::from_str(blob).unwrap();
         assert_eq!(serde_json::to_string(&read).unwrap(), blob);
         assert_eq!(read.relays.as_ref().unwrap().len(), 4);
         assert_eq!(read.proxies.as_ref().unwrap().rules.as_ref().unwrap().len(), 5);
+    }
+
+    #[tokio::test]
+    async fn settings_stored_before_groups_are_converted_once_keeping_every_override() {
+        use crate::service::{META_SETTINGS_PRE_GROUPS, META_SETTINGS_SHAPE};
+        use crate::settings::Destination;
+        // What the service stored before proxy groups, through the old `full_patch`.
+        let old = include_str!("../tests/fixtures/stored_settings_patch.json").trim_end();
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("db.sqlite");
+        let keys = Keys::generate();
+        let mut cfg = crate::config::tests::load(&crate::config::tests::base()).unwrap();
+        cfg.admins = [keys.public_key().to_hex()].into();
+        cfg.data_dir = dir.path().to_path_buf();
+        Db::open(&path).unwrap().meta_set(META_SETTINGS, Some(old)).unwrap();
+        let (svc, _f) = on_disk(&cfg, &path, T0).await;
+        assert!(svc.settings_problem.lock().unwrap().is_none());
+        let s = svc.settings().clone();
+        // Everything else as it was.
+        assert_eq!(s.name, "snapshot service");
+        assert_eq!(s.relays.len(), 4);
+        assert_eq!(s.relay_names.len(), 2);
+        // The proxies: the same list, the pool of one became the default route,
+        // and the rule to the pool goes there and leaves the rest to the policy.
+        let p = &s.proxies;
+        assert_eq!(
+            p.list
+                .iter()
+                .map(|e| (e.id.as_str(), e.name.as_str(), e.url.as_str(), e.i2p))
+                .collect::<Vec<_>>(),
+            [
+                ("tor", "Tor", "socks5://127.0.0.1:9050", false),
+                ("vpn", "VPN", "socks5://user:secret@10.8.0.1:1080", false),
+                ("i2p", "I2P router", "http://127.0.0.1:4444", true)
+            ]
+        );
+        assert_eq!(
+            (&p.default, p.groups.len(), p.default_keys.len()),
+            (&Destination::Proxy("tor".into()), 0, 0)
+        );
+        assert_eq!(
+            (p.offline, p.transparent),
+            (crate::settings::OfflinePolicy::KillSwitch, false)
+        );
+        assert_eq!(p.rules.len(), 5);
+        assert_eq!(
+            (&p.rules[4].to, &p.rules[4].fallback),
+            (&Destination::Proxy("tor".into()), &crate::routes::Fallback::Policy)
+        );
+        assert_eq!(
+            p.rules[..4].iter().map(|r| r.name.as_str()).collect::<Vec<_>>(),
+            ["onions", "i2p", "", "never"]
+        );
+        assert_eq!(p.i2p_registries.len(), 2);
+        // Each of them still shows as overridden.
+        let names = svc.stored_patch().unwrap().names();
+        for n in [
+            "name",
+            "relays",
+            "relay_names",
+            "proxies.list",
+            "proxies.default",
+            "proxies.offline",
+            "proxies.rules",
+            "proxies.i2p_registries",
+        ] {
+            assert!(names.contains(&n.to_string()), "{n}: {names:?}");
+        }
+        // The old blob is kept beside the new one, and it is not converted again.
+        assert_eq!(svc.db.meta_get(META_SETTINGS_PRE_GROUPS).unwrap().as_deref(), Some(old));
+        assert_eq!(svc.db.meta_get(META_SETTINGS_SHAPE).unwrap().as_deref(), Some("groups"));
+        let new = svc.db.meta_get(META_SETTINGS).unwrap().unwrap();
+        drop(svc);
+        let (svc, _f) = on_disk(&cfg, &path, T0).await;
+        assert_eq!(svc.db.meta_get(META_SETTINGS).unwrap().unwrap(), new);
+        assert_eq!(svc.settings().proxies, s.proxies);
+        drop(svc);
+
+        // Stored settings that cannot be read are left as they are, and say so.
+        let path = dir.path().join("unreadable.sqlite");
+        Db::open(&path)
+            .unwrap()
+            .meta_set(META_SETTINGS, Some("{not json"))
+            .unwrap();
+        let (svc, _f) = on_disk(&cfg, &path, T0).await;
+        assert_eq!(svc.db.meta_get(META_SETTINGS).unwrap().as_deref(), Some("{not json"));
+        // A copy is kept, and the next start tries again.
+        assert_eq!(
+            svc.db.meta_get(META_SETTINGS_PRE_GROUPS).unwrap().as_deref(),
+            Some("{not json")
+        );
+        assert!(svc.db.meta_get(META_SETTINGS_SHAPE).unwrap().is_none());
+        // A change on top of them is refused rather than dropping them.
+        let e = svc
+            .update_settings(&admin_of(&keys, T0, 1), patch(serde_json::json!({ "pow_bits": 10 })))
+            .unwrap_err();
+        assert!(e.to_string().contains("could not be read"), "{e}");
+    }
+
+    #[tokio::test]
+    async fn saved_proxy_settings_that_no_longer_fit_the_environment_are_put_aside_alone() {
+        use crate::service::META_SETTINGS_DROPPED_PROXIES;
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("db.sqlite");
+        let keys = Keys::generate();
+        let mut env = crate::config::tests::base();
+        env.insert("DEADHOP_PROXY", "socks5://127.0.0.1:9050".into());
+        env.insert("DEADHOP_PROXIES", "socks5://127.0.0.1:9051".into());
+        let mut cfg = crate::config::tests::load(&env).unwrap();
+        cfg.admins = [keys.public_key().to_hex()].into();
+        cfg.data_dir = dir.path().to_path_buf();
+        {
+            let (svc, _f) = on_disk(&cfg, &path, T0).await;
+            svc.update_settings(
+                &admin_of(&keys, T0, 1),
+                patch(serde_json::json!({ "pow_bits": 22, "proxies": { "default": { "proxy": "env2" } } })),
+            )
+            .unwrap();
+        }
+        // The environment loses its second proxy: what was saved for it no longer fits.
+        env.remove("DEADHOP_PROXIES");
+        let mut fewer = crate::config::tests::load(&env).unwrap();
+        (fewer.admins, fewer.data_dir) = (cfg.admins.clone(), cfg.data_dir.clone());
+        let (svc, _f) = on_disk(&fewer, &path, T0).await;
+        assert_eq!(svc.settings().pow_bits, 22, "the rest still applies");
+        assert_eq!(svc.settings().proxies, fewer.proxies);
+        let problem = svc.settings_problem.lock().unwrap().clone().unwrap();
+        assert!(problem.contains("saved proxy settings were not applied"), "{problem}");
+        assert!(svc.stored_patch().unwrap().proxies.is_none());
+        assert_eq!(
+            svc.db.meta_get(META_SETTINGS_DROPPED_PROXIES).unwrap().as_deref(),
+            Some(r#"{"default":{"proxy":"env2"}}"#)
+        );
+        let w = svc.health(&admin_of(&keys, T0, 2)).await.unwrap().warnings;
+        assert!(w.iter().any(|w| w.contains("saved proxy settings")), "{w:?}");
     }
 
     fn refusal<T: std::fmt::Debug>(
@@ -2953,7 +3152,10 @@ pub(crate) mod tests {
         r.svc
             .update_settings(
                 &r.admin(),
-                patch(json!({ "proxies": { "list": [{ "id": "tor", "url": "socks5://127.0.0.1:9050" }, { "id": "vpn", "url": "socks5://127.0.0.1:1080", "pool": false }] } })),
+                patch(json!({ "proxies": {
+                    "list": [{ "id": "tor", "url": "socks5://127.0.0.1:9050" }, { "id": "vpn", "url": "socks5://127.0.0.1:1080" }],
+                    "default": { "proxy": "tor" }
+                } })),
             )
             .unwrap();
         refusal(
@@ -3142,7 +3344,10 @@ pub(crate) mod tests {
         refusal(
             o,
             "update_settings: rotate interval out of range",
-            proxies(json!({ "rotate_secs": 1 })),
+            proxies(json!({
+                "list": [{ "id": "a", "url": "socks5://h:1" }, { "id": "b", "url": "socks5://h:2" }],
+                "groups": [{ "id": "g", "proxies": ["a", "b"], "strategy": "round_robin", "rotate_secs": 1 }]
+            })),
         );
         refusal(
             o,
@@ -3199,12 +3404,12 @@ pub(crate) mod tests {
         // One relay from the environment's list stays, for the administration key.
         p["relays"].as_array_mut().unwrap().push("wss://relay.example".into());
         p["relay_keys"] = serde_json::json!({ "wss://relay-b.example": ["invoices"], "ws://nostr-not.i2p": ["admin"] });
+        p["proxies"]["default_keys"] = serde_json::json!({ "admin": { "group": "exits" } });
         p["proxies"]["rules"][0]["keys"] = serde_json::json!(["admin"]);
         p["proxies"]["rules"][4]["fallback"] = serde_json::json!("offline");
-        p["proxies"]["rules"]
-            .as_array_mut()
-            .unwrap()
-            .push(serde_json::json!({ "name": "vpn", "match": ["relay.example"], "to": { "proxy": "vpn" }, "fallback": "pool" }));
+        p["proxies"]["rules"].as_array_mut().unwrap().push(serde_json::json!({
+            "name": "vpn", "match": ["relay.example"], "to": { "proxy": "vpn" }, "fallback": { "to": { "group": "exits" } }
+        }));
         p
     }
 
@@ -3222,25 +3427,33 @@ pub(crate) mod tests {
 
     #[tokio::test]
     async fn route_table_snapshot() {
-        use crate::routes::{relays_through_proxy, resolve, uses_default, DefaultRoute};
+        use crate::routes::{groups_used, relays_through_proxy, resolve, uses_default, Destination};
         let mut out = std::collections::BTreeMap::new();
         for (name, patch_json) in [("full", full_patch()), ("keyed", keyed_patch())] {
             let r = rig(|_| {}).await;
             r.svc.update_settings(&r.admin(), patch(patch_json)).unwrap();
             let s = r.svc.settings().topology();
-            let tor = DefaultRoute::Proxy {
-                id: "tor".into(),
-                url: "socks5://127.0.0.1:9050".into(),
+            let url = |id: &str| s.proxies.list.iter().find(|e| e.id == id).unwrap().url.clone();
+            // Every proxy up (a group uses its first), or none.
+            let up = |d: &Destination| {
+                let id = match d {
+                    Destination::Group(g) => s.proxies.groups.iter().find(|x| &x.id == g).unwrap().proxies[0].clone(),
+                    // (Only proxies and groups are asked about.)
+                    d => serde_json::to_value(d).unwrap()["proxy"].as_str().unwrap().to_string(),
+                };
+                Some((id.clone(), url(&id)))
             };
-            let cases = [
-                ("default through tor, proxies up", tor.clone(), true),
-                ("default through tor, proxies down", tor, false),
-                ("default direct, proxies up", DefaultRoute::Direct, true),
-                ("default off, proxies down", DefaultRoute::Off, false),
+            let down = |_: &Destination| None;
+            type Now<'a> = &'a dyn Fn(&Destination) -> Option<(String, String)>;
+            let cases: [(&str, Now, Option<bool>); 4] = [
+                ("proxies up", &up, Some(false)),
+                ("proxies down, the policy keeps the key off", &down, Some(false)),
+                ("proxies down, the policy connects straight", &down, Some(true)),
+                ("nothing probed yet", &down, None),
             ];
             for key in ["invoices", "admin"] {
-                for (case, default, up) in &cases {
-                    let table: Vec<String> = resolve(&s, key, default, &|_| *up)
+                for (case, now, offline) in &cases {
+                    let table: Vec<String> = resolve(&s, key, now, *offline)
                         .iter()
                         .map(|x| format!("{x:?}"))
                         .collect();
@@ -3249,6 +3462,10 @@ pub(crate) mod tests {
                 out.insert(
                     format!("{name} / {key} / uses the default route"),
                     serde_json::json!(uses_default(&s, key)),
+                );
+                out.insert(
+                    format!("{name} / {key} / groups used"),
+                    serde_json::json!(groups_used(&s, key)),
                 );
             }
             for id in ["tor", "vpn", "i2p", "ghost"] {
@@ -3315,29 +3532,13 @@ pub(crate) mod tests {
         );
         refusal(
             o,
-            "a proxy for a key that does not exist",
-            save(
-                json!({ "proxies": { "list": [{ "id": "tor", "url": "socks5://127.0.0.1:9050", "keys": ["nobody"] }] } }),
-            ),
-        );
-        refusal(
-            o,
-            "a proxy that names a key twice",
-            save(
-                json!({ "proxies": { "list": [{ "id": "tor", "url": "socks5://127.0.0.1:9050", "keys": ["admin", "admin"] }] } }),
-            ),
+            "a default route for a key that does not exist",
+            save(json!({ "proxies": { "default_keys": { "nobody": "direct" } } })),
         );
         refusal(
             o,
             "a relay for a key that does not exist",
             save(json!({ "relay_keys": { "wss://relay.example": ["nobody"] } })),
-        );
-        refusal(
-            o,
-            "the default route has no proxy for a key",
-            save(
-                json!({ "proxies": { "list": [{ "id": "tor", "url": "socks5://127.0.0.1:9050", "keys": ["invoices"] }] } }),
-            ),
         );
         refusal(
             o,
@@ -3351,13 +3552,40 @@ pub(crate) mod tests {
         );
         refusal(
             o,
+            "a key's default route blocks its every relay",
+            save(json!({ "proxies": { "default_keys": { "admin": "block" } } })),
+        );
+        refusal(
+            o,
             "a rule sends an onion relay straight",
             save(json!({ "proxies": { "rules": [{ "match": ["*.onion"], "to": "direct" }] } })),
         );
-        // Turning the strategy off while a key's first proxy is down.
+        refusal(
+            o,
+            "a rule falls back to sending an onion relay straight",
+            save(json!({ "proxies": {
+                "list": [tor],
+                "rules": [{ "match": ["*.onion"], "to": { "proxy": "tor" }, "fallback": { "to": "direct" } }]
+            } })),
+        );
+        refusal(
+            o,
+            "a group of one proxy",
+            save(json!({ "proxies": {
+                "list": [tor],
+                "groups": [{ "id": "g", "proxies": ["tor"], "strategy": "failover" }]
+            } })),
+        );
+        refusal(
+            o,
+            "the default route points at a group that does not exist",
+            save(json!({ "proxies": { "default": { "group": "gone" } } })),
+        );
+        // Pointing a key's default route at a proxy that is down.
         save(json!({ "proxies": {
             "list": [tor, { "id": "vpn", "url": "socks5://127.0.0.1:1080" }],
-            "mode": "failover"
+            "groups": [{ "id": "g", "proxies": ["tor", "vpn"], "strategy": "failover" }],
+            "default": { "group": "g" }
         } }))
         .unwrap();
         probe(&r, "tor", false);
@@ -3365,8 +3593,8 @@ pub(crate) mod tests {
         r.svc.replan();
         refusal(
             o,
-            "the strategy is turned off while a key's first proxy is down",
-            save(json!({ "proxies": { "mode": "off" } })),
+            "a key's default route is pointed at a proxy that is down",
+            save(json!({ "proxies": { "default": { "proxy": "tor" } } })),
         );
         crate::snapshot::check("key_refusals", &serde_json::to_value(&out).unwrap());
     }
@@ -3399,7 +3627,7 @@ pub(crate) mod tests {
             .unwrap();
         assert_eq!(
             v.overridden,
-            ["name", "relay_names", "proxies.list"]
+            ["name", "relay_names", "proxies.list", "proxies.default"]
                 .iter()
                 .skip(1)
                 .map(|s| s.to_string())

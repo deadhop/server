@@ -81,6 +81,9 @@ pub struct Config {
     pub announce: bool,
     /// Relay proxies from the environment.
     pub proxies: crate::settings::ProxySettings,
+    /// The same, in the shape settings had before proxy groups: what saved
+    /// settings from then were changes to (see `service.rs`).
+    pub legacy_proxies: deadhop_netengine::legacy::ProxySettings,
     /// Forbid changing the proxy settings from the dashboard.
     pub proxy_locked: bool,
 }
@@ -135,9 +138,16 @@ fn parse_bool(key: &str, s: &str) -> Result<bool> {
 
 /// The relay proxies named in the environment: `DEADHOP_PROXY` (one address,
 /// as before) followed by `DEADHOP_PROXIES` (comma-separated), then how to
-/// choose among them and what to do when none works.
-fn load_proxies(get: &dyn Fn(&str) -> Option<String>) -> Result<crate::settings::ProxySettings> {
-    use crate::settings::{bounds, OfflinePolicy, ProxyEntry, ProxyMode, ProxySettings};
+/// choose among them and what to do when none works. The variables keep the
+/// meaning they had before proxy groups: they are read in that shape and
+/// converted the way saved settings from then are (`DEADHOP_PROXY_MODE` off:
+/// the first proxy; a strategy with two or more: a group "Default" of them
+/// all, with the intervals given).
+fn load_proxies(
+    get: &dyn Fn(&str) -> Option<String>,
+) -> Result<(crate::settings::ProxySettings, deadhop_netengine::legacy::ProxySettings)> {
+    use crate::settings::{bounds, OfflinePolicy};
+    use deadhop_netengine::legacy::{ProxyEntry, ProxyMode, ProxySettings};
     let mut out = ProxySettings::default();
     let single = get("DEADHOP_PROXY").into_iter().map(|u| ("DEADHOP_PROXY", u));
     let many = get("DEADHOP_PROXIES")
@@ -203,9 +213,12 @@ fn load_proxies(get: &dyn Fn(&str) -> Option<String>) -> Result<crate::settings:
     if let Some(v) = get("DEADHOP_TRANSPARENT_PROXY") {
         out.transparent = parse_bool("DEADHOP_TRANSPARENT_PROXY", &v)?;
     }
-    out.validate(&crate::keys::lanes())
+    let lanes = crate::keys::lanes();
+    let proxies = deadhop_netengine::legacy::convert(&out, &lanes);
+    proxies
+        .validate(&lanes)
         .map_err(|e| Error::Config(format!("DEADHOP_PROXIES: {e}")))?;
-    Ok(out)
+    Ok((proxies, out))
 }
 
 impl Config {
@@ -320,6 +333,7 @@ impl Config {
 
         let (xpub, xpub_file) = account_key(get("DEADHOP_XPUB"), get("DEADHOP_XPUB_FILE"))?;
 
+        let (proxies, legacy_proxies) = load_proxies(&get)?;
         Ok(Config {
             name,
             relays,
@@ -394,7 +408,8 @@ impl Config {
                 bounds::LATE_GRACE_SECS.1,
             )?,
             announce: flag("DEADHOP_ANNOUNCE", false)?,
-            proxies: load_proxies(&get)?,
+            proxies,
+            legacy_proxies,
             proxy_locked: flag("DEADHOP_PROXY_LOCKED", false)?,
         })
     }
@@ -597,21 +612,18 @@ pub(crate) mod tests {
 
     #[test]
     fn proxy_comes_from_the_environment() {
-        use crate::settings::{OfflinePolicy, ProxyMode};
+        use crate::settings::{Destination, OfflinePolicy};
         let mut m = base();
         let c = load(&m).unwrap();
         assert!(c.proxies.list.is_empty() && !c.proxy_locked && !c.proxies.transparent);
         assert_eq!(
-            (c.proxies.mode, c.proxies.offline),
-            (ProxyMode::Off, OfflinePolicy::KillSwitch)
+            (c.proxies.default, c.proxies.offline),
+            (Destination::Direct, OfflinePolicy::KillSwitch)
         );
-        for (text, mode) in [
-            ("off", ProxyMode::Off),
-            ("failover", ProxyMode::Failover),
-            ("round_robin", ProxyMode::RoundRobin),
-        ] {
+        // A strategy with no proxies, or with one, is no group.
+        for text in ["off", "failover", "round_robin"] {
             m.insert("DEADHOP_PROXY_MODE", text.into());
-            assert_eq!(load(&m).unwrap().proxies.mode, mode, "{text}");
+            assert!(load(&m).unwrap().proxies.groups.is_empty(), "{text}");
         }
         m.remove("DEADHOP_PROXY_MODE");
         m.insert("DEADHOP_PROXY", "socks5://127.0.0.1:9050".into());
@@ -623,6 +635,8 @@ pub(crate) mod tests {
             ("socks5://127.0.0.1:9050", true)
         );
         assert_eq!(c.settings().proxies, c.proxies);
+        assert_eq!(c.proxies.default, Destination::Proxy("env1".into()));
+        assert_eq!(c.legacy_proxies.list[0].url, "socks5://127.0.0.1:9050");
         m.insert("DEADHOP_PROXY", "gopher://x:1".into());
         let e = err_of(&m);
         assert!(e.contains("DEADHOP_PROXY") && e.contains("scheme"), "{e}");
@@ -633,7 +647,7 @@ pub(crate) mod tests {
 
     #[test]
     fn several_proxies_and_how_to_use_them_come_from_the_environment() {
-        use crate::settings::{OfflinePolicy, ProxyMode};
+        use crate::settings::{Destination, OfflinePolicy, Strategy};
         let mut m = base();
         m.insert("DEADHOP_PROXY", "socks5://127.0.0.1:9050".into());
         m.insert("DEADHOP_PROXIES", "http://a.lan:3128, socks5://b.lan:1080,".into());
@@ -655,10 +669,22 @@ pub(crate) mod tests {
                 ("env3", "socks5://b.lan:1080")
             ]
         );
+        // A strategy over several: a group "Default" of them all, the default route.
+        let g = &p.groups[0];
         assert_eq!(
-            (p.mode, p.rotate_secs, p.offline, p.transparent),
-            (ProxyMode::Chaos, 120, OfflinePolicy::AdminOnly, true)
+            (g.id.as_str(), g.name.as_str(), g.proxies.len(), g.strategy),
+            ("default", "Default", 3, Strategy::Chaos)
         );
+        assert_eq!((g.rotate_secs, g.chaos_min_secs, g.chaos_max_secs), (120, 300, 900));
+        assert_eq!(
+            (p.default, p.offline, p.transparent),
+            (Destination::Group("default".into()), OfflinePolicy::AdminOnly, true)
+        );
+        // Off: the first of them.
+        let mut off = m.clone();
+        off.insert("DEADHOP_PROXY_MODE", "off".into());
+        let p = load(&off).unwrap().proxies;
+        assert_eq!((p.default, p.groups.len()), (Destination::Proxy("env1".into()), 0));
         for (key, bad, needle) in [
             ("DEADHOP_PROXIES", "socks5://a:1,socks5://a:1", "listed twice"),
             ("DEADHOP_PROXIES", "ftp://a:1", "scheme"),

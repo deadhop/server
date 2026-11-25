@@ -333,7 +333,7 @@ impl NetworkRuntime {
         if relays.is_empty() {
             self.proxy_check_busy.store(false, Ordering::SeqCst);
             return Err(Error::InvalidParams(
-                "no relay goes through this proxy yet: add a rule that uses it, or put it in the default route".into(),
+                "no relay goes through this proxy yet: point a rule, a group or the default route at it".into(),
             ));
         }
         let shown = redact(&raw);
@@ -586,16 +586,29 @@ impl NetworkRuntime {
         host.admit_read(caller)?;
         let facts = host.audit_facts();
         let relays = host.relay_states().await;
-        let (offline, configured, transparent, announce) = {
-            let s = host.topology();
-            (
-                s.proxies.offline,
-                s.proxies.list.len(),
-                s.proxies.transparent,
-                facts.announce,
-            )
+        let s = host.topology();
+        let (offline, configured, transparent, announce) = (
+            s.proxies.offline,
+            s.proxies.list.len(),
+            s.proxies.transparent,
+            facts.announce,
+        );
+        let default_direct = configured > 0
+            && s.lanes.iter().any(|k| {
+                *s.proxies.default_for(&k.id) == crate::routes::Destination::Direct
+                    && crate::routes::uses_default(&s, &k.id)
+            });
+        // The proxy in use: the first key's default route's, or else the
+        // first one a rule sends relays through (a rules-only setup).
+        let ruled = || {
+            s.lanes.iter().find_map(|k| {
+                self.routes_for(host, &k.id).into_iter().find_map(|r| match r.via {
+                    crate::routes::Via::Proxy { url, .. } => Some(url),
+                    _ => None,
+                })
+            })
         };
-        let proxy_raw = self.main_proxy(host).unwrap_or_default();
+        let proxy_raw = self.main_proxy(host).or_else(ruled).unwrap_or_default();
         let spec = parse_proxy(&proxy_raw).ok().flatten();
         let last_check = self
             .last_proxy_check
@@ -618,6 +631,7 @@ impl NetworkRuntime {
             announce,
             listening: own_listening(&self.proc_net),
             direct_by_rule: self.direct_by_rule(host).await,
+            default_direct,
             now: host.now(),
         }))
     }
@@ -642,20 +656,22 @@ impl NetworkRuntime {
         out
     }
 
-    /// The relays routed direct by a rule whose host name is not, as written,
-    /// private (an address, a single label, .lan and similar, or an overlay).
+    /// The relays routed direct by a rule or by the default route (by
+    /// choice, not by the offline policy) whose host name is not, as
+    /// written, private (an address, a single label, .lan and similar, or an
+    /// overlay).
     fn direct_by_rule_text(&self, host: &dyn NetworkHost) -> Vec<String> {
         let mut out: Vec<String> = Vec::new();
+        // (With no proxy at all, everything is straight; that is its own finding.)
+        let listed = !host.topology().proxies.list.is_empty();
         for k in host.topology().lanes {
             for r in self.routes_for(host, &k.id) {
                 let internet = crate::routes::host_port(&r.relay).is_some_and(|(h, _)| {
                     !crate::privacy::is_private_host(&h) && !deadhop_net::hosts::is_overlay_host(&h)
                 });
-                if r.via == crate::routes::Via::Direct
-                    && r.reason == crate::routes::Reason::Rule
-                    && internet
-                    && !out.contains(&r.relay)
-                {
+                let chosen = r.reason == crate::routes::Reason::Rule
+                    || (listed && r.reason == crate::routes::Reason::Default && !r.by_policy);
+                if r.via == crate::routes::Via::Direct && chosen && internet && !out.contains(&r.relay) {
                     out.push(r.relay);
                 }
             }
@@ -667,7 +683,14 @@ impl NetworkRuntime {
     /// of the new ones is reachable: the proxies are the way back in.
     pub fn begin_probation(&self, host: &dyn NetworkHost, previous: ProxySettings) {
         let now = host.now();
-        let list_changed = previous.list != host.topology().proxies.list;
+        let now_set = host.topology().settings.proxies;
+        // What decides where relays go: the proxies, the groups, the default
+        // routes and the rules.
+        let routes_changed = previous.list != now_set.list
+            || previous.groups != now_set.groups
+            || previous.default != now_set.default
+            || previous.default_keys != now_set.default_keys
+            || previous.rules != now_set.rules;
         let was_working = self
             .pool
             .lock()
@@ -675,9 +698,10 @@ impl NetworkRuntime {
             .applied
             .values()
             .all(|a| a.state != crate::proxypool::PoolState::Offline);
-        // Only a different list can be a mistake worth undoing; a changed mode or
-        // policy is not, and must not be undone when the same proxies fail later.
-        if list_changed && was_working && !previous.transparent && !previous.list.is_empty() {
+        // Only a change of where relays go can be a mistake worth undoing; a
+        // changed policy is not, and must not be undone when the same
+        // proxies fail later.
+        if routes_changed && was_working && !previous.transparent && !previous.list.is_empty() {
             self.pool
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner)

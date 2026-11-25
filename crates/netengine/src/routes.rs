@@ -1,14 +1,16 @@
 //! Routing rules: which way each relay connection goes.
 //!
-//! An operator keeps an ordered list of [`Rule`]s. For each key and each of
-//! its relays, the first rule that applies to the key and matches the relay
-//! decides the route: through one proxy, through the default route (the proxy
-//! pool and its strategy), directly, or nowhere. A relay no rule matches takes
-//! the default route.
+//! An operator keeps an ordered list of [`Rule`]s, and the default route as
+//! its last, fixed entry ("everything else"). For each key and each of its
+//! relays, the first rule that applies to the key and matches the relay
+//! decides the route: through one proxy, through a group of proxies (and its
+//! strategy), directly, or nowhere. A relay no rule matches takes the key's
+//! default route, which points at one of the same [`Destination`]s.
 //!
-//! [`resolve`] is pure: given the settings, the key's default route and which
-//! proxies are up, it says where each relay goes and why. The service keeps
-//! the state it needs (`proxypool.rs`), the app acts on it (`app.rs`).
+//! [`resolve`] is pure: given the settings, what each destination gives now
+//! and what the offline policy means for the key, it says where each relay
+//! goes and why. The service keeps the state it needs (`proxypool.rs`), the
+//! app acts on it (`app.rs`).
 //!
 //! Patterns are matched against the relay's host as a URL parser reads it
 //! (never the raw authority, which may carry user info), lower case. A
@@ -21,10 +23,10 @@ use rmcp::schemars::{self, JsonSchema};
 use serde::{Deserialize, Serialize};
 
 use crate::error::{Error, Result};
-use crate::network::{assigned, Topology};
+use crate::network::{assigned, ProxySettings, Topology};
 
-/// Most rules in the list.
-pub const MAX_RULES: usize = 16;
+/// Most rules in the list (an old pool rule may become one per key).
+pub const MAX_RULES: usize = 32;
 /// Most patterns in one rule.
 pub const MAX_PATTERNS: usize = 16;
 /// Longest pattern.
@@ -32,29 +34,44 @@ pub const MAX_PATTERN_LEN: usize = 256;
 /// Longest rule name.
 pub const MAX_NAME_LEN: usize = 60;
 
-// Where the relays a rule matches go.
+// Where relays go: a rule's target, a fallback, or the default route.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
-pub enum RouteTo {
-    // The default route: the proxy pool and its strategy.
-    Pool,
+pub enum Destination {
     // No proxy at all.
     Direct,
     // Never connect.
     Block,
     // Through this proxy (by id).
     Proxy(String),
+    // Through the proxy a group (by id) has chosen by its strategy.
+    Group(String),
 }
 
-// What a rule that goes through one proxy does while that proxy is down.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+impl Destination {
+    /// Whether this is proxy `id`.
+    pub fn is_proxy(&self, id: &str) -> bool {
+        matches!(self, Destination::Proxy(p) if p == id)
+    }
+
+    /// Whether this goes through a proxy (one, or a group's).
+    pub fn via_proxy(&self) -> bool {
+        matches!(self, Destination::Proxy(_) | Destination::Group(_))
+    }
+}
+
+// What a rule does while its proxy (or every proxy of its group) is down.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum Fallback {
     // Stay offline: never connect another way.
     #[default]
     Offline,
-    // Use the default route until the proxy is back.
-    Pool,
+    // The offline policy decides, as it does for the default route.
+    Policy,
+    // Use this destination instead; when it has nothing reachable either,
+    // the offline policy decides.
+    To(Destination),
 }
 
 // One routing rule.
@@ -71,8 +88,8 @@ pub struct Rule {
     // The keys (by id) this rule applies to; empty is every key.
     #[serde(default)]
     pub keys: Vec<String>,
-    pub to: RouteTo,
-    // Only for a rule that goes through one proxy.
+    pub to: Destination,
+    // Only for a rule that goes through a proxy or a group.
     #[serde(default)]
     pub fallback: Fallback,
 }
@@ -174,7 +191,7 @@ pub fn pattern_problem(pattern: &str) -> Option<String> {
 
 /// Whether a pattern can only ever match Tor or I2P relays, which must never
 /// be reached without a proxy.
-fn names_tor_or_i2p(pattern: &str) -> bool {
+pub fn names_tor_or_i2p(pattern: &str) -> bool {
     let p = pattern.trim().to_ascii_lowercase();
     let host = if p.contains("://") {
         host_port(&p).map(|(h, _)| h).unwrap_or_default()
@@ -197,8 +214,21 @@ pub fn first_rule(rules: &[Rule], key: &str, relay: &str) -> Option<usize> {
     rules.iter().position(|r| r.applies(key, relay))
 }
 
-/// Check the rule list against the proxy list and the relays. `relays_for`
-/// gives each key's relays.
+/// Check that a destination names a proxy or a group that exists. `what`
+/// says who points at it ("rule 2"), `fix` what to change ("the rule").
+pub fn check_destination(proxies: &ProxySettings, d: &Destination, what: &str, fix: &str) -> Result<()> {
+    match d {
+        Destination::Proxy(id) if !proxies.list.iter().any(|e| &e.id == id) => Err(Error::InvalidParams(format!(
+            "{what} points at a proxy that is not in the list; change {fix} first"
+        ))),
+        Destination::Group(id) if !proxies.groups.iter().any(|g| &g.id == id) => Err(Error::InvalidParams(format!(
+            "{what} points at a group that does not exist; change {fix} first"
+        ))),
+        _ => Ok(()),
+    }
+}
+
+/// Check the rule list against the proxies, the groups and the relays.
 pub fn check_rules(settings: &Topology) -> Result<()> {
     let proxies = &settings.proxies;
     let rules = &proxies.rules;
@@ -221,28 +251,29 @@ pub fn check_rules(settings: &Topology) -> Result<()> {
         if let Some(k) = r.keys.iter().find(|k| !settings.lanes.iter().any(|l| &l.id == *k)) {
             return Err(Error::InvalidParams(format!("rule {n}: there is no key '{k}'")));
         }
-        match &r.to {
-            RouteTo::Proxy(id) if !proxies.list.iter().any(|e| &e.id == id) => {
-                return Err(Error::InvalidParams(format!(
-                    "rule {n} points at a proxy that is not in the list; change the rule first"
-                )));
-            }
-            RouteTo::Direct if r.patterns.iter().any(|p| names_tor_or_i2p(p)) => {
-                return Err(Error::InvalidParams(format!(
-                    "rule {n}: Tor and I2P relays can only be reached through a proxy, never directly"
-                )));
-            }
-            _ => {}
+        check_destination(proxies, &r.to, &format!("rule {n}"), "the rule")?;
+        if let Fallback::To(d) = &r.fallback {
+            check_destination(proxies, d, &format!("the fallback of rule {n}"), "the rule")?;
+        }
+        // (A fallback is only ever taken from a proxy or a group.)
+        let direct =
+            r.to == Destination::Direct || (r.to.via_proxy() && r.fallback == Fallback::To(Destination::Direct));
+        // (Behind a transparent proxy nothing goes straight.)
+        if direct && !proxies.transparent && r.patterns.iter().any(|p| names_tor_or_i2p(p)) {
+            return Err(Error::InvalidParams(format!(
+                "rule {n}: Tor and I2P relays can only be reached through a proxy, never directly"
+            )));
         }
     }
-    // Every key keeps a relay that no rule blocks.
+    // Every key keeps a relay that neither a rule nor its default route blocks.
     for key in &settings.lanes {
         let relays = settings.relays_for(&key.id);
         let open = relays.iter().any(|relay| {
-            !matches!(
-                first_rule(rules, &key.id, relay).map(|i| &rules[i].to),
-                Some(RouteTo::Block)
-            )
+            let to = match first_rule(rules, &key.id, relay) {
+                Some(i) => &rules[i].to,
+                None => proxies.default_for(&key.id),
+            };
+            *to != Destination::Block
         });
         if !relays.is_empty() && !open {
             return Err(Error::InvalidParams(format!(
@@ -273,13 +304,13 @@ pub enum Reason {
     Rule,
     // No rule matched: the default route.
     Default,
-    // The rule's proxy is down; the rule says to use the default route.
+    // The rule's proxy or group is down; the rule's fallback is in use.
     Fallback,
-    // The rule's proxy is no longer listed (the rule cannot be followed).
+    // The rule's proxy or group has nothing reachable and the rule stays offline.
     ProxyDown,
-    // A rule blocks this relay.
+    // A rule, or the default route, blocks this relay.
     Blocked,
-    // The default route has no reachable proxy and the offline policy keeps this key off.
+    // Nothing reachable where the relay may go, and the offline policy keeps this key off.
     PoolOffline,
     // Tor and I2P relays are never connected without a proxy.
     NeverDirect,
@@ -295,36 +326,21 @@ pub struct Resolved {
     pub rule: Option<usize>,
     pub via: Via,
     pub reason: Reason,
+    /// The offline policy decided this route: nothing it may use was reachable.
+    pub by_policy: bool,
 }
 
-/// What a key's default route is now: the pool's proxy, straight, or nothing.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum DefaultRoute {
-    Proxy {
-        id: String,
-        url: String,
-    },
-    Direct,
-    /// The pool has no reachable proxy and the offline policy keeps the key off.
-    Off,
-}
-
-impl DefaultRoute {
-    fn via(&self) -> Via {
-        match self {
-            DefaultRoute::Proxy { id, url } => Via::Proxy {
-                id: id.clone(),
-                url: url.clone(),
-            },
-            DefaultRoute::Direct => Via::Direct,
-            DefaultRoute::Off => Via::Off,
-        }
-    }
-}
-
-/// Where each of `key`'s relays goes, in list order. `up` says whether a
-/// proxy (by id) answered its last probe.
-pub fn resolve(settings: &Topology, key: &str, default: &DefaultRoute, up: &dyn Fn(&str) -> bool) -> Vec<Resolved> {
+/// Where each of `key`'s relays goes, in list order. `now` gives the proxy
+/// (id and url) a proxy or group destination uses now, or `None` while it
+/// has nothing reachable. `offline` is what the offline policy means for the
+/// key: connect straight, or stay off; `None` before anything was probed,
+/// when the key waits (off) and the policy has not decided anything yet.
+pub fn resolve(
+    settings: &Topology,
+    key: &str,
+    now: &dyn Fn(&Destination) -> Option<(String, String)>,
+    offline: Option<bool>,
+) -> Vec<Resolved> {
     let proxies = &settings.proxies;
     let rules = &proxies.rules;
     settings
@@ -332,38 +348,44 @@ pub fn resolve(settings: &Topology, key: &str, default: &DefaultRoute, up: &dyn 
         .into_iter()
         .map(|relay| {
             let rule = first_rule(rules, key, &relay);
-            let on_default = |reason| {
-                let via = default.via();
-                let reason = if via == Via::Off { Reason::PoolOffline } else { reason };
-                (via, reason)
+            let policy = |reason| match offline {
+                Some(true) => (Via::Direct, reason, true),
+                Some(false) => (Via::Off, Reason::PoolOffline, true),
+                None => (Via::Off, Reason::PoolOffline, false),
             };
-            let (via, reason) = match rule.map(|i| &rules[i]) {
-                Some(Rule { to: RouteTo::Block, .. }) => (Via::Off, Reason::Blocked),
-                _ if proxies.transparent => (Via::Direct, Reason::Transparent),
-                None => on_default(Reason::Default),
-                Some(Rule { to: RouteTo::Pool, .. }) => on_default(Reason::Rule),
+            let go = |d: &Destination, reason| match d {
+                Destination::Direct => Some((Via::Direct, reason, false)),
+                Destination::Block => Some((Via::Off, Reason::Blocked, false)),
+                _ => now(d).map(|(id, url)| (Via::Proxy { id, url }, reason, false)),
+            };
+            let (via, reason, by_policy) = match rule.map(|i| &rules[i]) {
                 Some(Rule {
-                    to: RouteTo::Direct, ..
-                }) => (Via::Direct, Reason::Rule),
-                Some(Rule {
-                    to: RouteTo::Proxy(id),
-                    fallback,
-                    ..
-                }) => match proxies.list.iter().find(|e| &e.id == id) {
+                    to: Destination::Block, ..
+                }) => (Via::Off, Reason::Blocked, false),
+                // A default route that blocks blocks, like a rule, even
+                // behind a transparent proxy.
+                None if *proxies.default_for(key) == Destination::Block => (Via::Off, Reason::Blocked, false),
+                _ if proxies.transparent => (Via::Direct, Reason::Transparent, false),
+                None => go(proxies.default_for(key), Reason::Default).unwrap_or_else(|| policy(Reason::Default)),
+                Some(r) => go(&r.to, Reason::Rule).unwrap_or_else(|| match &r.fallback {
                     // "Stay offline" means never another way, not "do not
-                    // try": with nothing to choose between, the relay always
-                    // goes through its proxy and the connection keeps
+                    // try": with nothing to choose between, a relay always
+                    // goes through its one proxy and the connection keeps
                     // retrying there. The probe only decides a fallback.
-                    Some(e) if up(id) || *fallback == Fallback::Offline => (
-                        Via::Proxy {
-                            id: id.clone(),
-                            url: e.url.clone(),
-                        },
-                        Reason::Rule,
-                    ),
-                    _ if *fallback == Fallback::Pool => on_default(Reason::Fallback),
-                    _ => (Via::Off, Reason::ProxyDown),
-                },
+                    Fallback::Offline => match (&r.to, proxies.list.iter().find(|e| r.to.is_proxy(&e.id))) {
+                        (Destination::Proxy(id), Some(e)) => (
+                            Via::Proxy {
+                                id: id.clone(),
+                                url: e.url.clone(),
+                            },
+                            Reason::Rule,
+                            false,
+                        ),
+                        _ => (Via::Off, Reason::ProxyDown, false),
+                    },
+                    Fallback::Policy => policy(Reason::Rule),
+                    Fallback::To(d) => go(d, Reason::Fallback).unwrap_or_else(|| policy(Reason::Fallback)),
+                }),
             };
             // Whatever the rules say, a Tor or I2P relay is never reached without a proxy.
             let (via, reason) = if via == Via::Direct && never_direct(&relay) && !proxies.transparent {
@@ -376,25 +398,44 @@ pub fn resolve(settings: &Topology, key: &str, default: &DefaultRoute, up: &dyn 
                 rule,
                 via,
                 reason,
+                by_policy,
             }
         })
         .collect()
 }
 
-/// Whether some relay of `key` may take the default route (a rule-free relay,
-/// a rule to the pool, or a rule whose proxy falls back to it). When none can,
-/// the pool being empty or down does not matter for that key.
+/// Whether some relay of `key` takes the default route (no rule matches
+/// it). When none does, where the default route points does not matter for
+/// that key.
 pub fn uses_default(settings: &Topology, key: &str) -> bool {
     let rules = &settings.proxies.rules;
     settings
         .relays_for(key)
         .iter()
-        .any(|relay| match first_rule(rules, key, relay).map(|i| &rules[i]) {
-            None => true,
-            Some(r) => {
-                matches!(r.to, RouteTo::Pool) || (matches!(r.to, RouteTo::Proxy(_)) && r.fallback == Fallback::Pool)
+        .any(|relay| first_rule(rules, key, relay).is_none())
+}
+
+/// The groups (by id) one key may use: through its default route, or a rule
+/// that applies to it, or such a rule's fallback.
+pub fn groups_used(settings: &Topology, key: &str) -> Vec<String> {
+    let proxies = &settings.proxies;
+    let mut out: Vec<String> = Vec::new();
+    let rules = proxies.rules.iter().filter(|r| assigned(&r.keys, key));
+    let fallbacks = rules.clone().filter_map(|r| match &r.fallback {
+        Fallback::To(d) => Some(d),
+        _ => None,
+    });
+    let dests = std::iter::once(proxies.default_for(key))
+        .chain(rules.map(|r| &r.to))
+        .chain(fallbacks);
+    for d in dests {
+        if let Destination::Group(g) = d {
+            if !out.contains(g) {
+                out.push(g.clone());
             }
-        })
+        }
+    }
+    out
 }
 
 /// The relays that may be sent through proxy `id` (for any key), in list
@@ -402,27 +443,32 @@ pub fn uses_default(settings: &Topology, key: &str) -> bool {
 /// against a relay it would not carry.
 pub fn relays_through_proxy(settings: &Topology, id: &str) -> Vec<String> {
     let proxies = &settings.proxies;
-    let Some(entry) = proxies.list.iter().find(|e| e.id == id) else {
+    if !proxies.list.iter().any(|e| e.id == id) {
         return Vec::new();
+    }
+    let carries = |d: &Destination| match d {
+        Destination::Proxy(p) => p == id,
+        Destination::Group(g) => proxies
+            .groups
+            .iter()
+            .any(|x| &x.id == g && x.proxies.iter().any(|p| p == id)),
+        _ => false,
     };
     let rules = &proxies.rules;
     settings
         .relays
         .iter()
         .filter(|relay| {
-            settings.relay_users(relay).iter().any(|key| {
-                let rule = first_rule(rules, key, relay).map(|i| &rules[i]);
-                let in_pool = entry.pool && assigned(&entry.keys, key);
-                match rule {
-                    Some(Rule {
-                        to: RouteTo::Proxy(p),
-                        fallback,
-                        ..
-                    }) => p == id || (in_pool && *fallback == Fallback::Pool),
-                    Some(Rule { to: RouteTo::Pool, .. }) | None => in_pool,
-                    Some(_) => false,
-                }
-            })
+            settings
+                .relay_users(relay)
+                .iter()
+                .any(|key| match first_rule(rules, key, relay).map(|i| &rules[i]) {
+                    // A fallback is only ever taken from a proxy or a group.
+                    Some(r) => {
+                        carries(&r.to) || (r.to.via_proxy() && matches!(&r.fallback, Fallback::To(d) if carries(d)))
+                    }
+                    None => carries(proxies.default_for(key)),
+                })
         })
         .cloned()
         .collect()
@@ -489,18 +535,16 @@ mod tests {
         assert!(!names_tor_or_i2p("*") && !names_tor_or_i2p("*.fips") && !names_tor_or_i2p("wss://"));
     }
 
-    fn entry(id: &str, pool: bool) -> ProxyEntry {
+    fn entry(id: &str) -> ProxyEntry {
         ProxyEntry {
             id: id.into(),
             name: id.into(),
             url: format!("socks5://{id}:1"),
-            keys: Vec::new(),
-            pool,
             i2p: false,
         }
     }
 
-    fn rule(patterns: &[&str], to: RouteTo) -> Rule {
+    fn rule(patterns: &[&str], to: Destination) -> Rule {
         Rule {
             name: String::new(),
             patterns: patterns.iter().map(|p| p.to_string()).collect(),
@@ -510,11 +554,21 @@ mod tests {
         }
     }
 
+    fn proxy(id: &str) -> Destination {
+        Destination::Proxy(id.into())
+    }
+
+    fn group(id: &str) -> Destination {
+        Destination::Group(id.into())
+    }
+
     const ONION: &str = "ws://abc.onion";
     const LAN: &str = "ws://relay.lan:4869";
     const VPN_RELAY: &str = "wss://relay.contextvm.org";
     const PLAIN: &str = "wss://bucket.coracle.social";
 
+    /// tor, vpn and i2p listed; a group "exits" of tor and vpn; the default
+    /// route through tor.
     fn settings(rules: Vec<Rule>) -> Topology {
         let lane = |id: &str, label: &str| Lane {
             id: id.into(),
@@ -530,27 +584,50 @@ mod tests {
             lanes: vec![lane("invoices", "Public invoices"), lane("admin", "Administration")],
         };
         s.relays = vec![VPN_RELAY.into(), PLAIN.into(), ONION.into(), LAN.into()];
-        s.proxies.list = vec![entry("tor", true), entry("vpn", true), entry("i2p", false)];
+        s.proxies.list = vec![entry("tor"), entry("vpn"), entry("i2p")];
+        s.proxies.groups = vec![crate::network::ProxyGroup {
+            id: "exits".into(),
+            name: String::new(),
+            proxies: vec!["tor".into(), "vpn".into()],
+            strategy: crate::network::Strategy::Failover,
+            rotate_secs: 3_600,
+            chaos_min_secs: 300,
+            chaos_max_secs: 900,
+        }];
+        s.proxies.default = proxy("tor");
         s.proxies.rules = rules;
         s
     }
 
-    fn pool() -> DefaultRoute {
-        DefaultRoute::Proxy {
-            id: "tor".into(),
-            url: "socks5://tor:1".into(),
+    /// What each destination gives: a proxy while it is up; the group its
+    /// first proxy that is up.
+    fn now_with(up: &'static dyn Fn(&str) -> bool) -> impl Fn(&Destination) -> Option<(String, String)> {
+        move |d: &Destination| {
+            let id = match d {
+                Destination::Proxy(id) => Some(id.clone()).filter(|id| up(id)),
+                // (Only proxies and groups are asked about.)
+                _ => ["tor", "vpn"].into_iter().find(|id| up(id)).map(String::from),
+            };
+            id.map(|id| (id.clone(), format!("socks5://{id}:1")))
         }
     }
 
     fn table(
         s: &Topology,
         key: &str,
-        default: &DefaultRoute,
-        up: &dyn Fn(&str) -> bool,
+        up: &'static dyn Fn(&str) -> bool,
+        offline: Option<bool>,
     ) -> Vec<(String, Option<usize>, Via, Reason)> {
-        resolve(s, key, default, up)
+        resolve(s, key, &now_with(up), offline)
             .into_iter()
             .map(|r| (r.relay, r.rule, r.via, r.reason))
+            .collect()
+    }
+
+    fn by_policy(s: &Topology, key: &str, up: &'static dyn Fn(&str) -> bool, offline: Option<bool>) -> Vec<bool> {
+        resolve(s, key, &now_with(up), offline)
+            .into_iter()
+            .map(|r| r.by_policy)
             .collect()
     }
 
@@ -561,20 +638,24 @@ mod tests {
         }
     }
 
+    const ALL_UP: &dyn Fn(&str) -> bool = &|_| true;
+    const NONE_UP: &dyn Fn(&str) -> bool = &|_| false;
+    const VPN_DOWN: &dyn Fn(&str) -> bool = &|id| id != "vpn";
+    const TOR_DOWN: &dyn Fn(&str) -> bool = &|id| id != "tor";
+
     #[test]
     fn the_first_matching_rule_decides_and_the_rest_take_the_default_route() {
-        let mut vpn = rule(&[VPN_RELAY], RouteTo::Proxy("vpn".into()));
-        vpn.fallback = Fallback::Pool;
+        let mut vpn = rule(&[VPN_RELAY], proxy("vpn"));
+        vpn.fallback = Fallback::To(group("exits"));
         let s = settings(vec![
-            rule(&["*.onion"], RouteTo::Proxy("tor".into())),
-            rule(&["*.lan"], RouteTo::Direct),
+            rule(&["*.onion"], proxy("tor")),
+            rule(&["*.lan"], Destination::Direct),
             vpn,
             // Never reached for the relay above: rule 3 comes first.
-            rule(&["*.contextvm.org"], RouteTo::Block),
+            rule(&["*.contextvm.org"], Destination::Block),
         ]);
-        let all_up = |_: &str| true;
         assert_eq!(
-            table(&s, "invoices", &pool(), &all_up),
+            table(&s, "invoices", ALL_UP, Some(false)),
             vec![
                 (VPN_RELAY.into(), Some(2), via("vpn"), Reason::Rule),
                 (PLAIN.into(), None, via("tor"), Reason::Default),
@@ -582,70 +663,134 @@ mod tests {
                 (LAN.into(), Some(1), Via::Direct, Reason::Rule),
             ]
         );
-        // A rule's proxy down with "use the default route": its relay falls back.
-        let vpn_down = |id: &str| id != "vpn";
-        assert_eq!(table(&s, "invoices", &pool(), &vpn_down)[0].2, via("tor"));
-        assert_eq!(table(&s, "invoices", &pool(), &vpn_down)[0].3, Reason::Fallback);
+        // A rule's proxy down with a fallback: its relay goes there.
+        assert_eq!(table(&s, "invoices", VPN_DOWN, Some(false))[0].2, via("tor"));
+        assert_eq!(table(&s, "invoices", VPN_DOWN, Some(false))[0].3, Reason::Fallback);
         // A rule's proxy down with "stay offline": its relay still goes through
         // that proxy (never another way) rather than being held back.
-        let tor_down = |id: &str| id != "tor";
         assert_eq!(
-            table(&s, "invoices", &pool(), &tor_down)[2],
+            table(&s, "invoices", TOR_DOWN, Some(false))[2],
             (ONION.into(), Some(0), via("tor"), Reason::Rule)
         );
-        // With the pool off, default and fallback relays are off as well.
-        let t = table(&s, "invoices", &DefaultRoute::Off, &vpn_down);
+        // Nothing up: the default route and the fallback leave it to the
+        // policy, which keeps this key off (or sends it straight).
+        let t = table(&s, "invoices", NONE_UP, Some(false));
         assert_eq!((t[0].2.clone(), t[0].3), (Via::Off, Reason::PoolOffline));
         assert_eq!((t[1].2.clone(), t[1].3), (Via::Off, Reason::PoolOffline));
+        assert_eq!(
+            by_policy(&s, "invoices", NONE_UP, Some(false)),
+            [true, true, false, false]
+        );
+        let t = table(&s, "admin", NONE_UP, Some(true));
+        assert_eq!((t[0].2.clone(), t[0].3), (Via::Direct, Reason::Fallback));
+        assert_eq!((t[1].2.clone(), t[1].3), (Via::Direct, Reason::Default));
+        // Before anything was probed the key waits: off, and not the policy's doing.
+        let t = table(&s, "admin", NONE_UP, None);
+        assert_eq!((t[1].2.clone(), t[1].3), (Via::Off, Reason::PoolOffline));
+        assert_eq!(by_policy(&s, "admin", NONE_UP, None), [false; 4]);
     }
 
     #[test]
-    fn rules_for_one_key_leave_the_other_alone_and_block_and_pool_work() {
-        let mut only_admin = rule(&["*"], RouteTo::Block);
+    fn rules_to_groups_fall_back_to_the_policy_or_stay_offline() {
+        let mut policy = rule(&[VPN_RELAY], group("exits"));
+        policy.fallback = Fallback::Policy;
+        let mut to_block = rule(&[PLAIN], proxy("vpn"));
+        to_block.fallback = Fallback::To(Destination::Block);
+        let s = settings(vec![policy, to_block, rule(&["*.onion"], group("exits"))]);
+        assert_eq!(
+            table(&s, "admin", ALL_UP, Some(true))[..3],
+            [
+                (VPN_RELAY.into(), Some(0), via("tor"), Reason::Rule),
+                (PLAIN.into(), Some(1), via("vpn"), Reason::Rule),
+                (ONION.into(), Some(2), via("tor"), Reason::Rule),
+            ]
+        );
+        let t = table(&s, "admin", NONE_UP, Some(true));
+        // The policy says straight, put down to the rule; a fallback that
+        // blocks blocks; a group with nothing up and "stay offline" is off.
+        assert_eq!(
+            t[..3],
+            [
+                (VPN_RELAY.into(), Some(0), Via::Direct, Reason::Rule),
+                (PLAIN.into(), Some(1), Via::Off, Reason::Blocked),
+                (ONION.into(), Some(2), Via::Off, Reason::ProxyDown),
+            ]
+        );
+        assert_eq!(by_policy(&s, "admin", NONE_UP, Some(true))[..3], [true, false, false]);
+        // A fallback straight for a Tor relay is still never straight.
+        let mut onion = rule(&["*.onion"], proxy("vpn"));
+        onion.fallback = Fallback::To(Destination::Direct);
+        let s = settings(vec![onion]);
+        assert_eq!(
+            table(&s, "admin", NONE_UP, Some(false))[2],
+            (ONION.into(), Some(0), Via::Off, Reason::NeverDirect)
+        );
+    }
+
+    #[test]
+    fn rules_for_one_key_leave_the_other_alone_and_block_and_groups_work() {
+        let mut only_admin = rule(&["*"], Destination::Block);
         only_admin.keys = vec!["admin".into()];
-        let s = settings(vec![rule(&[PLAIN], RouteTo::Pool), only_admin]);
-        let up = |_: &str| true;
-        let admin = table(&s, "admin", &pool(), &up);
+        let s = settings(vec![rule(&[PLAIN], group("exits")), only_admin]);
+        let admin = table(&s, "admin", ALL_UP, Some(false));
         assert_eq!(admin[0], (VPN_RELAY.into(), Some(1), Via::Off, Reason::Blocked));
         assert_eq!(admin[1], (PLAIN.into(), Some(0), via("tor"), Reason::Rule));
-        let invoices = table(&s, "invoices", &pool(), &up);
+        let invoices = table(&s, "invoices", ALL_UP, Some(false));
         assert_eq!(invoices[0], (VPN_RELAY.into(), None, via("tor"), Reason::Default));
+        // One key's own default route; a default route that blocks.
+        let mut s = s;
+        s.proxies.default_keys.insert("invoices".into(), Destination::Block);
+        assert_eq!(
+            table(&s, "invoices", ALL_UP, Some(false))[0],
+            (VPN_RELAY.into(), None, Via::Off, Reason::Blocked)
+        );
+        assert_eq!(table(&s, "admin", ALL_UP, Some(false))[1].2, via("tor"));
     }
 
     #[test]
     fn tor_relays_never_go_direct_and_a_transparent_proxy_takes_everything_but_blocks() {
-        // The default route is straight (no proxy configured): the onion relay is held back.
-        let s = settings(vec![rule(&[LAN], RouteTo::Block)]);
-        let t = table(&s, "invoices", &DefaultRoute::Direct, &|_| true);
+        // The default route is straight: the onion relay is held back.
+        let mut s = settings(vec![rule(&[LAN], Destination::Block)]);
+        s.proxies.default = Destination::Direct;
+        let t = table(&s, "invoices", ALL_UP, Some(false));
         assert_eq!(t[2], (ONION.into(), None, Via::Off, Reason::NeverDirect));
         assert_eq!(t[1].2, Via::Direct);
-        let mut s = s;
         s.proxies.transparent = true;
-        let t = table(&s, "invoices", &DefaultRoute::Off, &|_| false);
+        let t = table(&s, "invoices", NONE_UP, Some(false));
         assert_eq!(t[2], (ONION.into(), None, Via::Direct, Reason::Transparent));
         assert_eq!(t[3], (LAN.into(), Some(0), Via::Off, Reason::Blocked));
+        // A default route that blocks blocks there too.
+        s.proxies.default = Destination::Block;
+        let t = table(&s, "invoices", NONE_UP, Some(false));
+        assert_eq!(t[2], (ONION.into(), None, Via::Off, Reason::Blocked));
         // A rule to a proxy that is no longer listed counts as down.
-        let s = settings(vec![rule(&["*.onion"], RouteTo::Proxy("gone".into()))]);
-        assert_eq!(table(&s, "invoices", &pool(), &|_| true)[2].2, Via::Off);
+        let s = settings(vec![rule(&["*.onion"], proxy("gone"))]);
+        assert_eq!(
+            table(&s, "invoices", NONE_UP, Some(false))[2],
+            (ONION.into(), Some(0), Via::Off, Reason::ProxyDown)
+        );
     }
 
     #[test]
-    fn which_keys_need_the_default_route_and_what_each_proxy_is_probed_against() {
-        let mut vpn = rule(&[VPN_RELAY], RouteTo::Proxy("vpn".into()));
-        vpn.fallback = Fallback::Pool;
-        let s = settings(vec![
-            rule(&["*.onion"], RouteTo::Proxy("tor".into())),
-            rule(&["*.lan", PLAIN], RouteTo::Direct),
-            vpn,
-        ]);
-        assert!(uses_default(&s, "invoices"), "vpn falls back to the pool");
-        let s2 = settings(vec![rule(&["*"], RouteTo::Proxy("i2p".into()))]);
+    fn which_keys_take_the_default_route_which_groups_they_use_and_what_each_proxy_is_probed_against() {
+        let mut vpn = rule(&[VPN_RELAY], proxy("vpn"));
+        vpn.fallback = Fallback::To(group("exits"));
+        let mut lan = rule(&["*.lan", PLAIN], Destination::Direct);
+        // A fallback is never taken from a straight rule.
+        lan.fallback = Fallback::To(proxy("i2p"));
+        let s = settings(vec![rule(&["*.onion"], proxy("tor")), lan, vpn]);
+        assert!(!uses_default(&s, "invoices"), "every relay is ruled");
+        assert_eq!(groups_used(&s, "invoices"), ["exits"]);
+        let s2 = settings(vec![rule(&["*"], proxy("i2p"))]);
         assert!(!uses_default(&s2, "invoices"));
-        let s3 = settings(vec![rule(&["*"], RouteTo::Pool)]);
+        assert!(groups_used(&s2, "admin").is_empty());
+        let mut s3 = settings(vec![rule(&[PLAIN], group("exits")), rule(&[LAN], group("exits"))]);
+        s3.proxies.default = group("exits");
         assert!(uses_default(&s3, "admin"));
-        // A proxy is probed against the relays a rule sends it, plus, while it
-        // is in the pool, those that may take the default route (here a pool
-        // fallback). One in no rule and out of the pool, or an unknown id: none.
+        assert_eq!(groups_used(&s3, "admin"), ["exits"], "each group once");
+        // A proxy is probed against the relays a rule, a fallback, a group or
+        // the default route may send through it. One in none of them, or an
+        // unknown id: none.
         assert_eq!(
             relays_through_proxy(&s, "tor"),
             vec![VPN_RELAY.to_string(), ONION.to_string()]
@@ -653,8 +798,10 @@ mod tests {
         assert_eq!(relays_through_proxy(&s, "vpn"), vec![VPN_RELAY.to_string()]);
         assert!(relays_through_proxy(&s, "i2p").is_empty());
         assert!(relays_through_proxy(&s, "nope").is_empty());
-        assert_eq!(relays_through_proxy(&s3, "i2p"), Vec::<String>::new());
-        assert_eq!(relays_through_proxy(&s3, "tor").len(), 4);
+        assert_eq!(relays_through_proxy(&s2, "i2p").len(), 4);
+        assert!(relays_through_proxy(&s3, "i2p").is_empty());
+        assert_eq!(relays_through_proxy(&s3, "vpn").len(), 4);
+        assert!(Destination::Group("x".into()).via_proxy() && !Destination::Block.via_proxy());
     }
 
     #[test]
@@ -664,41 +811,74 @@ mod tests {
             check_rules(&s).map_err(|e| e.to_string())
         };
         assert!(check(vec![
-            rule(&["*.onion"], RouteTo::Proxy("tor".into())),
-            rule(&["*.lan"], RouteTo::Direct)
+            rule(&["*.onion"], proxy("tor")),
+            rule(&["*.lan"], Destination::Direct),
+            rule(&["*.i2p"], group("exits")),
         ])
         .is_ok());
         let named = |name: &str| Rule {
             name: name.into(),
-            ..rule(&["*"], RouteTo::Pool)
+            ..rule(&["*"], group("exits"))
         };
         let keyed = |k: &str| Rule {
             keys: vec![k.into()],
-            ..rule(&["*"], RouteTo::Pool)
+            ..rule(&["*"], group("exits"))
+        };
+        let falling = |to: Destination, patterns: &[&str]| Rule {
+            fallback: Fallback::To(to),
+            ..rule(patterns, proxy("tor"))
         };
         let bad: Vec<(Vec<Rule>, &str)> = vec![
-            (vec![rule(&["*"], RouteTo::Pool); MAX_RULES + 1], "at most"),
+            (vec![rule(&["*"], group("exits")); MAX_RULES + 1], "at most"),
             (vec![named(&"n".repeat(MAX_NAME_LEN + 1))], "name is too long"),
-            (vec![rule(&[], RouteTo::Pool)], "between 1 and"),
-            (vec![rule(&["a b"], RouteTo::Pool)], "rule 1: pattern"),
+            (vec![rule(&[], group("exits"))], "between 1 and"),
+            (vec![rule(&["a b"], group("exits"))], "rule 1: pattern"),
             (vec![keyed("nobody")], "no key 'nobody'"),
-            (vec![rule(&["*"], RouteTo::Proxy("gone".into()))], "not in the list"),
-            (vec![rule(&["*.onion"], RouteTo::Direct)], "never directly"),
-            (vec![rule(&[ONION], RouteTo::Direct)], "never directly"),
-            (vec![rule(&["*"], RouteTo::Block)], "block every relay"),
+            (
+                vec![rule(&["*"], proxy("gone"))],
+                "rule 1 points at a proxy that is not in the list; change the rule first",
+            ),
+            (
+                vec![rule(&["*"], group("gone"))],
+                "rule 1 points at a group that does not exist; change the rule first",
+            ),
+            (
+                vec![falling(group("gone"), &["*"])],
+                "the fallback of rule 1 points at a group",
+            ),
+            (vec![rule(&["*.onion"], Destination::Direct)], "never directly"),
+            (vec![rule(&[ONION], Destination::Direct)], "never directly"),
+            (vec![falling(Destination::Direct, &["*.i2p"])], "never directly"),
+            (vec![rule(&["*"], Destination::Block)], "block every relay"),
         ];
         for (rules, why) in bad {
             let err = check(rules).unwrap_err();
             assert!(err.contains(why), "{why}: {err}");
         }
-        let mut too_many = rule(&["*"], RouteTo::Pool);
+        let mut too_many = rule(&["*"], group("exits"));
         too_many.patterns = vec!["*".into(); MAX_PATTERNS + 1];
         assert!(check(vec![too_many]).unwrap_err().contains("between 1 and"));
         // Blocking everything for one key is refused; for one relay, fine.
-        let mut admin_block = rule(&["*"], RouteTo::Block);
+        let mut admin_block = rule(&["*"], Destination::Block);
         admin_block.keys = vec!["admin".into()];
         assert!(check(vec![admin_block]).unwrap_err().contains("Administration"));
-        assert!(check(vec![rule(&[PLAIN], RouteTo::Block)]).is_ok());
+        assert!(check(vec![rule(&[PLAIN], Destination::Block)]).is_ok());
+        // The default route counts: blocking by default leaves the ruled relays.
+        let mut s = settings(vec![rule(&[PLAIN], group("exits"))]);
+        s.proxies.default = Destination::Block;
+        assert!(check_rules(&s).is_ok());
+        s.proxies.rules.clear();
+        assert!(check_rules(&s).unwrap_err().to_string().contains("block every relay"));
+        // A fallback a rule never takes is not checked for being straight.
+        let mut blocked = rule(&["*.onion"], Destination::Block);
+        blocked.fallback = Fallback::To(Destination::Direct);
+        assert!(check(vec![blocked, rule(&[PLAIN], group("exits"))]).is_ok());
+        // Behind a transparent proxy nothing is straight, so a Tor rule may say so.
+        let mut s = settings(vec![rule(&["*.onion"], Destination::Direct)]);
+        s.proxies.transparent = true;
+        assert!(check_rules(&s).is_ok());
+        let p = &s.proxies;
+        assert!(check_destination(p, &Destination::Direct, "x", "y").is_ok());
     }
 
     #[test]
@@ -706,19 +886,33 @@ mod tests {
         let json = serde_json::json!([
             {"match": ["*.onion"], "to": {"proxy": "tor"}},
             {"name": "lan", "match": ["*.lan"], "keys": ["admin"], "to": "direct"},
-            {"match": [VPN_RELAY], "to": {"proxy": "vpn"}, "fallback": "pool"},
+            {"match": [VPN_RELAY], "to": {"proxy": "vpn"}, "fallback": {"to": {"group": "exits"}}},
             {"match": ["*"], "to": "block"},
-            {"match": ["*"], "to": "pool"}
+            {"match": ["*"], "to": {"group": "exits"}, "fallback": "policy"},
+            {"match": ["*"], "to": {"proxy": "tor"}, "fallback": {"to": "direct"}}
         ]);
         let rules: Vec<Rule> = serde_json::from_value(json.clone()).unwrap();
-        assert_eq!(rules[0].to, RouteTo::Proxy("tor".into()));
+        assert_eq!(rules[0].to, proxy("tor"));
         assert_eq!(rules[0].fallback, Fallback::Offline);
         assert_eq!(rules[1].keys, vec!["admin".to_string()]);
-        assert_eq!(rules[2].fallback, Fallback::Pool);
-        assert_eq!(rules[3].to, RouteTo::Block);
-        assert!(serde_json::from_value::<Rule>(serde_json::json!({"match": ["*"], "to": "pool", "extra": 1})).is_err());
+        assert_eq!(rules[2].fallback, Fallback::To(group("exits")));
+        assert_eq!(rules[3].to, Destination::Block);
+        assert_eq!(
+            (rules[4].to.clone(), rules[4].fallback.clone()),
+            (group("exits"), Fallback::Policy)
+        );
+        assert_eq!(rules[5].fallback, Fallback::To(Destination::Direct));
+        assert!(
+            serde_json::from_value::<Rule>(serde_json::json!({"match": ["*"], "to": "block", "extra": 1})).is_err()
+        );
+        // The pool is gone: a rule that names it is refused.
+        let old = serde_json::from_value::<Rule>(serde_json::json!({"match": ["*"], "to": "pool"}));
+        assert!(old.unwrap_err().to_string().contains("unknown variant `pool`"));
         let back = serde_json::to_value(&rules).unwrap();
         assert_eq!(back[1]["to"], "direct");
         assert_eq!(back[0]["to"]["proxy"], "tor");
+        assert_eq!(back[2]["fallback"]["to"]["group"], "exits");
+        assert_eq!(back[4]["fallback"], "policy");
+        assert_eq!(back[0]["fallback"], "offline");
     }
 }

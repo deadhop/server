@@ -368,8 +368,11 @@ pub struct AuditInputs<'a> {
     pub electrum_transport: String,
     pub announce: bool,
     pub listening: Option<Listening>,
-    /// Relays that a routing rule sends straight to an internet host.
+    /// Relays that a routing rule, or the default route, sends straight to
+    /// an internet host.
     pub direct_by_rule: Vec<String>,
+    /// Proxies are listed, yet some key's default route is direct by choice.
+    pub default_direct: bool,
     pub now: u64,
 }
 
@@ -436,11 +439,11 @@ pub fn audit(i: AuditInputs<'_>) -> PrivacyAudit {
         checks.push(finding(
             "relays_direct_by_rule",
             "network",
-            "A routing rule exposes this machine's IP address",
+            "A routing rule or the default route exposes this machine's IP address",
             "fail",
             20,
             format!(
-                "{} sent straight to the internet by a routing rule, so {} this machine's address.",
+                "{} sent straight to the internet by a routing rule or the default route, so {} this machine's address.",
                 if i.direct_by_rule.len() == 1 {
                     "One relay is"
                 } else {
@@ -453,7 +456,7 @@ pub fn audit(i: AuditInputs<'_>) -> PrivacyAudit {
                 }
             ),
             i.direct_by_rule.iter().map(|r| format!("direct   {r}")).collect(),
-            Some("Send them through a proxy in Network, Rules."),
+            Some("Send them through a proxy or a group in Network, Rules (the default route is the last rule)."),
         ));
     }
     let connected = i.relays.iter().filter(|r| r.connected).count();
@@ -471,6 +474,17 @@ pub fn audit(i: AuditInputs<'_>) -> PrivacyAudit {
              and the proxy list is not used.",
             vec!["transparent proxy   declared by the operator".into(), relays_line],
             None,
+        )),
+        // Proxies are listed, but the default route sends relays straight.
+        None if i.default_direct => checks.push(finding(
+            "relays_via_proxy",
+            "network",
+            "Relays see this machine's IP address",
+            "fail",
+            30,
+            "The default route is direct: relays no rule sends through a proxy connect straight to this machine.",
+            vec!["default route   direct".into(), relays_line],
+            Some("Point the default route at a proxy or a group in Network, Rules."),
         )),
         None if i.configured > 0 => checks.push(finding(
             "relays_via_proxy",
@@ -992,6 +1006,18 @@ mod tests {
             assert!(c.summary.contains(needle), "{}", c.summary);
             assert!(c.evidence.iter().any(|e| e.ends_with(said)), "{:?}", c.evidence);
         }
+        // A default route that is direct by choice is said as such.
+        let a = audit(AuditInputs {
+            configured: 2,
+            default_direct: true,
+            ..inputs(None)
+        });
+        let c = a.checks.iter().find(|c| c.id == "relays_via_proxy").unwrap();
+        assert_eq!(
+            (c.result.as_str(), c.title.as_str()),
+            ("fail", "Relays see this machine's IP address")
+        );
+        assert!(c.summary.contains("default route is direct"), "{}", c.summary);
         // A declared transparent proxy is never scored, whatever else is set.
         let a = audit(AuditInputs {
             transparent: true,
@@ -1022,6 +1048,7 @@ mod tests {
             announce: false,
             listening: Some(Listening::default()),
             direct_by_rule: Vec::new(),
+            default_direct: false,
             now: 9,
         }
     }

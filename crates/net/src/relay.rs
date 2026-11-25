@@ -304,28 +304,48 @@ async fn open_ws(url: &Url, proxy: Option<&ProxyTransport>) -> std::result::Resu
 
 /// Opens each relay's websocket its own way: through the proxy its route
 /// names, or straight. A relay without a route is refused (it is never added
-/// to the pool, so this does not happen in practice).
+/// to the pool, so this does not happen in practice). The table is shared
+/// with the [`Pool`] built on it, which swaps it when routes change (see
+/// [`Pool::reroute`]).
 #[derive(Debug, Clone)]
 pub struct RoutingTransport {
-    routes: Vec<(String, Option<ProxyTransport>)>,
+    routes: RouteTable,
+}
+
+/// Each relay and its proxy (`None`: straight), shared between a transport
+/// and its pool.
+type RouteTable = Arc<std::sync::RwLock<Vec<(String, Option<ProxyTransport>)>>>;
+
+fn table(routes: Vec<(String, Option<ProxySpec>)>) -> Vec<(String, Option<ProxyTransport>)> {
+    routes
+        .into_iter()
+        .map(|(relay, spec)| (relay, spec.map(ProxyTransport::new)))
+        .collect()
+}
+
+/// The route of `url` in `routes`: `None` when it has none, `Some(None)`
+/// when it goes straight.
+fn route_in(routes: &[(String, Option<ProxyTransport>)], url: &str) -> Option<Option<ProxyTransport>> {
+    routes
+        .iter()
+        .find(|(relay, _)| same_relay(relay, url))
+        .map(|(_, p)| p.clone())
 }
 
 impl RoutingTransport {
     /// `routes`: relay address and its proxy (`None`: straight).
     pub fn new(routes: Vec<(String, Option<ProxySpec>)>) -> Self {
         RoutingTransport {
-            routes: routes
-                .into_iter()
-                .map(|(relay, spec)| (relay, spec.map(ProxyTransport::new)))
-                .collect(),
+            routes: Arc::new(std::sync::RwLock::new(table(routes))),
         }
     }
 
-    fn route(&self, url: &Url) -> Option<Option<&ProxyTransport>> {
-        self.routes
-            .iter()
-            .find(|(relay, _)| same_relay(relay, url.as_str()))
-            .map(|(_, p)| p.as_ref())
+    // Cloned out of the table, so no lock is held while connecting.
+    fn route(&self, url: &Url) -> Option<Option<ProxyTransport>> {
+        route_in(
+            &self.routes.read().unwrap_or_else(std::sync::PoisonError::into_inner),
+            url.as_str(),
+        )
     }
 }
 
@@ -354,9 +374,11 @@ impl WebSocketTransport for RoutingTransport {
                     "this relay has no route",
                 )));
             };
-            tokio::time::timeout(timeout, open_ws(url, proxy)).await.map_err(|_| {
-                TransportError::backend(io::Error::new(io::ErrorKind::TimedOut, "relay connection timed out"))
-            })?
+            tokio::time::timeout(timeout, open_ws(url, proxy.as_ref()))
+                .await
+                .map_err(|_| {
+                    TransportError::backend(io::Error::new(io::ErrorKind::TimedOut, "relay connection timed out"))
+                })?
         })
     }
 }
@@ -429,6 +451,12 @@ impl WebSocketTransport for ProxyTransport {
 pub struct Pool {
     client: Arc<Client>,
     sink: Option<RelaySink>,
+    /// The routes of a routed pool, shared with its transport.
+    routes: Option<RouteTable>,
+}
+
+fn relay_err(e: impl fmt::Display) -> Error {
+    Error::InvalidParams(format!("relay: {e}"))
 }
 
 #[cfg(feature = "contextvm")]
@@ -455,19 +483,56 @@ impl Pool {
         Pool {
             client: Arc::new(client),
             sink: None,
+            routes: None,
         }
     }
 
     /// A pool whose relays each go their own way (see [`RoutingTransport`]).
     pub fn routed(keys: Keys, routes: Vec<(String, Option<ProxySpec>)>) -> Self {
-        let client = Client::builder()
-            .signer(keys)
-            .websocket_transport(RoutingTransport::new(routes))
-            .build();
+        let transport = RoutingTransport::new(routes);
+        let table = transport.routes.clone();
+        let client = Client::builder().signer(keys).websocket_transport(transport).build();
         Pool {
             client: Arc::new(client),
             sink: None,
+            routes: Some(table),
         }
+    }
+
+    /// Give a routed pool new routes, moving only what changed: a relay whose
+    /// proxy is different is dropped and connected again through the new one,
+    /// a relay no longer listed is dropped, a new one is added and connected,
+    /// and every other relay keeps its connection. A relay added again takes
+    /// the pool's subscriptions with it.
+    pub async fn reroute(&self, routes: Vec<(String, Option<ProxySpec>)>) -> Result<()> {
+        let Some(shared) = &self.routes else {
+            return Err(Error::InvalidParams("this relay pool does not route each relay".into()));
+        };
+        let next = table(routes);
+        let before = std::mem::replace(
+            &mut *shared.write().unwrap_or_else(std::sync::PoisonError::into_inner),
+            next.clone(),
+        );
+        let spec = |r: Option<Option<ProxyTransport>>| r.map(|p| p.map(|t| t.spec));
+        let current = self.client.relays().await;
+        for url in current.keys() {
+            let now = spec(route_in(&next, url.as_str()));
+            if now == spec(route_in(&before, url.as_str())) {
+                continue;
+            }
+            self.client.force_remove_relay(url).await.map_err(relay_err)?;
+            if now.is_some() {
+                self.client.add_relay(url).await.map_err(relay_err)?;
+                self.client.connect_relay(url).await.map_err(relay_err)?;
+            }
+        }
+        for (relay, _) in &next {
+            if !current.keys().any(|u| same_relay(u.as_str(), relay)) {
+                self.client.add_relay(relay).await.map_err(relay_err)?;
+                self.client.connect_relay(relay).await.map_err(relay_err)?;
+            }
+        }
+        Ok(())
     }
 
     pub fn client(&self) -> &Arc<Client> {
@@ -818,6 +883,116 @@ mod tests {
         pool.disconnect().await.unwrap();
     }
 
+    /// A port in front of `target` that counts the connections made through it.
+    async fn counted(target: &str) -> (String, Arc<std::sync::atomic::AtomicUsize>) {
+        let to = Url::parse(target).unwrap();
+        let to = (to.host_str().unwrap().to_string(), to.port().unwrap());
+        let l = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("ws://127.0.0.1:{}", l.local_addr().unwrap().port());
+        let count = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let n = count.clone();
+        tokio::spawn(async move {
+            loop {
+                let (mut s, _) = l.accept().await.unwrap();
+                n.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                let mut t = TcpStream::connect((to.0.as_str(), to.1)).await.unwrap();
+                tokio::spawn(async move {
+                    let _ = tokio::io::copy_bidirectional(&mut s, &mut t).await;
+                });
+            }
+        });
+        (url, count)
+    }
+
+    async fn connected(pool: &Pool, url: &str) {
+        let wait = async {
+            loop {
+                let relays = pool.client().relays().await;
+                if relays
+                    .iter()
+                    .any(|(u, r)| same_relay(u.as_str(), url) && r.is_connected())
+                {
+                    return;
+                }
+                tokio::time::sleep(Duration::from_millis(50)).await;
+            }
+        };
+        tokio::time::timeout(Duration::from_secs(10), wait).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn new_routes_move_only_the_relays_whose_route_changed() {
+        let (ra, rb, rc) = (
+            MockRelay::run().await.unwrap(),
+            MockRelay::run().await.unwrap(),
+            MockRelay::run().await.unwrap(),
+        );
+        let ((a, na), (b, nb)) = (
+            counted(&ra.url().await.to_string()).await,
+            counted(&rb.url().await.to_string()).await,
+        );
+        let (c, nc) = counted(&rc.url().await.to_string()).await;
+        let (p1, t1) = socks5_proxy(None).await;
+        let (p2, _t2) = socks5_proxy(None).await;
+        let via = |p: u16| Some(spec(&format!("socks5://127.0.0.1:{p}")));
+        let pool = Pool::routed(Keys::generate(), vec![(a.clone(), None), (b.clone(), via(p1))]);
+        pool.connect(&[a.clone(), b.clone()]).await.unwrap();
+        pool.subscribe(vec![Filter::new().kind(Kind::TextNote)]).await.unwrap();
+        let mut notes = pool.notifications();
+        connected(&pool, &a).await;
+        connected(&pool, &b).await;
+        let count = |n: &Arc<std::sync::atomic::AtomicUsize>| n.load(std::sync::atomic::Ordering::SeqCst);
+        assert_eq!((count(&na), count(&nb)), (1, 1));
+
+        // b moves to the second proxy; the first one takes no new connection,
+        // so b can only come back through the second. a is not touched.
+        t1.abort();
+        pool.reroute(vec![(a.clone(), None), (b.clone(), via(p2))])
+            .await
+            .unwrap();
+        connected(&pool, &b).await;
+        assert_eq!((count(&na), count(&nb)), (1, 2));
+        // b still has the subscription: a note only b has reaches the pool.
+        let writer = Client::builder().signer(Keys::generate()).build();
+        writer.add_relay(rb.url().await).await.unwrap();
+        writer.connect().await;
+        let note = writer
+            .send_event_builder(EventBuilder::text_note("moved"))
+            .await
+            .unwrap();
+        let from_b = async {
+            let mut from = None;
+            while from.is_none() {
+                if let Ok(RelayPoolNotification::Event { relay_url, event, .. }) = notes.recv().await {
+                    from = (event.id == *note.id()).then_some(relay_url);
+                }
+            }
+            from.unwrap()
+        };
+        let from = tokio::time::timeout(Duration::from_secs(10), from_b).await.unwrap();
+        assert!(same_relay(from.as_str(), &b), "{from}");
+
+        // Same routes again: nothing moves.
+        pool.reroute(vec![(a.clone(), None), (b.clone(), via(p2))])
+            .await
+            .unwrap();
+        // a leaves, c joins; b keeps its connection.
+        pool.reroute(vec![(b.clone(), via(p2)), (c.clone(), None)])
+            .await
+            .unwrap();
+        connected(&pool, &c).await;
+        let relays: Vec<String> = pool.client().relays().await.keys().map(|u| u.to_string()).collect();
+        assert!(!relays.iter().any(|u| same_relay(u, &a)), "{relays:?}");
+        assert_eq!((count(&na), count(&nb), count(&nc)), (1, 2, 1));
+
+        // An address the relay library refuses, and a pool that does not route.
+        let err = pool.reroute(vec![("not a url".into(), None)]).await.unwrap_err();
+        assert!(err.to_string().contains("relay:"), "{err}");
+        let plain = Pool::new(Keys::generate(), None);
+        assert!(plain.reroute(Vec::new()).await.is_err());
+        pool.disconnect().await.unwrap();
+    }
+
     #[tokio::test]
     async fn every_proxy_kind_carries_relay_traffic() {
         let relay = MockRelay::run().await.unwrap();
@@ -960,6 +1135,7 @@ mod tests {
         let unsigned = Pool {
             client: Arc::new(Client::builder().build()),
             sink: None,
+            routes: None,
         };
         assert!(unsigned.public_key().await.is_err());
         assert!(unsigned.sign(EventBuilder::text_note("x")).await.is_err());

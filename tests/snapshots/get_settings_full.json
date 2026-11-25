@@ -13,16 +13,15 @@
     "pow_bits": 4,
     "pow_window_secs": 600,
     "proxies": {
-      "chaos_max_secs": 900,
-      "chaos_min_secs": 300,
+      "default": "direct",
+      "default_keys": {},
+      "groups": [],
       "i2p_registries": [
         "http://notbob.i2p/cgi-bin/jump.cgi?q={name}",
         "http://stats.i2p/cgi-bin/jump.cgi?a={name}"
       ],
       "list": [],
-      "mode": "off",
       "offline": "kill_switch",
-      "rotate_secs": 3600,
       "rules": [],
       "transparent": false
     },
@@ -100,10 +99,8 @@
     "relays",
     "relay_names",
     "proxies.list",
-    "proxies.mode",
-    "proxies.rotate_secs",
-    "proxies.chaos_min_secs",
-    "proxies.chaos_max_secs",
+    "proxies.groups",
+    "proxies.default",
     "proxies.offline",
     "proxies.rules",
     "proxies.i2p_registries"
@@ -123,8 +120,24 @@
     "pow_bits": 4,
     "pow_window_secs": 600,
     "proxies": {
-      "chaos_max_secs": 600,
-      "chaos_min_secs": 120,
+      "default": {
+        "proxy": "tor"
+      },
+      "default_keys": {},
+      "groups": [
+        {
+          "chaos_max_secs": 600,
+          "chaos_min_secs": 120,
+          "id": "exits",
+          "name": "Exits",
+          "proxies": [
+            "tor",
+            "vpn"
+          ],
+          "rotate_secs": 1800,
+          "strategy": "round_robin"
+        }
+      ],
       "i2p_registries": [
         "http://notbob.i2p/cgi-bin/jump.cgi?q={name}",
         "http://reg.i2p/?a={name}"
@@ -133,31 +146,23 @@
         {
           "i2p": false,
           "id": "tor",
-          "keys": [],
           "name": "Tor",
-          "pool": true,
           "url": "socks5://127.0.0.1:9050"
         },
         {
           "i2p": false,
           "id": "vpn",
-          "keys": [],
           "name": "VPN",
-          "pool": false,
           "url": "socks5://user:***@10.8.0.1:1080"
         },
         {
           "i2p": true,
           "id": "i2p",
-          "keys": [],
           "name": "I2P router",
-          "pool": false,
           "url": "http://127.0.0.1:4444"
         }
       ],
-      "mode": "round_robin",
       "offline": "kill_switch",
-      "rotate_secs": 1800,
       "rules": [
         {
           "fallback": "offline",
@@ -200,13 +205,15 @@
           "to": "block"
         },
         {
-          "fallback": "offline",
+          "fallback": "policy",
           "keys": [],
           "match": [
             "relay-a.example"
           ],
           "name": "",
-          "to": "pool"
+          "to": {
+            "group": "exits"
+          }
         }
       ],
       "transparent": false

@@ -16,10 +16,12 @@ use serde::{Deserialize, Serialize};
 use crate::config::{is_loopback, is_loopback_host, is_overlay_host, MAX_MONEY_SAT};
 use crate::error::{Error, Result};
 use crate::network::{keep, take, within, NetworkSettings, Topology};
+use deadhop_netengine::legacy;
 // The network part of the settings lives in `network.rs`; these keep their old paths.
 pub use crate::network::{
-    same_relay, OfflinePolicy, ProxyEntry, ProxyEntryInput, ProxyMode, ProxyPatch, ProxySettings,
+    same_relay, OfflinePolicy, ProxyEntry, ProxyEntryInput, ProxyGroup, ProxyPatch, ProxySettings, Strategy,
 };
+pub use crate::routes::Destination;
 
 /// Inclusive bounds shared by the environment loader and runtime changes, so
 /// the two can never disagree about what is valid.
@@ -41,7 +43,7 @@ pub mod bounds {
     pub const SWEEP_FEE_RATE: (u64, u64) = (1, 1_000);
     pub const SWEEP_ANONYMITY_SET: (u64, u64) = (2, 1_000);
     // The bounds of the network settings live with them.
-    pub use crate::network::bounds::{NAME_LEN, PROXIES, PROXY_ID_LEN, PROXY_INTERVAL_SECS};
+    pub use crate::network::bounds::{GROUPS, GROUP_MIN, NAME_LEN, PROXIES, PROXY_ID_LEN, PROXY_INTERVAL_SECS};
 }
 
 /// How a future sweep would leave this wallet.
@@ -177,8 +179,9 @@ pub struct SettingsPatch {
     pub poll_secs: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub late_grace_secs: Option<u64>,
-    /// Old form of a single proxy url (empty turns it off); read for
-    /// settings saved before there was a list, and turned into one entry.
+    /// Old form of a single proxy url (empty: no proxy). It replaces the
+    /// whole proxy setup with that one proxy as the default route; it is
+    /// never stored.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub proxy: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -249,20 +252,6 @@ impl SettingsPatch {
         );
         take(&mut s.poll_secs, &self.poll_secs);
         take(&mut s.late_grace_secs, &self.late_grace_secs);
-        if let Some(old) = &self.proxy {
-            s.proxies.list = if old.is_empty() {
-                Vec::new()
-            } else {
-                vec![ProxyEntry {
-                    id: "saved".into(),
-                    name: String::new(),
-                    url: old.clone(),
-                    keys: Vec::new(),
-                    pool: true,
-                    i2p: false,
-                }]
-            };
-        }
         if let Some(p) = &self.proxies {
             p.apply(&mut s.proxies);
         }
@@ -297,12 +286,7 @@ impl SettingsPatch {
         );
         keep(&mut self.poll_secs, &o.poll_secs);
         keep(&mut self.late_grace_secs, &o.late_grace_secs);
-        keep(&mut self.proxy, &o.proxy);
         if let Some(p) = &o.proxies {
-            if o.proxy.is_none() && p.list.is_some() {
-                // A new list replaces the old single address.
-                self.proxy = None;
-            }
             self.proxies.get_or_insert_with(ProxyPatch::default).merge(p);
         }
         if let Some(sw) = &o.sweep {
@@ -336,7 +320,6 @@ impl SettingsPatch {
             ),
             ("poll_secs", self.poll_secs.is_some()),
             ("late_grace_secs", self.late_grace_secs.is_some()),
-            ("proxy", self.proxy.is_some()),
         ];
         let mut out: Vec<String> = fields.iter().filter(|f| f.1).map(|f| f.0.to_string()).collect();
         if let Some(p) = &self.proxies {
@@ -347,6 +330,60 @@ impl SettingsPatch {
         }
         out
     }
+}
+
+/// A settings change stored before proxy groups (#53), in today's shape.
+///
+/// What was stored then was a change to the environment's settings in the
+/// old shape (`env`). Both are put together the old way and converted with
+/// [`legacy::convert`], the conversion the environment goes through too.
+/// Every proxy setting the old change made is kept, and so is any route
+/// that comes out differently from the environment's: a proxy setting
+/// left to the environment stays so.
+pub fn upgrade_stored(json: &str, env: &legacy::ProxySettings) -> serde_json::Result<SettingsPatch> {
+    let mut v: serde_json::Value = serde_json::from_str(json)?;
+    let old = v.as_object_mut().and_then(|o| o.remove("proxies"));
+    let mut patch: SettingsPatch = serde_json::from_value(v)?;
+    let old: legacy::ProxyPatch = old.map(serde_json::from_value).transpose()?.unwrap_or_default();
+    let single = patch.proxy.take();
+    let mut then = env.clone();
+    if let Some(url) = &single {
+        // The single address of the first versions: a list of one, or none.
+        then.list = (!url.is_empty())
+            .then(|| legacy::ProxyEntry {
+                id: "saved".into(),
+                name: String::new(),
+                url: url.clone(),
+                keys: Vec::new(),
+                pool: true,
+                i2p: false,
+            })
+            .into_iter()
+            .collect();
+    }
+    old.apply(&mut then);
+    let lanes = crate::keys::lanes();
+    let (now, was) = (legacy::convert(&then, &lanes), legacy::convert(env, &lanes));
+    // What shaped the routes: the list (with its pool and keys), the
+    // strategy, and rules (a rule to the pool follows the pool).
+    let route = single.is_some() || old.sets_default() || old.rules.is_some();
+    fn kept<T: Clone + PartialEq>(set: bool, now: &T, was: &T) -> Option<T> {
+        (set || now != was).then(|| now.clone())
+    }
+    let p = ProxyPatch {
+        list: kept(single.is_some() || old.list.is_some(), &now.list, &was.list)
+            .and_then(|l| ProxyPatch::with_list(&l).list),
+        groups: kept(route, &now.groups, &was.groups),
+        default: kept(route, &now.default, &was.default),
+        default_keys: kept(route, &now.default_keys, &was.default_keys),
+        offline: old.offline,
+        transparent: old.transparent,
+        rules: kept(old.rules.is_some(), &now.rules, &was.rules),
+        i2p_registries: old.i2p_registries,
+        ..ProxyPatch::default()
+    };
+    patch.proxies = (p != ProxyPatch::default()).then_some(p);
+    Ok(patch)
 }
 
 /// Validate a relay list for runtime use. Stricter than the environment
@@ -436,12 +473,6 @@ impl Settings {
     /// The relays one key connects to, in list order.
     pub fn relays_for(&self, key: &str) -> Vec<String> {
         self.topology().relays_for(key)
-    }
-
-    /// The relays used by any of the keys a proxy carries (empty: every key),
-    /// in list order.
-    pub fn relays_through(&self, proxy_keys: &[String]) -> Vec<String> {
-        self.topology().relays_through(proxy_keys)
     }
 
     /// Check every value and every relationship between values, except the
@@ -565,7 +596,6 @@ impl Settings {
 pub(crate) mod tests {
     use super::*;
     use crate::config::tests::{base, load};
-    use crate::network::entries_from;
 
     pub fn defaults() -> Settings {
         load(&base()).unwrap().settings()
@@ -576,8 +606,6 @@ pub(crate) mod tests {
             id: id.into(),
             name: String::new(),
             url: url.into(),
-            keys: Vec::new(),
-            pool: true,
             i2p: false,
         }
     }
@@ -693,27 +721,49 @@ pub(crate) mod tests {
         let mut applied = ProxySettings::default();
         bare.apply(&mut applied);
         assert_eq!(applied.list[0].id, "p0");
+        // The single address of old clients is never stored or applied as such.
         let mut s = defaults();
         s.proxies = p;
-        let cleared: SettingsPatch = serde_json::from_value(serde_json::json!({ "proxy": "" })).unwrap();
-        assert!(cleared.apply(&s).proxies.list.is_empty());
+        let single: SettingsPatch = serde_json::from_value(serde_json::json!({ "proxy": "" })).unwrap();
+        assert_eq!(single.apply(&s).proxies, s.proxies);
+        assert!(single.names().is_empty());
     }
 
     #[test]
-    fn proxy_patches_merge_and_old_saved_proxies_are_replaced_by_a_list() {
-        let mut stored: SettingsPatch = serde_json::from_value(serde_json::json!({ "proxy": "socks5://h:1" })).unwrap();
+    fn proxy_patches_merge_and_name_their_fields() {
+        let mut stored: SettingsPatch = serde_json::from_value(
+            serde_json::json!({ "proxies": { "list": [{ "id": "a", "url": "socks5://h:1" }] } }),
+        )
+        .unwrap();
         let newer: SettingsPatch = serde_json::from_value(serde_json::json!({
-            "proxies": { "mode": "chaos", "list": [{ "id": "a", "url": "socks5://h:2" }] }
+            "proxies": {
+                "list": [{ "id": "a", "url": "socks5://h:2" }, { "id": "b", "url": "socks5://h:3" }],
+                "groups": [{ "id": "g", "proxies": ["a", "b"], "strategy": "chaos" }],
+                "default": { "group": "g" },
+                "default_keys": { "admin": { "proxy": "a" } }
+            }
         }))
         .unwrap();
         stored.merge(&newer);
-        assert!(stored.proxy.is_none());
         let s = stored.apply(&defaults());
         assert_eq!(
-            (s.proxies.mode, s.proxies.list[0].url.as_str()),
-            (ProxyMode::Chaos, "socks5://h:2")
+            (
+                s.proxies.list[0].url.as_str(),
+                s.proxies.groups[0].strategy,
+                &s.proxies.default
+            ),
+            ("socks5://h:2", Strategy::Chaos, &Destination::Group("g".into()))
         );
-        assert_eq!(stored.names(), vec!["proxies.list", "proxies.mode"]);
+        s.validate(true).unwrap();
+        assert_eq!(
+            stored.names(),
+            vec![
+                "proxies.list",
+                "proxies.groups",
+                "proxies.default",
+                "proxies.default_keys"
+            ]
+        );
         // Switching a policy keeps the list.
         stored.merge(&SettingsPatch {
             proxies: Some(ProxyPatch {
@@ -725,7 +775,7 @@ pub(crate) mod tests {
         });
         let s = stored.apply(&defaults());
         assert!(s.proxies.transparent && s.proxies.offline == OfflinePolicy::Open);
-        assert_eq!(s.proxies.list.len(), 1);
+        assert_eq!(s.proxies.list.len(), 2);
         // Redaction for display.
         let p = ProxySettings {
             list: vec![entry("a", "socks5://u:pw@h:1")],
@@ -765,7 +815,7 @@ pub(crate) mod tests {
             "max_amount_sat": 3000, "max_open_invoices": 9, "max_invoices_per_day": 99,
             "rate_global_per_min": 5, "rate_per_key_per_min": 2, "rate_requests_per_min": 50,
             "rate_requests_per_key_per_min": 10, "poll_secs": 30, "late_grace_secs": 0,
-            "proxy": "socks5://127.0.0.1:9050",
+            "proxies": { "list": [{ "id": "tor", "url": "socks5://127.0.0.1:9050" }], "default": { "proxy": "tor" } },
             "sweep": { "mode": "coinjoin", "threshold_sat": 50000, "max_fee_rate_sat_vb": 3, "min_anonymity_set": 9 }
         }))
         .unwrap();
@@ -787,8 +837,7 @@ pub(crate) mod tests {
             }
         );
         s.validate(true).unwrap();
-        assert_eq!(stored.names().len(), 24);
-        // A proxy saved before there was a list is kept, as the first entry.
+        assert_eq!(stored.names().len(), 25);
         assert_eq!(s.proxies.list.len(), 1);
         assert_eq!(s.proxies.list[0].url, "socks5://127.0.0.1:9050");
         assert!(stored.names().contains(&"sweep.mode".to_string()));
@@ -839,17 +888,24 @@ pub(crate) mod tests {
                 Box::new(|s| s.proxies.list = vec![entry("a", "ftp://x:1")]),
                 "proxy: scheme",
             ),
-            (Box::new(|s| s.proxies.rotate_secs = 59), "proxies.rotate_secs"),
-            (
-                Box::new(|s| s.proxies.chaos_max_secs = 8 * 86_400),
-                "proxies.chaos_max_secs",
-            ),
             (
                 Box::new(|s| {
-                    s.proxies.chaos_min_secs = 900;
-                    s.proxies.chaos_max_secs = 300;
+                    s.proxies.list = vec![entry("a", "socks5://h:1"), entry("b", "socks5://h:2")];
+                    s.proxies.groups = vec![ProxyGroup {
+                        id: "g".into(),
+                        name: String::new(),
+                        proxies: vec!["a".into(), "b".into()],
+                        strategy: Strategy::RoundRobin,
+                        rotate_secs: 59,
+                        chaos_min_secs: 300,
+                        chaos_max_secs: 900,
+                    }];
                 }),
-                "exceeds",
+                "rotate_secs",
+            ),
+            (
+                Box::new(|s| s.proxies.default = Destination::Group("gone".into())),
+                "the default route points at a group",
             ),
             (
                 Box::new(|s| s.proxies.list = vec![entry("a", "socks5://h:1"), entry("a", "socks5://h:2")]),
@@ -1028,8 +1084,6 @@ pub(crate) mod tests {
         assert_eq!(s.relay_users(&b), ids(&["invoices"]));
         assert_eq!(s.relays_for("admin"), std::slice::from_ref(&a));
         assert_eq!(s.relays_for("invoices"), s.relays);
-        assert_eq!(s.relays_through(&ids(&["admin"])), std::slice::from_ref(&a));
-        assert_eq!(s.relays_through(&[]), s.relays);
         s.validate(true).unwrap();
         assert!(same_relay("wss://x.example/", "wss://x.example"));
     }
@@ -1050,65 +1104,118 @@ pub(crate) mod tests {
         assert!(e.contains("no key 'root'"), "{e}");
         s.relay_keys.clear();
 
-        // The same for proxies: forgetting a key would send it out unprotected.
+        // Proxies for some keys only: each key's own default route.
         s.proxies.list = vec![entry("a", "socks5://h:1"), entry("b", "socks5://h:2")];
+        s.proxies.default = Destination::Proxy("a".into());
+        s.proxies.default_keys = [("admin".to_string(), Destination::Proxy("b".into()))].into();
         s.validate(true).unwrap();
-        s.proxies.list.iter_mut().for_each(|e| e.keys = ids(&["admin"]));
+        s.proxies.default_keys = [("root".to_string(), Destination::Proxy("b".into()))].into();
         let e = err(&s);
-        assert!(
-            e.contains("no proxy in the default route is assigned to the public invoices key"),
-            "{e}"
-        );
-        s.proxies.list[1].keys = ids(&["invoices"]);
-        s.validate(true).unwrap();
-        // A proxy kept out of the pool does not count for the default route...
-        s.proxies.list[1].pool = false;
-        assert!(err(&s).contains("public invoices key"));
-        // ...unless no relay of that key can take the default route anyway.
-        s.proxies.rules = vec![crate::routes::Rule {
-            name: String::new(),
-            patterns: vec!["*".into()],
-            keys: ids(&["invoices"]),
-            to: crate::routes::RouteTo::Proxy("b".into()),
-            fallback: crate::routes::Fallback::Offline,
-        }];
-        s.validate(true).unwrap();
-        s.proxies.rules[0].fallback = crate::routes::Fallback::Pool;
-        assert!(err(&s).contains("public invoices key"));
-        s.proxies.rules.clear();
-        s.proxies.list[1].pool = true;
-        s.proxies.list[1].keys = ids(&["invoices", "invoices"]);
-        let e = err(&s);
-        assert!(e.contains("named twice"), "{e}");
-        s.proxies.list[1].keys = ids(&["nobody"]);
-        let e = err(&s);
-        assert!(e.contains("no key 'nobody'"), "{e}");
-        // A transparent proxy does the work: the list is not used, so it needs no assignment.
-        s.proxies.list[1].keys = ids(&["admin"]);
-        s.proxies.transparent = true;
-        s.validate(true).unwrap();
+        assert!(e.contains("default route: there is no key 'root'"), "{e}");
     }
 
     #[test]
-    fn saved_settings_without_keys_mean_every_key() {
-        let old: ProxyEntry =
-            serde_json::from_value(serde_json::json!({ "id": "a", "name": "", "url": "socks5://h:1" })).unwrap();
-        assert!(old.keys.is_empty());
-        let input: ProxyEntryInput = serde_json::from_value(serde_json::json!({ "url": "socks5://h:1" })).unwrap();
-        assert_eq!(entries_from(&[input])[0].keys, Vec::<String>::new());
-        let some = ProxyEntryInput {
-            keys: Some(ids(&["admin"])),
-            pool: None,
-            ..serde_json::from_value(serde_json::json!({ "url": "socks5://h:1" })).unwrap()
-        };
-        assert_eq!(entries_from(&[some])[0].keys, ids(&["admin"]));
-        // The list sent back keeps each proxy's keys.
-        let kept = ProxyPatch::with_list(&[ProxyEntry {
-            keys: ids(&["admin"]),
-            pool: true,
-            ..entry("a", "socks5://h:1")
-        }]);
-        assert_eq!(kept.list.unwrap()[0].keys, Some(ids(&["admin"])));
+    fn proxy_fields_from_before_groups_are_refused() {
+        for old in [
+            serde_json::json!({ "proxies": { "mode": "chaos" } }),
+            serde_json::json!({ "proxies": { "list": [{ "url": "socks5://h:1", "keys": ["admin"] }] } }),
+        ] {
+            let e = serde_json::from_value::<SettingsPatch>(old).unwrap_err().to_string();
+            assert!(e.contains("from before proxy groups"), "{e}");
+        }
+    }
+
+    fn legacy_env(list: &[&str], mode: legacy::ProxyMode) -> legacy::ProxySettings {
+        legacy::ProxySettings {
+            list: list
+                .iter()
+                .enumerate()
+                .map(|(i, url)| legacy::ProxyEntry {
+                    id: format!("env{}", i + 1),
+                    name: String::new(),
+                    url: url.to_string(),
+                    keys: Vec::new(),
+                    pool: true,
+                    i2p: false,
+                })
+                .collect(),
+            mode,
+            ..legacy::ProxySettings::default()
+        }
+    }
+
+    #[test]
+    fn settings_stored_before_groups_are_upgraded_keeping_what_they_set() {
+        use legacy::ProxyMode;
+        let env = legacy_env(&["socks5://e:1", "socks5://e:2"], ProxyMode::Failover);
+        let up = |json: serde_json::Value| upgrade_stored(&json.to_string(), &env).unwrap();
+        // Nothing about proxies: nothing about proxies, whatever the environment says.
+        let p = up(serde_json::json!({ "pow_bits": 22 }));
+        assert_eq!((p.pow_bits, p.proxies), (Some(22), None));
+        // Only the policy: only the policy.
+        let p = up(serde_json::json!({ "proxies": { "offline": "open", "transparent": false } }))
+            .proxies
+            .unwrap();
+        assert_eq!(
+            (p.offline, p.transparent, p.list, p.default),
+            (Some(OfflinePolicy::Open), Some(false), None, None)
+        );
+        // The strategy: the environment's proxies stay the environment's, the
+        // group and the default route are kept.
+        let p = up(serde_json::json!({ "proxies": { "mode": "round_robin", "rotate_secs": 600 } }))
+            .proxies
+            .unwrap();
+        assert!(p.list.is_none());
+        let g = &p.groups.as_ref().unwrap()[0];
+        assert_eq!(
+            (g.strategy, g.rotate_secs, g.proxies.len()),
+            (Strategy::RoundRobin, 600, 2)
+        );
+        assert_eq!(p.default, Some(Destination::Group("default".into())));
+        // A list: kept, with what it means for the default route; rules too.
+        let p = up(serde_json::json!({ "proxies": {
+            "list": [{ "id": "tor", "url": "socks5://t:1", "pool": false }, { "id": "a", "url": "socks5://a:1" }],
+            "rules": [{ "match": ["*.onion"], "to": { "proxy": "tor" } }, { "match": ["b.example"], "to": "pool" }],
+            "i2p_registries": []
+        } }))
+        .proxies
+        .unwrap();
+        let list = p.list.as_ref().unwrap();
+        assert_eq!((list[0].id.as_deref(), list.len()), (Some("tor"), 2));
+        assert_eq!(p.default, Some(Destination::Proxy("a".into())));
+        assert_eq!(p.groups, Some(Vec::new()));
+        let rules = p.rules.as_ref().unwrap();
+        assert_eq!(
+            (&rules[1].to, &rules[1].fallback),
+            (&Destination::Proxy("a".into()), &crate::routes::Fallback::Policy)
+        );
+        assert_eq!(p.i2p_registries, Some(Vec::new()));
+        // The single address of the first versions: that proxy; empty: none.
+        let p = up(serde_json::json!({ "proxy": "socks5://s:1" })).proxies.unwrap();
+        assert_eq!(p.list.as_ref().unwrap()[0].id.as_deref(), Some("saved"));
+        assert_eq!(p.default, Some(Destination::Proxy("saved".into())));
+        let p = up(serde_json::json!({ "proxy": "" })).proxies.unwrap();
+        assert_eq!((p.list, p.default), (Some(Vec::new()), Some(Destination::Direct)));
+        // Applied over the environment, it routes as before: the transparent
+        // claim changes what an empty lane means, and that is kept.
+        let no_env = legacy_env(&[], ProxyMode::Off);
+        let p = upgrade_stored(
+            &serde_json::json!({ "proxies": { "list": [{ "id": "a", "url": "socks5://a:1", "pool": false }] } })
+                .to_string(),
+            &no_env,
+        )
+        .unwrap();
+        assert_eq!(p.proxies.as_ref().unwrap().default, Some(Destination::Block));
+        let p = upgrade_stored(
+            &serde_json::json!({ "proxies": { "transparent": true } }).to_string(),
+            &env,
+        )
+        .unwrap();
+        assert_eq!(p.proxies.as_ref().unwrap().default, None, "the same with or without");
+        // What cannot be read either way is an error.
+        for bad in ["{not json", r#"{"nope":1}"#, r#"{"proxies":{"list":3}}"#] {
+            assert!(upgrade_stored(bad, &env).is_err(), "{bad}");
+        }
     }
 
     #[test]
@@ -1142,8 +1249,7 @@ pub(crate) mod tests {
     fn settings_saved_before_i2p_load_and_names_follow_the_relays() {
         let old: ProxySettings = serde_json::from_value(serde_json::json!({
             "list": [{ "id": "a", "name": "", "url": "http://127.0.0.1:4444" }],
-            "mode": "failover", "rotate_secs": 3600, "chaos_min_secs": 300, "chaos_max_secs": 900,
-            "offline": "kill_switch", "transparent": false
+            "default": { "proxy": "a" }, "offline": "kill_switch", "transparent": false
         }))
         .unwrap();
         assert!(!old.list[0].i2p);

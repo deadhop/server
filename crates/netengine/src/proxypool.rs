@@ -1,23 +1,28 @@
 //! Which proxy carries the relay connections.
 //!
-//! [`plan`] is a pure function: given the settings, which proxies answered
-//! their last probe and the clock, it says which proxy to use now. Everything
-//! that touches the network or the service lives elsewhere (`manage.rs` holds
-//! the probe loop's state, `app.rs` acts on the plan).
+//! [`plan`] is a pure function: given a proxy group, which of its proxies
+//! answered their last probe and the clock, it says which one to use now.
+//! Everything that touches the network or the service lives elsewhere
+//! (`manage.rs` holds the probe loop's state, `app.rs` acts on the plan).
 //!
-//! - **Off** uses the first proxy in the list and never another: while it is
-//!   down the offline policy applies.
-//! - **Failover** uses the first reachable proxy in list order. When a proxy
-//!   earlier in the list comes back, the service returns to it only after it
-//!   has stayed up for [`FAILBACK_HOLD_SECS`], so a flapping proxy does not
-//!   reconnect every relay over and over.
+//! A group chooses by its strategy:
+//!
+//! - **Failover** uses the first reachable proxy in the group's order. When a
+//!   proxy earlier in the order comes back, the group returns to it only
+//!   after it has stayed up for [`FAILBACK_HOLD_SECS`], so a flapping proxy
+//!   does not reconnect every relay over and over.
 //! - **Round robin** takes the reachable proxies in turn, one change per
 //!   interval (never per connection).
 //! - **Chaos** changes to a random other reachable proxy after a random time
 //!   between a minimum and a maximum.
 //! - Rotation needs at least two reachable proxies. With one, it is
 //!   *suspended*: that proxy keeps carrying traffic (never worse than going
-//!   direct) until a second one is back. With none, the offline policy applies.
+//!   direct) until a second one is back. With none, the group is offline.
+//!
+//! Every key plans each group it uses on its own, so two keys on one group
+//! do not change proxy in the same second. A default route that points at a
+//! single proxy uses it while it is up; one that has nothing reachable leaves
+//! the key to the offline policy.
 
 use std::collections::HashMap;
 
@@ -25,37 +30,37 @@ use rmcp::schemars::{self, JsonSchema};
 use serde::Serialize;
 
 use crate::netruntime::{NetworkHost, NetworkRuntime};
-use crate::network::Topology;
-use crate::network::{OfflinePolicy, ProxyMode, ProxySettings};
+use crate::network::{OfflinePolicy, ProxyGroup, ProxySettings, Strategy, Topology};
 use crate::privacy::ProxyCheck;
+use crate::routes::Destination;
 use deadhop_net::relay::{parse_proxy, redact};
 
 /// A proxy that came back must stay up this long before failover returns to it.
 pub const FAILBACK_HOLD_SECS: u64 = 120;
 
-// Where the pool stands.
+// Where a key's default route (or one of its groups) stands.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum PoolState {
     // The operator runs a transparent proxy; nothing here is checked or used.
     Transparent,
-    // No proxy is configured: relays connect straight.
+    // The default route is direct: relays connect straight.
     Direct,
-    // A proxy is chosen by the mode.
+    // A proxy is in use (the group's choice, or the one proxy).
     Active,
     // Rotation needs two reachable proxies and only one is: it stays in use.
     Suspended,
-    // Proxies are configured and none it may use is reachable (with the
-    // strategy off: the first is down): the offline policy applies.
+    // Nothing it may use is reachable: the offline policy applies.
     Offline,
+    // The default route blocks: relays no rule matches never connect.
+    Blocked,
 }
 
 // What the service does with its relay connections and its callers.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum Posture {
-    // Relays connect through the active proxy (or straight, if none is set
-    // or a transparent proxy does the work); everything is served.
+    // Relays connect where their routes say; everything is served.
     Normal,
     // No relay connection at all.
     Off,
@@ -68,7 +73,7 @@ pub enum Posture {
 }
 
 impl Posture {
-    // The posture while no proxy is reachable.
+    // The posture while the offline policy applies.
     pub fn offline(policy: OfflinePolicy) -> Posture {
         match policy {
             OfflinePolicy::KillSwitch => Posture::Off,
@@ -87,7 +92,7 @@ pub struct Reach {
     pub up_since: u64,
 }
 
-/// What the rotation modes remember between plans.
+/// What the rotation strategies remember between plans.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Rotation {
     /// Id of the proxy in use.
@@ -117,62 +122,33 @@ pub fn random_between(min: u64, max: u64) -> u64 {
     min + u64::from_le_bytes(b) % (max - min + 1)
 }
 
-/// Decide which proxy to use. `reach` is in list order.
+/// Decide which of a group's proxies to use. `reach` is in the group's order.
 pub fn plan(
-    cfg: &ProxySettings,
+    g: &ProxyGroup,
     reach: &[Reach],
     rot: &mut Rotation,
     now: u64,
     rng: &mut dyn FnMut(u64, u64) -> u64,
 ) -> Plan {
-    let state_only = |state, reachable| Plan {
-        active: None,
-        state,
-        next_switch_at: None,
-        reachable,
-    };
-    if cfg.transparent {
-        *rot = Rotation::default();
-        return state_only(PoolState::Transparent, 0);
-    }
-    if cfg.list.is_empty() {
-        *rot = Rotation::default();
-        return state_only(PoolState::Direct, 0);
-    }
-    let ups: Vec<usize> = (0..cfg.list.len())
+    let ups: Vec<usize> = (0..g.proxies.len())
         .filter(|&i| reach.get(i).is_some_and(|r| r.up))
         .collect();
     if ups.is_empty() {
         *rot = Rotation::default();
-        return state_only(PoolState::Offline, 0);
-    }
-    let id = |i: usize| cfg.list[i].id.clone();
-    // Off: the first proxy only. While it is down the key is offline, even
-    // with others up: it never moves to another exit.
-    if cfg.mode == ProxyMode::Off {
-        if ups[0] != 0 {
-            *rot = Rotation::default();
-            return state_only(PoolState::Offline, ups.len());
-        }
-        *rot = Rotation {
-            current: Some(id(0)),
-            due_at: 0,
-        };
         return Plan {
-            active: Some(id(0)),
-            state: PoolState::Active,
+            active: None,
+            state: PoolState::Offline,
             next_switch_at: None,
-            reachable: ups.len(),
+            reachable: 0,
         };
     }
+    let id = |i: usize| g.proxies[i].clone();
     let current = rot
         .current
         .as_ref()
-        .and_then(|c| ups.iter().copied().find(|&i| &cfg.list[i].id == c));
+        .and_then(|c| ups.iter().copied().find(|&i| &g.proxies[i] == c));
 
-    // One proxy configured: there is nothing to choose between, so the strategy
-    // does not apply and that proxy is simply used while it is up.
-    if cfg.mode == ProxyMode::Failover || cfg.list.len() == 1 {
+    if g.strategy == Strategy::Failover {
         let best = ups[0];
         let pick = match current {
             Some(c) if c <= best => c,
@@ -191,9 +167,9 @@ pub fn plan(
         };
     }
 
-    let interval = |rng: &mut dyn FnMut(u64, u64) -> u64| match cfg.mode {
-        ProxyMode::Chaos => rng(cfg.chaos_min_secs, cfg.chaos_max_secs),
-        _ => cfg.rotate_secs,
+    let interval = |rng: &mut dyn FnMut(u64, u64) -> u64| match g.strategy {
+        Strategy::Chaos => rng(g.chaos_min_secs, g.chaos_max_secs),
+        _ => g.rotate_secs,
     };
     if ups.len() == 1 {
         *rot = Rotation {
@@ -217,8 +193,8 @@ pub fn plan(
         Some(c) if now < rot.due_at => c,
         Some(c) => {
             rot.due_at = now + interval(rng);
-            match cfg.mode {
-                ProxyMode::Chaos => {
+            match g.strategy {
+                Strategy::Chaos => {
                     let others: Vec<usize> = ups.iter().copied().filter(|&i| i != c).collect();
                     others[rng(0, others.len() as u64 - 1) as usize]
                 }
@@ -228,8 +204,8 @@ pub fn plan(
         }
         None => {
             rot.due_at = now + interval(rng);
-            match cfg.mode {
-                ProxyMode::Chaos => ups[rng(0, ups.len() as u64 - 1) as usize],
+            match g.strategy {
+                Strategy::Chaos => ups[rng(0, ups.len() as u64 - 1) as usize],
                 _ => ups[0],
             }
         }
@@ -251,7 +227,7 @@ pub struct Probe {
     pub check: ProxyCheck,
 }
 
-/// What the plan last decided (kept with the url, so a settings change does
+/// What a plan last decided (kept with the url, so a settings change does
 /// not move the connections before the new list has been probed).
 #[derive(Debug, Clone)]
 pub struct Applied {
@@ -262,15 +238,41 @@ pub struct Applied {
     pub reachable: usize,
 }
 
-/// Runtime state of the pool (never saved).
+impl Applied {
+    /// A state with no proxy in it.
+    pub fn bare(state: PoolState) -> Applied {
+        Applied {
+            active: None,
+            active_url: None,
+            state,
+            next_switch_at: None,
+            reachable: 0,
+        }
+    }
+
+    /// The proxy (id and url) in use, if one is.
+    fn proxy(&self) -> Option<(String, String)> {
+        match self.state {
+            PoolState::Active | PoolState::Suspended => self.active.clone().zip(self.active_url.clone()),
+            _ => None,
+        }
+    }
+}
+
+/// A key and a group (by id): what each key plans on its own.
+pub type LaneGroup = (String, String);
+
+/// Runtime state of the proxies (never saved).
 #[derive(Debug, Default)]
 pub struct PoolRuntime {
-    /// Rotation state per key: each key rotates on its own, so two keys do
-    /// not change proxy in the same second.
-    pub rot: HashMap<String, Rotation>,
+    /// Rotation state per key and group: each key rotates on its own, so two
+    /// keys do not change proxy in the same second.
+    pub rot: HashMap<LaneGroup, Rotation>,
     pub probes: HashMap<String, Probe>,
-    /// What the plan decided, per key.
+    /// What each key's default route is, at the last plan.
     pub applied: HashMap<String, Applied>,
+    /// What each group a key uses chose for it, at the last plan.
+    pub groups: HashMap<LaneGroup, Applied>,
     /// Proxy settings an operator just replaced, to go back to if none of the
     /// new ones works (the proxy list is the way back in, so a typo must not
     /// lock anyone out).
@@ -289,12 +291,12 @@ pub struct Probation {
 /// How long a changed proxy list may stay unreachable before it is undone.
 pub const PROBATION_SECS: u64 = 180;
 
-/// What the relay connections should be.
+/// What a key's default route should be.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Connection {
     /// No relay connection at all.
     Off,
-    /// Straight to the relays (no proxy, a transparent one, or clearnet while offline).
+    /// Straight to the relays (direct, a transparent proxy, or clearnet while offline).
     Direct,
     /// Through this proxy url.
     Via(String),
@@ -314,10 +316,6 @@ pub struct ProxyHealth {
     pub status: Option<String>,
     // The first reason a relay could not be reached, if any.
     pub reason: Option<String>,
-    // The keys (by id) whose default route may use this proxy; empty is every key.
-    pub keys: Vec<String>,
-    // In the default route (the pool).
-    pub pool: bool,
 }
 
 // How a relay connection goes: through a proxy, straight, or not at all.
@@ -342,39 +340,60 @@ pub struct RouteHealth {
     pub reason: crate::routes::Reason,
 }
 
+// What one group chose for one key.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
+pub struct GroupHealth {
+    // The group's id.
+    pub group: String,
+    pub state: PoolState,
+    // Id of the proxy the group uses for this key.
+    pub active: Option<String>,
+    pub reachable: usize,
+    // When rotation changes it next.
+    pub next_switch_at: Option<u64>,
+}
+
 // How one key's relay connections stand.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
 pub struct LaneHealth {
     // The key's id.
     pub key: String,
+    // Where its default route points.
+    pub default: Destination,
+    // Where its default route stands.
     pub state: PoolState,
-    // Id of the proxy this key uses.
+    // Id of the proxy its default route uses.
     pub active: Option<String>,
     pub reachable: usize,
-    // When rotation changes this key's proxy next.
+    // When rotation changes its default route's proxy next.
     pub next_switch_at: Option<u64>,
-    // Whether any relay of this key may take the default route; when none
-    // can, this lane's state does not affect the key.
+    // Whether any relay of this key takes the default route; when none
+    // does, the default route's state does not affect the key.
     pub uses_default: bool,
+    // Every group this key uses (by its default route, a rule or a
+    // fallback), and what each chose for it.
+    pub groups: Vec<GroupHealth>,
 }
 
-// The pool as shown in `get_health`.
+// The proxies as shown in `get_health`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
 pub struct PoolHealth {
+    // The first key's default route (the public invoices key's).
     pub state: PoolState,
     // What the service does now: `normal`, `off`, `admin_only`, `invoicing_only` or `open`.
     pub posture: Posture,
-    pub mode: ProxyMode,
+    // The default route (for every key without its own).
+    pub default: Destination,
     pub offline: OfflinePolicy,
     pub transparent: bool,
-    // Id of the proxy in use.
+    // Id of the proxy the first key's default route uses.
     pub active: Option<String>,
     pub reachable: usize,
     pub total: usize,
-    // When rotation changes the proxy next.
+    // When rotation changes a proxy next (any key, any group).
     pub next_switch_at: Option<u64>,
     pub proxies: Vec<ProxyHealth>,
-    // Each key's own plan. The fields above are the public invoices key's.
+    // Each key's own plan. The fields above are the first key's.
     pub lanes: Vec<LaneHealth>,
     // Where every relay of every key goes now.
     pub routes: Vec<RouteHealth>,
@@ -382,16 +401,14 @@ pub struct PoolHealth {
 
 impl NetworkRuntime {
     /// The posture the plan implies right now: the offline policy applies as
-    /// soon as any key has no reachable proxy.
+    /// soon as it decides where any relay of any key goes (nothing that relay
+    /// may use is reachable).
     pub fn posture(&self, host: &dyn NetworkHost) -> Posture {
         let settings = host.topology();
-        let offline = self
-            .pool
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .applied
+        let offline = settings
+            .lanes
             .iter()
-            .any(|(k, a)| a.state == PoolState::Offline && crate::routes::uses_default(&settings, k));
+            .any(|k| self.routes_for(host, &k.id).iter().any(|r| r.by_policy));
         if offline {
             Posture::offline(settings.proxies.offline)
         } else {
@@ -399,9 +416,10 @@ impl NetworkRuntime {
         }
     }
 
-    /// What one key's relay connections should be now. While its proxies are
-    /// all down, the offline policy decides: the kill switch cuts the key off,
-    /// and the others connect straight for the one kind of key they keep.
+    /// What one key's default route should be now. While it has nothing
+    /// reachable, the offline policy decides: the kill switch cuts the key's
+    /// default relays off, and the others connect straight for the one kind
+    /// of key they keep.
     pub fn connection_for(&self, host: &dyn NetworkHost, key: &str) -> Connection {
         let settings = host.topology();
         if settings.proxies.transparent {
@@ -409,11 +427,12 @@ impl NetworkRuntime {
         }
         let pool = self.pool.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         match pool.applied.get(key) {
-            // Nothing to choose from: straight. With a list, wait for the first plan.
-            None if settings.proxies.list.is_empty() => Connection::Direct,
+            // Straight by choice needs no plan; anything else waits for one.
+            None if *settings.proxies.default_for(key) == Destination::Direct => Connection::Direct,
             None => Connection::Off,
             Some(a) => match (a.state, &a.active_url) {
                 (PoolState::Direct | PoolState::Transparent, _) => Connection::Direct,
+                (PoolState::Blocked, _) => Connection::Off,
                 (PoolState::Offline, _) => {
                     // What the policy means for this lane is the host's to say.
                     if host.connects_while_offline(key, settings.proxies.offline) {
@@ -427,7 +446,7 @@ impl NetworkRuntime {
         }
     }
 
-    /// The proxy url one key's relay traffic goes through, if any.
+    /// The proxy url one key's default route goes through, if any.
     pub fn active_proxy_for(&self, host: &dyn NetworkHost, key: &str) -> Option<String> {
         match self.connection_for(host, key) {
             Connection::Via(u) => Some(u),
@@ -452,8 +471,8 @@ impl NetworkRuntime {
             let settings = host.topology();
             let now = host.now();
             // A proxy is only ever tried against the relays it would carry
-            // (by the rules, or as part of the default route for its keys), so
-            // it never sees a relay or key it was not given. One that would
+            // (by a rule, a fallback, a group or the default route), so it
+            // never sees a relay or key it was not given. One that would
             // carry nothing is not tried at all.
             let targets: Vec<(String, Vec<String>, Option<deadhop_net::relay::ProxySpec>, String)> = cfg
                 .list
@@ -513,88 +532,117 @@ impl NetworkRuntime {
         );
     }
 
-    /// Choose a proxy from the probes so far. Wakes the supervisor when the
-    /// connections should change, and undoes a proxy change that left nothing
-    /// reachable.
+    /// Plan every group each key uses, and each key's default route, from
+    /// the probes so far. Wakes the supervisor when the connections should
+    /// change, and undoes a proxy change that left nothing reachable.
     pub fn replan(&self, host: &dyn NetworkHost) {
         let settings = host.topology();
         let cfg = settings.proxies.clone();
         let now = host.now();
-        let (decided, revert_to) = {
+        let (changed, kept) = {
             let mut pool = self.pool.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+            let kept = (pool.applied.clone(), pool.groups.clone(), pool.probes.clone());
             pool.probes.retain(|id, _| cfg.list.iter().any(|e| &e.id == id));
-            let mut decided: Vec<(String, Applied)> = Vec::new();
-            for key in settings.lanes.iter() {
-                // This key's own default route: the proxies in the pool that
-                // it may use, in list order.
-                let mut lane = cfg.clone();
-                lane.list
-                    .retain(|e| e.pool && crate::network::assigned(&e.keys, &key.id));
-                if lane.list.is_empty() && !cfg.list.is_empty() && !cfg.transparent {
-                    // Proxies are configured but none is in this key's
-                    // default route: that is not "no proxy, go straight".
-                    decided.push((
-                        key.id.to_string(),
-                        Applied {
-                            active: None,
-                            active_url: None,
-                            state: PoolState::Offline,
-                            next_switch_at: None,
-                            reachable: 0,
-                        },
-                    ));
-                    continue;
-                }
-                let reach: Vec<Reach> = lane
-                    .list
-                    .iter()
-                    .map(|e| {
-                        pool.probes.get(&e.id).map_or(
-                            Reach {
-                                up: false,
-                                up_since: now,
-                            },
-                            |p| Reach {
-                                up: p.up,
-                                up_since: p.up_since,
-                            },
-                        )
-                    })
-                    .collect();
-                let mut rot = pool.rot.remove(&key.id).unwrap_or_default();
-                let d = plan(&lane, &reach, &mut rot, now, &mut random_between);
-                pool.rot.insert(key.id.to_string(), rot);
-                let active_url = d
-                    .active
-                    .as_ref()
-                    .and_then(|id| lane.list.iter().find(|e| &e.id == id))
-                    .map(|e| e.url.clone());
-                decided.push((
-                    key.id.to_string(),
-                    Applied {
-                        active: d.active,
-                        active_url,
-                        state: d.state,
-                        next_switch_at: d.next_switch_at,
-                        reachable: d.reachable,
+            let reach = |pool: &PoolRuntime, id: &str| {
+                pool.probes.get(id).map_or(
+                    Reach {
+                        up: false,
+                        up_since: now,
                     },
-                ));
+                    |p| Reach {
+                        up: p.up,
+                        up_since: p.up_since,
+                    },
+                )
+            };
+            let url = |id: &str| cfg.list.iter().find(|e| e.id == id).map(|e| e.url.clone());
+            let mut decided: Vec<(String, Applied)> = Vec::new();
+            let mut plans: HashMap<LaneGroup, Applied> = HashMap::new();
+            for key in settings.lanes.iter() {
+                let used = if cfg.transparent {
+                    Vec::new()
+                } else {
+                    crate::routes::groups_used(&settings, &key.id)
+                };
+                for g in cfg.groups.iter().filter(|g| used.contains(&g.id)) {
+                    let at = (key.id.clone(), g.id.clone());
+                    let r: Vec<Reach> = g.proxies.iter().map(|id| reach(&pool, id)).collect();
+                    let mut rot = pool.rot.remove(&at).unwrap_or_default();
+                    let d = plan(g, &r, &mut rot, now, &mut random_between);
+                    pool.rot.insert(at.clone(), rot);
+                    let active_url = d.active.as_deref().and_then(url);
+                    plans.insert(
+                        at,
+                        Applied {
+                            active: d.active,
+                            active_url,
+                            state: d.state,
+                            next_switch_at: d.next_switch_at,
+                            reachable: d.reachable,
+                        },
+                    );
+                }
+                let default = match cfg.default_for(&key.id) {
+                    _ if cfg.transparent => Applied::bare(PoolState::Transparent),
+                    Destination::Direct => Applied::bare(PoolState::Direct),
+                    Destination::Block => Applied::bare(PoolState::Blocked),
+                    Destination::Proxy(id) if reach(&pool, id).up => Applied {
+                        active: Some(id.clone()),
+                        active_url: url(id),
+                        state: PoolState::Active,
+                        next_switch_at: None,
+                        reachable: 1,
+                    },
+                    Destination::Proxy(_) => Applied::bare(PoolState::Offline),
+                    Destination::Group(g) => plans
+                        .get(&(key.id.clone(), g.clone()))
+                        .cloned()
+                        .unwrap_or_else(|| Applied::bare(PoolState::Offline)),
+                };
+                decided.push((key.id.to_string(), default));
             }
-            // Only a key whose relays may use the default route is hurt by it being down.
-            let offline = decided
-                .iter()
-                .any(|(k, a)| a.state == PoolState::Offline && crate::routes::uses_default(&settings, k));
-            // A change that left a key with nothing reachable is undone once;
-            // one that works (or a probation that ran out) ends the probation.
-            let revert_to = match pool.probation.clone() {
+            // A key and group no longer planned starts over if it comes back.
+            pool.rot.retain(|at, _| plans.contains_key(at));
+            let shape = |m: &HashMap<String, Applied>, g: &HashMap<LaneGroup, Applied>| {
+                let mut v: Vec<_> = m
+                    .iter()
+                    .map(|(k, a)| (k.clone(), String::new(), a.active_url.clone(), a.state))
+                    .chain(
+                        g.iter()
+                            .map(|((k, id), a)| (k.clone(), id.clone(), a.active_url.clone(), a.state)),
+                    )
+                    .collect();
+                v.sort_by(|a, b| (&a.0, &a.1).cmp(&(&b.0, &b.1)));
+                v
+            };
+            let before = shape(&pool.applied, &pool.groups);
+            pool.applied = decided.into_iter().collect();
+            pool.groups = plans;
+            (before != shape(&pool.applied, &pool.groups), kept)
+        };
+        // A change that left the offline policy deciding where some relay
+        // goes (nothing it may use is reachable) is undone once; one that
+        // works (or a probation that ran out) ends the probation.
+        let offline = settings
+            .lanes
+            .iter()
+            .any(|k| self.routes_for(host, &k.id).iter().any(|r| r.by_policy));
+        let revert_to = {
+            let mut pool = self.pool.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+            // A proxy the change puts to use that was never probed is not
+            // down yet, only unknown: wait for its probe.
+            let unknown = cfg.list.iter().any(|e| {
+                !pool.probes.contains_key(&e.id) && !crate::routes::relays_through_proxy(&settings, &e.id).is_empty()
+            });
+            match pool.probation.clone() {
+                Some(p) if offline && unknown && now < p.until => None,
                 Some(p) if offline && now < p.until && p.previous != cfg => Some(p.previous),
                 Some(p) if !offline || now >= p.until => {
                     pool.probation = None;
                     None
                 }
                 _ => None,
-            };
-            (decided, revert_to)
+            }
         };
         let reverted = revert_to.is_some_and(|previous| {
             host.revert_proxies(
@@ -604,29 +652,17 @@ impl NetworkRuntime {
             .is_ok()
         });
         if reverted {
-            self.pool
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner)
-                .probation = None;
+            // Back to the plan (and probes) of the previous settings until
+            // they are probed and planned again.
+            let mut pool = self.pool.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+            pool.probation = None;
+            (pool.applied, pool.groups, pool.probes) = kept;
+            drop(pool);
             self.wake_pool();
             return;
         }
-        let changed = {
-            let mut pool = self.pool.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-            let shape = |m: &HashMap<String, Applied>| {
-                let mut v: Vec<_> = m
-                    .iter()
-                    .map(|(k, a)| (k.clone(), a.active_url.clone(), a.state))
-                    .collect();
-                v.sort_by(|a, b| a.0.cmp(&b.0));
-                v
-            };
-            let before = shape(&pool.applied);
-            pool.applied = decided.into_iter().collect();
-            before != shape(&pool.applied)
-        };
         // A rule's own proxy going up or down moves relays even when no
-        // key's default route changed.
+        // plan changed.
         let routes = self.route_shape(host);
         let moved = {
             let mut pool = self.pool.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
@@ -658,95 +694,106 @@ impl NetworkRuntime {
             .collect()
     }
 
-    /// The label of a key that turning the strategy off would cut off now:
-    /// one whose relays take the default route, whose first proxy there was
-    /// down at its last probe while another of its proxies was up.
-    pub fn stranded_by_off(&self, next: &Topology) -> Option<String> {
+    /// The label of a key that `next` would cut off now: one whose relays
+    /// take the default route, whose default route in `next` has nothing up
+    /// at the last probes (a proxy, or every proxy of a group, failed) while
+    /// its default route in `before` did not.
+    pub fn stranded(&self, before: &Topology, next: &Topology) -> Option<String> {
         if next.proxies.transparent {
             return None;
         }
         let pool = self.pool.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-        let up = |e: &&crate::network::ProxyEntry| pool.probes.get(&e.id).map(|p| p.up);
+        let failed = |id: &String| pool.probes.get(id).is_some_and(|p| !p.up);
+        let down = |t: &Topology, key: &str| match t.proxies.default_for(key) {
+            Destination::Proxy(id) => failed(id),
+            Destination::Group(g) => t
+                .proxies
+                .groups
+                .iter()
+                .any(|x| &x.id == g && x.proxies.iter().all(failed)),
+            _ => false,
+        };
         next.lanes
             .iter()
-            .find(|k| {
-                let lane: Vec<_> = next
-                    .proxies
-                    .list
-                    .iter()
-                    .filter(|e| e.pool && crate::network::assigned(&e.keys, &k.id))
-                    .collect();
-                crate::routes::uses_default(next, &k.id)
-                    && lane.first().map(up) == Some(Some(false))
-                    && lane.iter().skip(1).any(|e| up(e) == Some(true))
-            })
+            .find(|k| crate::routes::uses_default(next, &k.id) && down(next, &k.id) && !down(before, &k.id))
             .map(|k| k.label.clone())
-    }
-
-    /// One key's default route now, as the routing rules see it.
-    pub fn default_route_for(&self, host: &dyn NetworkHost, key: &str) -> crate::routes::DefaultRoute {
-        use crate::routes::DefaultRoute;
-        match self.connection_for(host, key) {
-            Connection::Off => DefaultRoute::Off,
-            Connection::Direct => DefaultRoute::Direct,
-            Connection::Via(url) => {
-                let pool = self.pool.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-                let id = pool.applied.get(key).and_then(|a| a.active.clone()).unwrap_or_default();
-                DefaultRoute::Proxy { id, url }
-            }
-        }
     }
 
     /// Where each of one key's relays goes now, and why.
     pub fn routes_for(&self, host: &dyn NetworkHost, key: &str) -> Vec<crate::routes::Resolved> {
         let settings = host.topology();
-        let default = self.default_route_for(host, key);
-        let up: std::collections::HashSet<String> = self
-            .pool
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .probes
-            .iter()
-            .filter(|(_, p)| p.up)
-            .map(|(id, _)| id.clone())
-            .collect();
-        crate::routes::resolve(&settings, key, &default, &|id| up.contains(id))
+        let proxies = &settings.proxies;
+        let pool = self.pool.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let planned = pool.applied.get(key);
+        let default = proxies.default_for(key);
+        let now = |d: &Destination| -> Option<(String, String)> {
+            match d {
+                // The default route as planned (with the url it was planned with).
+                _ if d == default => planned.and_then(Applied::proxy),
+                Destination::Group(g) => pool.groups.get(&(key.to_string(), g.clone())).and_then(Applied::proxy),
+                // A proxy (only proxies and groups are asked about), while it is up.
+                _ => proxies
+                    .list
+                    .iter()
+                    .find(|e| d.is_proxy(&e.id) && pool.probes.get(&e.id).is_some_and(|p| p.up))
+                    .map(|e| (e.id.clone(), e.url.clone())),
+            }
+        };
+        let offline = planned.map(|_| host.connects_while_offline(key, proxies.offline));
+        crate::routes::resolve(&settings, key, &now, offline)
     }
 
-    /// The pool as the dashboard shows it.
+    /// The proxies as the dashboard shows them.
     pub fn pool_health(&self, host: &dyn NetworkHost) -> PoolHealth {
         let settings = host.topology();
         let cfg = settings.proxies.clone();
+        let posture = self.posture(host);
         let pool = self.pool.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-        let waiting = if cfg.list.is_empty() {
-            PoolState::Direct
-        } else {
-            PoolState::Offline
+        // Before the first plan: straight or blocked by choice, else waiting.
+        let waiting = |key: &str| {
+            Applied::bare(match cfg.default_for(key) {
+                _ if cfg.transparent => PoolState::Transparent,
+                Destination::Direct => PoolState::Direct,
+                Destination::Block => PoolState::Blocked,
+                _ => PoolState::Offline,
+            })
+        };
+        let group_health = |key: &str, g: String| {
+            let a = pool
+                .groups
+                .get(&(key.to_string(), g.clone()))
+                .cloned()
+                .unwrap_or_else(|| Applied::bare(PoolState::Offline));
+            GroupHealth {
+                group: g,
+                state: a.state,
+                active: a.active,
+                reachable: a.reachable,
+                next_switch_at: a.next_switch_at,
+            }
         };
         let lanes: Vec<LaneHealth> = settings
             .lanes
             .iter()
-            .map(|k| match pool.applied.get(&k.id) {
-                Some(a) if !cfg.transparent => LaneHealth {
+            .map(|k| {
+                // A transparent proxy overrides whatever was planned.
+                let (a, groups) = match pool.applied.get(&k.id) {
+                    _ if cfg.transparent => (waiting(&k.id), Vec::new()),
+                    a => (
+                        a.cloned().unwrap_or_else(|| waiting(&k.id)),
+                        crate::routes::groups_used(&settings, &k.id),
+                    ),
+                };
+                LaneHealth {
                     key: k.id.to_string(),
+                    default: cfg.default_for(&k.id).clone(),
                     state: a.state,
-                    active: a.active.clone(),
+                    active: a.active,
                     reachable: a.reachable,
                     next_switch_at: a.next_switch_at,
                     uses_default: crate::routes::uses_default(&settings, &k.id),
-                },
-                _ => LaneHealth {
-                    key: k.id.to_string(),
-                    state: if cfg.transparent {
-                        PoolState::Transparent
-                    } else {
-                        waiting
-                    },
-                    active: None,
-                    reachable: 0,
-                    next_switch_at: None,
-                    uses_default: crate::routes::uses_default(&settings, &k.id),
-                },
+                    groups: groups.into_iter().map(|g| group_health(&k.id, g)).collect(),
+                }
             })
             .collect();
         let proxies = cfg
@@ -762,11 +809,15 @@ impl NetworkRuntime {
                     checked_at: p.map(|p| p.check.checked_at),
                     status: p.map(|p| p.check.status.clone()),
                     reason: p.and_then(|p| p.check.relays.iter().find(|r| !r.ok).map(|r| r.reason.clone())),
-                    keys: e.keys.clone(),
-                    pool: e.pool,
                 }
             })
             .collect();
+        let next_switch_at = pool
+            .applied
+            .values()
+            .chain(pool.groups.values())
+            .filter_map(|a| a.next_switch_at)
+            .min();
         drop(pool);
         let routes = settings
             .lanes
@@ -789,22 +840,18 @@ impl NetworkRuntime {
                 })
             })
             .collect();
-        // The top-level fields are the public invoices key's lane.
+        // The top-level fields are the first key's lane.
         let main = lanes[0].clone();
         PoolHealth {
             state: main.state,
-            posture: if lanes.iter().any(|l| l.state == PoolState::Offline && l.uses_default) {
-                Posture::offline(cfg.offline)
-            } else {
-                Posture::Normal
-            },
-            mode: cfg.mode,
+            posture,
+            default: cfg.default.clone(),
             offline: cfg.offline,
             transparent: cfg.transparent,
             active: main.active,
             reachable: main.reachable,
             total: cfg.list.len(),
-            next_switch_at: lanes.iter().filter_map(|l| l.next_switch_at).min(),
+            next_switch_at,
             proxies,
             lanes,
             routes,
@@ -844,25 +891,16 @@ pub async fn run_probe_loop(net: &NetworkRuntime, host: &dyn NetworkHost, stop: 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::network::ProxyEntry;
 
-    fn cfg(mode: ProxyMode, n: usize) -> ProxySettings {
-        ProxySettings {
-            list: (0..n)
-                .map(|i| ProxyEntry {
-                    id: format!("p{i}"),
-                    name: String::new(),
-                    url: format!("socks5://h:{}", i + 1),
-                    keys: Vec::new(),
-                    pool: true,
-                    i2p: false,
-                })
-                .collect(),
-            mode,
+    fn cfg(strategy: Strategy, n: usize) -> ProxyGroup {
+        ProxyGroup {
+            id: "g".into(),
+            name: String::new(),
+            proxies: (0..n).map(|i| format!("p{i}")).collect(),
+            strategy,
             rotate_secs: 600,
             chaos_min_secs: 300,
             chaos_max_secs: 900,
-            ..ProxySettings::default()
         }
     }
 
@@ -876,59 +914,28 @@ mod tests {
     }
 
     #[test]
-    fn nothing_is_used_when_transparent_or_when_there_is_no_proxy() {
-        let mut rot = Rotation::default();
-        let mut c = cfg(ProxyMode::Failover, 2);
-        c.transparent = true;
-        let p = plan(&c, &up(&[true, true]), &mut rot, 0, &mut low);
-        assert_eq!((p.state, p.active), (PoolState::Transparent, None));
-        let p = plan(&cfg(ProxyMode::Chaos, 0), &[], &mut rot, 0, &mut low);
-        assert_eq!((p.state, p.active), (PoolState::Direct, None));
-    }
-
-    #[test]
-    fn one_configured_proxy_ignores_the_strategy() {
-        for mode in [ProxyMode::RoundRobin, ProxyMode::Chaos] {
-            let c = cfg(mode, 1);
-            let mut rot = Rotation::default();
-            let p = plan(&c, &up(&[true]), &mut rot, 0, &mut low);
-            assert_eq!(
-                (p.state, p.active, p.next_switch_at),
-                (PoolState::Active, Some("p0".to_string()), None)
-            );
-            let p = plan(&c, &up(&[false]), &mut rot, 10, &mut low);
-            assert_eq!((p.state, p.active), (PoolState::Offline, None));
-        }
-    }
-
-    #[test]
-    fn off_uses_the_first_proxy_and_never_another() {
-        let c = cfg(ProxyMode::Off, 3);
-        // Coming from another strategy: whatever was in use, it is the first now.
+    fn a_group_with_nothing_reachable_is_offline_and_forgets_its_rotation() {
         let mut rot = Rotation {
-            current: Some("p2".into()),
+            current: Some("p1".into()),
             due_at: 99,
         };
-        let p = plan(&c, &up(&[true, true, true]), &mut rot, 1_000, &mut low);
-        assert_eq!(
-            (p.active.as_deref(), p.state, p.next_switch_at, p.reachable),
-            (Some("p0"), PoolState::Active, None, 3)
+        let p = plan(
+            &cfg(Strategy::RoundRobin, 2),
+            &up(&[false, false]),
+            &mut rot,
+            0,
+            &mut low,
         );
-        assert_eq!(rot.due_at, 0);
-        // The first is down: offline, though the others are up.
-        let p = plan(&c, &up(&[false, true, true]), &mut rot, 1_010, &mut low);
-        assert_eq!((p.active, p.state, p.reachable), (None, PoolState::Offline, 2));
+        assert_eq!((p.state, p.active, p.reachable), (PoolState::Offline, None, 0));
         assert_eq!(rot, Rotation::default());
-        // It is back: used again at once, with no hold.
-        let mut r = up(&[true, true, true]);
-        r[0].up_since = 1_020;
-        let p = plan(&c, &r, &mut rot, 1_021, &mut low);
-        assert_eq!((p.active.as_deref(), p.state), (Some("p0"), PoolState::Active));
+        // A probe missing for a proxy counts as down.
+        let p = plan(&cfg(Strategy::Failover, 2), &[], &mut rot, 0, &mut low);
+        assert_eq!(p.state, PoolState::Offline);
     }
 
     #[test]
     fn failover_uses_the_first_reachable_proxy_in_order() {
-        let c = cfg(ProxyMode::Failover, 3);
+        let c = cfg(Strategy::Failover, 3);
         let mut rot = Rotation::default();
         let mut at = |flags: &[bool], now| plan(&c, &up(flags), &mut rot, now, &mut low);
         assert_eq!(at(&[true, true, true], 10_000).active.as_deref(), Some("p0"));
@@ -948,7 +955,7 @@ mod tests {
 
     #[test]
     fn failover_returns_to_an_earlier_proxy_only_after_it_has_stayed_up() {
-        let c = cfg(ProxyMode::Failover, 2);
+        let c = cfg(Strategy::Failover, 2);
         let mut rot = Rotation::default();
         // p1 carries traffic while p0 is down.
         let p = plan(&c, &up(&[false, true]), &mut rot, 1_000, &mut low);
@@ -972,7 +979,7 @@ mod tests {
 
     #[test]
     fn round_robin_goes_around_at_the_interval_and_not_before() {
-        let c = cfg(ProxyMode::RoundRobin, 3);
+        let c = cfg(Strategy::RoundRobin, 3);
         let mut rot = Rotation::default();
         let all = up(&[true, true, true]);
         let first = plan(&c, &all, &mut rot, 1_000, &mut low);
@@ -994,7 +1001,7 @@ mod tests {
 
     #[test]
     fn round_robin_skips_proxies_that_are_down_and_leaves_at_once_when_the_current_one_fails() {
-        let c = cfg(ProxyMode::RoundRobin, 3);
+        let c = cfg(Strategy::RoundRobin, 3);
         let mut rot = Rotation::default();
         plan(&c, &up(&[true, true, true]), &mut rot, 0, &mut low);
         // p1 is down at the next turn: p0 goes to p2.
@@ -1010,7 +1017,7 @@ mod tests {
 
     #[test]
     fn rotation_is_suspended_with_one_reachable_proxy_and_resumes_with_two() {
-        for mode in [ProxyMode::RoundRobin, ProxyMode::Chaos] {
+        for mode in [Strategy::RoundRobin, Strategy::Chaos] {
             let c = cfg(mode, 3);
             let mut rot = Rotation::default();
             let p = plan(&c, &up(&[false, true, false]), &mut rot, 100, &mut low);
@@ -1032,7 +1039,7 @@ mod tests {
 
     #[test]
     fn chaos_picks_another_proxy_after_a_random_time_inside_the_range() {
-        let c = cfg(ProxyMode::Chaos, 3);
+        let c = cfg(Strategy::Chaos, 3);
         let all = up(&[true, true, true]);
         let mut rot = Rotation::default();
         // The random source is asked for the interval in range, then for a pick.
