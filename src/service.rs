@@ -32,6 +32,8 @@ pub(crate) const META_SETTINGS: &str = "settings";
 pub(crate) const META_SETTINGS_SHAPE: &str = "settings_shape";
 /// The settings as they were stored before proxy groups, kept when converted.
 pub(crate) const META_SETTINGS_PRE_GROUPS: &str = "settings_pre_groups";
+/// Saved proxy settings that no longer fit the environment, put aside.
+pub(crate) const META_SETTINGS_DROPPED_PROXIES: &str = "settings_dropped_proxies";
 /// The value of [`META_SETTINGS_SHAPE`] once converted.
 const SHAPE_GROUPS: &str = "groups";
 pub(crate) const META_PAUSED: &str = "paused";
@@ -279,23 +281,27 @@ fn upgrade_settings(db: &Db, cfg: &Config) -> Result<()> {
     if db.meta_get(META_SETTINGS_SHAPE)?.as_deref() == Some(SHAPE_GROUPS) {
         return Ok(());
     }
-    let old = db.meta_get(META_SETTINGS)?;
-    let new = old.as_deref().and_then(|old| {
-        let new = crate::settings::upgrade_stored(old, &cfg.legacy_proxies).ok()?;
-        Some((old, serde_json::to_string(&new).expect("settings always serialize")))
-    });
-    match new {
-        Some((old, new)) => {
+    let Some(old) = db.meta_get(META_SETTINGS)? else {
+        return db.meta_set(META_SETTINGS_SHAPE, Some(SHAPE_GROUPS));
+    };
+    match crate::settings::upgrade_stored(&old, &cfg.legacy_proxies) {
+        Ok(new) => {
             tracing::info!(
                 "the saved settings were converted to proxy groups; the old ones are kept as settings_pre_groups"
             );
+            let new = serde_json::to_string(&new).expect("settings always serialize");
             db.meta_set_all(&[
-                (META_SETTINGS_PRE_GROUPS, old),
+                (META_SETTINGS_PRE_GROUPS, &old),
                 (META_SETTINGS, &new),
                 (META_SETTINGS_SHAPE, SHAPE_GROUPS),
             ])
         }
-        None => db.meta_set(META_SETTINGS_SHAPE, Some(SHAPE_GROUPS)),
+        // Left as they are (and reported as unreadable), with a copy beside
+        // them; the next start tries again.
+        Err(e) => {
+            tracing::warn!(error = %e, "the saved settings could not be converted to proxy groups");
+            db.meta_set(META_SETTINGS_PRE_GROUPS, Some(&old))
+        }
     }
 }
 
@@ -336,9 +342,39 @@ impl Service {
                         Some(r) => crate::settings::check_relays(r, cfg.network),
                         None => Ok(()),
                     };
+                    let relays_fit = relays_ok.is_ok();
                     match relays_ok.and_then(|()| merged.validate(has_admins)) {
                         Ok(()) => (merged, None),
-                        Err(e) => (base, Some(format!("saved settings were not applied: {e}"))),
+                        Err(e) => {
+                            // Saved proxy settings name the environment's
+                            // proxies (env1, env2, ...). When only they no
+                            // longer fit, the rest still applies, and they
+                            // are put aside.
+                            let mut rest = patch.clone();
+                            let proxies = rest.proxies.take();
+                            let kept = rest.apply(&base);
+                            match proxies {
+                                Some(p) if relays_fit && kept.validate(has_admins).is_ok() => {
+                                    db.meta_set_all(&[
+                                        (
+                                            META_SETTINGS,
+                                            &serde_json::to_string(&rest).expect("settings always serialize"),
+                                        ),
+                                        (
+                                            META_SETTINGS_DROPPED_PROXIES,
+                                            &serde_json::to_string(&p).expect("settings always serialize"),
+                                        ),
+                                    ])?;
+                                    (
+                                        kept,
+                                        Some(format!(
+                                            "saved proxy settings were not applied: {e}; the environment's proxies are used, and the saved ones are kept as {META_SETTINGS_DROPPED_PROXIES}"
+                                        )),
+                                    )
+                                }
+                                _ => (base, Some(format!("saved settings were not applied: {e}"))),
+                            }
+                        }
                     }
                 }
                 Err(e) => (base, Some(format!("saved settings could not be read: {e}"))),

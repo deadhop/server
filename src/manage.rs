@@ -3014,13 +3014,55 @@ pub(crate) mod tests {
             .unwrap();
         let (svc, _f) = on_disk(&cfg, &path, T0).await;
         assert_eq!(svc.db.meta_get(META_SETTINGS).unwrap().as_deref(), Some("{not json"));
-        assert_eq!(svc.db.meta_get(META_SETTINGS_SHAPE).unwrap().as_deref(), Some("groups"));
-        assert!(svc.db.meta_get(META_SETTINGS_PRE_GROUPS).unwrap().is_none());
+        // A copy is kept, and the next start tries again.
+        assert_eq!(
+            svc.db.meta_get(META_SETTINGS_PRE_GROUPS).unwrap().as_deref(),
+            Some("{not json")
+        );
+        assert!(svc.db.meta_get(META_SETTINGS_SHAPE).unwrap().is_none());
         // A change on top of them is refused rather than dropping them.
         let e = svc
             .update_settings(&admin_of(&keys, T0, 1), patch(serde_json::json!({ "pow_bits": 10 })))
             .unwrap_err();
         assert!(e.to_string().contains("could not be read"), "{e}");
+    }
+
+    #[tokio::test]
+    async fn saved_proxy_settings_that_no_longer_fit_the_environment_are_put_aside_alone() {
+        use crate::service::META_SETTINGS_DROPPED_PROXIES;
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("db.sqlite");
+        let keys = Keys::generate();
+        let mut env = crate::config::tests::base();
+        env.insert("DEADHOP_PROXY", "socks5://127.0.0.1:9050".into());
+        env.insert("DEADHOP_PROXIES", "socks5://127.0.0.1:9051".into());
+        let mut cfg = crate::config::tests::load(&env).unwrap();
+        cfg.admins = [keys.public_key().to_hex()].into();
+        cfg.data_dir = dir.path().to_path_buf();
+        {
+            let (svc, _f) = on_disk(&cfg, &path, T0).await;
+            svc.update_settings(
+                &admin_of(&keys, T0, 1),
+                patch(serde_json::json!({ "pow_bits": 22, "proxies": { "default": { "proxy": "env2" } } })),
+            )
+            .unwrap();
+        }
+        // The environment loses its second proxy: what was saved for it no longer fits.
+        env.remove("DEADHOP_PROXIES");
+        let mut fewer = crate::config::tests::load(&env).unwrap();
+        (fewer.admins, fewer.data_dir) = (cfg.admins.clone(), cfg.data_dir.clone());
+        let (svc, _f) = on_disk(&fewer, &path, T0).await;
+        assert_eq!(svc.settings().pow_bits, 22, "the rest still applies");
+        assert_eq!(svc.settings().proxies, fewer.proxies);
+        let problem = svc.settings_problem.lock().unwrap().clone().unwrap();
+        assert!(problem.contains("saved proxy settings were not applied"), "{problem}");
+        assert!(svc.stored_patch().unwrap().proxies.is_none());
+        assert_eq!(
+            svc.db.meta_get(META_SETTINGS_DROPPED_PROXIES).unwrap().as_deref(),
+            Some(r#"{"default":{"proxy":"env2"}}"#)
+        );
+        let w = svc.health(&admin_of(&keys, T0, 2)).await.unwrap().warnings;
+        assert!(w.iter().any(|w| w.contains("saved proxy settings")), "{w:?}");
     }
 
     fn refusal<T: std::fmt::Debug>(
