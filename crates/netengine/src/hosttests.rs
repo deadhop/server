@@ -1258,6 +1258,29 @@ async fn the_privacy_audit_is_given_what_the_runtime_and_the_host_know() {
     let fresh = serde_json::to_string(&net.privacy_audit(host, &op()).await.unwrap()).unwrap();
     assert_ne!(stale, fresh, "a check of another proxy says nothing about this one");
     assert!(fresh.contains("socks5://tor:1"));
+
+    // Proxies listed, default route direct by choice: said as such, and the
+    // relays it sends to the internet are listed; not "every proxy is down".
+    r.set(|t| t.proxies.default = Destination::Direct);
+    r.replan();
+    let a = net.privacy_audit(host, &op()).await.unwrap();
+    let via = check(&a, "relays_via_proxy").unwrap();
+    assert_eq!(via.title, "Relays see this machine's IP address");
+    assert!(via.summary.contains("default route is direct"), "{}", via.summary);
+    let direct = check(&a, "relays_direct_by_rule").unwrap();
+    assert!(
+        direct.evidence.contains(&format!("direct   {A}")),
+        "{:?}",
+        direct.evidence
+    );
+    // Rules only (the default route blocks), their proxy up: it is the proxy in use.
+    r.set(|t| {
+        t.proxies.default = Destination::Block;
+        t.proxies.rules = vec![rule(&["*"], proxy("tor"), Fallback::Offline)];
+    });
+    r.replan();
+    let a = net.privacy_audit(host, &op()).await.unwrap();
+    assert_eq!(check(&a, "relays_via_proxy").unwrap().result, "pass");
 }
 
 /// A service that serves only the network tools, over the fake host, to an

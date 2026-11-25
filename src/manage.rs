@@ -848,6 +848,19 @@ impl Service {
                 let first = px.list.iter().flatten().next().and_then(|e| e.id.clone());
                 px.default = Some(first.map_or(Destination::Direct, Destination::Proxy));
             }
+            // The first proxies of a setup that had none (and went direct)
+            // carry the default route unless the patch says otherwise, as
+            // new proxies used to join the pool: the first that is not an
+            // I2P router's.
+            if before.list.is_empty() && before.default == Destination::Direct && px.default.is_none() {
+                px.default = px
+                    .list
+                    .iter()
+                    .flatten()
+                    .find(|e| e.i2p != Some(true))
+                    .and_then(|e| e.id.clone())
+                    .map(Destination::Proxy);
+            }
         }
         let mut stored = self.stored_patch()?;
         stored.merge(&patch);
@@ -2579,6 +2592,34 @@ pub(crate) mod tests {
     }
 
     #[tokio::test]
+    async fn the_first_proxies_carry_the_default_route_unless_told_otherwise() {
+        let added = |default: Option<serde_json::Value>| async move {
+            let r = rig(|_| {}).await;
+            let mut px = serde_json::json!({ "list": [
+                { "id": "i2p", "url": "http://127.0.0.1:4444", "i2p": true },
+                { "url": "socks5://127.0.0.1:9050" }
+            ] });
+            if let Some(d) = default {
+                px["default"] = d;
+            }
+            let v = r
+                .svc
+                .update_settings(&r.admin(), patch(serde_json::json!({ "proxies": px })))
+                .unwrap();
+            (
+                v.settings.proxies.default.clone(),
+                v.settings.proxies.list[1].id.clone(),
+            )
+        };
+        // From none to some, no default given: the first that is not an I2P router.
+        let (default, id) = added(None).await;
+        assert_eq!(default, Destination::Proxy(id));
+        // Said otherwise: as said.
+        let (default, _) = added(Some(serde_json::json!("direct"))).await;
+        assert_eq!(default, Destination::Direct);
+    }
+
+    #[tokio::test]
     async fn locked_proxies_forbid_i2p_lookups() {
         let r = rig(|c| c.proxy_locked = true).await;
         assert!(msg(r.svc.resolve_i2p_name(&r.admin(), lookup("x.i2p")).await).contains("locked on the host"));
@@ -3586,7 +3627,7 @@ pub(crate) mod tests {
             .unwrap();
         assert_eq!(
             v.overridden,
-            ["name", "relay_names", "proxies.list"]
+            ["name", "relay_names", "proxies.list", "proxies.default"]
                 .iter()
                 .skip(1)
                 .map(|s| s.to_string())
