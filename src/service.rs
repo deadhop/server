@@ -28,6 +28,12 @@ const POLL_CHUNK: usize = 50;
 pub(crate) const DAY_SECS: u64 = 86_400;
 /// `meta` keys.
 pub(crate) const META_SETTINGS: &str = "settings";
+/// Set once the stored settings are in the shape of proxy groups (#53).
+pub(crate) const META_SETTINGS_SHAPE: &str = "settings_shape";
+/// The settings as they were stored before proxy groups, kept when converted.
+pub(crate) const META_SETTINGS_PRE_GROUPS: &str = "settings_pre_groups";
+/// The value of [`META_SETTINGS_SHAPE`] once converted.
+const SHAPE_GROUPS: &str = "groups";
 pub(crate) const META_PAUSED: &str = "paused";
 pub(crate) const META_ONLINE_SINCE: &str = "online_since";
 pub(crate) const META_LAST_BACKUP: &str = "last_backup_at";
@@ -263,6 +269,36 @@ pub fn tally(payments: &[Payment], tip: u32, min_confirmations: u32) -> (u64, u6
     (received.min(MAX_MONEY_SAT), confirmed.min(MAX_MONEY_SAT))
 }
 
+/// Settings stored before proxy groups (#53) are converted once, at the first
+/// start that knows groups (see [`crate::settings::upgrade_stored`]); the old
+/// ones are kept beside them. Whatever is stored from then on is in the new
+/// shape, which a marker says: stored settings found without it are old,
+/// whatever they hold. Ones that cannot be read are left as they are (and
+/// reported as unreadable).
+fn upgrade_settings(db: &Db, cfg: &Config) -> Result<()> {
+    if db.meta_get(META_SETTINGS_SHAPE)?.as_deref() == Some(SHAPE_GROUPS) {
+        return Ok(());
+    }
+    let old = db.meta_get(META_SETTINGS)?;
+    let new = old.as_deref().and_then(|old| {
+        let new = crate::settings::upgrade_stored(old, &cfg.legacy_proxies).ok()?;
+        Some((old, serde_json::to_string(&new).expect("settings always serialize")))
+    });
+    match new {
+        Some((old, new)) => {
+            tracing::info!(
+                "the saved settings were converted to proxy groups; the old ones are kept as settings_pre_groups"
+            );
+            db.meta_set_all(&[
+                (META_SETTINGS_PRE_GROUPS, old),
+                (META_SETTINGS, &new),
+                (META_SETTINGS_SHAPE, SHAPE_GROUPS),
+            ])
+        }
+        None => db.meta_set(META_SETTINGS_SHAPE, Some(SHAPE_GROUPS)),
+    }
+}
+
 impl Service {
     /// Assemble the service from its parts. `server_pubkey` is the hex public
     /// key requests must be addressed to.
@@ -287,6 +323,7 @@ impl Service {
                 t
             }
         };
+        upgrade_settings(&db, &cfg)?;
         let extra: HashSet<String> = db.operators()?.into_iter().map(|o| o.pubkey).collect();
         let base = cfg.settings();
         let has_admins = !cfg.admins.is_empty() || !extra.is_empty();

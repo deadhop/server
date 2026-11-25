@@ -6,10 +6,11 @@
 
 pub mod error;
 #[cfg(test)]
-mod hosttests;
-#[cfg(test)]
 mod goldentests;
+#[cfg(test)]
+mod hosttests;
 pub mod i2p;
+pub mod legacy;
 pub mod netruntime;
 pub mod network;
 pub mod privacy;

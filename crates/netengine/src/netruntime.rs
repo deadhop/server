@@ -333,7 +333,7 @@ impl NetworkRuntime {
         if relays.is_empty() {
             self.proxy_check_busy.store(false, Ordering::SeqCst);
             return Err(Error::InvalidParams(
-                "no relay goes through this proxy yet: add a rule that uses it, or put it in the default route".into(),
+                "no relay goes through this proxy yet: point a rule, a group or the default route at it".into(),
             ));
         }
         let shown = redact(&raw);

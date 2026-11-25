@@ -10,10 +10,10 @@ use deadhop_cvm::caller::Caller;
 
 use crate::error::{Error, Result};
 use crate::netruntime::*;
-use crate::network::{Lane, NetworkSettings, OfflinePolicy, ProxyEntry, ProxyMode, ProxySettings, Topology};
+use crate::network::{Lane, NetworkSettings, OfflinePolicy, ProxyEntry, ProxyGroup, ProxySettings, Strategy, Topology};
 use crate::privacy::ProxyCheck;
 use crate::proxypool::*;
-use crate::routes::{DefaultRoute, Fallback, Reason, RouteTo, Rule, Via};
+use crate::routes::{Destination, Fallback, Reason, Rule, Via};
 
 pub const T0: u64 = 1_700_000_000;
 
@@ -227,13 +227,31 @@ pub fn entry(id: &str) -> ProxyEntry {
         id: id.into(),
         name: String::new(),
         url: format!("socks5://{id}:1"),
-        keys: Vec::new(),
-        pool: true,
         i2p: false,
     }
 }
 
-pub fn rule(patterns: &[&str], to: RouteTo, fallback: Fallback) -> Rule {
+pub fn group(id: &str, proxies: &[&str], strategy: Strategy) -> ProxyGroup {
+    ProxyGroup {
+        id: id.into(),
+        name: String::new(),
+        proxies: proxies.iter().map(|p| p.to_string()).collect(),
+        strategy,
+        rotate_secs: 3_600,
+        chaos_min_secs: 300,
+        chaos_max_secs: 900,
+    }
+}
+
+pub fn proxy(id: &str) -> Destination {
+    Destination::Proxy(id.into())
+}
+
+pub fn to_group(id: &str) -> Destination {
+    Destination::Group(id.into())
+}
+
+pub fn rule(patterns: &[&str], to: Destination, fallback: Fallback) -> Rule {
     Rule {
         name: String::new(),
         patterns: patterns.iter().map(|p| p.to_string()).collect(),
@@ -266,7 +284,6 @@ async fn connections_follow_the_plan_and_the_host_says_what_offline_means() {
     assert_eq!(net.connection_for(host, "invoices"), Connection::Direct);
     assert_eq!(net.main_proxy(host), None);
     assert_eq!(net.posture(host), Posture::Normal);
-    assert_eq!(net.default_route_for(host, "admin"), DefaultRoute::Direct);
     assert_eq!(
         net.lane_routes(host, "admin"),
         Some(vec![(A.to_string(), String::new()), (B.to_string(), String::new())])
@@ -279,20 +296,21 @@ async fn connections_follow_the_plan_and_the_host_says_what_offline_means() {
     assert_eq!(r.applied("invoices"), Some((PoolState::Direct, None)));
     assert_eq!(net.connection_for(host, "invoices"), Connection::Direct);
 
-    // A list with no plan yet: wait, do not leak.
+    // A group with no plan yet: wait, do not leak.
     r.set(|t| {
         t.proxies.list = vec![entry("tor"), entry("vpn")];
-        t.proxies.mode = ProxyMode::Failover;
+        t.proxies.groups = vec![group("exits", &["tor", "vpn"], Strategy::Failover)];
+        t.proxies.default = to_group("exits");
     });
     *net.pool.lock().unwrap() = PoolRuntime::default();
     assert_eq!(net.connection_for(host, "invoices"), Connection::Off);
-    assert_eq!(net.default_route_for(host, "invoices"), DefaultRoute::Off);
     assert_eq!(net.lane_routes(host, "invoices"), None);
+    assert_eq!(net.posture(host), Posture::Normal, "waiting is not the policy");
     let waiting = net.pool_health(host);
     assert!(waiting
         .lanes
         .iter()
-        .all(|l| l.state == PoolState::Offline && l.active.is_none()));
+        .all(|l| l.state == PoolState::Offline && l.active.is_none() && l.groups[0].state == PoolState::Offline));
 
     // Both up: the first one carries every lane.
     r.probe("tor", true);
@@ -304,13 +322,6 @@ async fn connections_follow_the_plan_and_the_host_says_what_offline_means() {
     assert_eq!(net.active_proxy_for(host, "admin").as_deref(), Some("socks5://tor:1"));
     assert_eq!(net.main_proxy(host).as_deref(), Some("socks5://tor:1"));
     assert_eq!(
-        net.default_route_for(host, "invoices"),
-        DefaultRoute::Proxy {
-            id: "tor".into(),
-            url: "socks5://tor:1".into()
-        }
-    );
-    assert_eq!(
         net.lane_routes(host, "invoices"),
         Some(vec![
             (A.to_string(), "socks5://tor:1".into()),
@@ -318,6 +329,11 @@ async fn connections_follow_the_plan_and_the_host_says_what_offline_means() {
         ])
     );
     assert_eq!(net.posture(host), Posture::Normal);
+    let h = net.pool_health(host);
+    assert_eq!(
+        (&h.default, &h.lanes[0].default, h.lanes[0].groups[0].active.as_deref()),
+        (&to_group("exits"), &to_group("exits"), Some("tor"))
+    );
     // Nothing changed: the supervisor is left alone.
     r.replan();
     assert!(!r.woken().await);
@@ -361,28 +377,47 @@ async fn connections_follow_the_plan_and_the_host_says_what_offline_means() {
         assert_eq!(net.active_proxy_for(host, "invoices"), None);
     }
 
+    // A default route that blocks: nothing connects by it, and that is no
+    // reason for the offline policy.
+    r.set(|t| t.proxies.default = Destination::Block);
+    *net.pool.lock().unwrap() = PoolRuntime::default();
+    assert_eq!(
+        net.pool_health(host).lanes[0].state,
+        PoolState::Blocked,
+        "before any plan"
+    );
+    r.replan();
+    assert_eq!(r.applied("invoices"), Some((PoolState::Blocked, None)));
+    assert_eq!(net.connection_for(host, "invoices"), Connection::Off);
+    assert_eq!(net.posture(host), Posture::Normal);
+    assert_eq!(net.lane_routes(host, "invoices"), None);
+
     // A transparent proxy: straight, whatever was planned or probed.
     r.set(|t| t.proxies.transparent = true);
     assert_eq!(net.connection_for(host, "invoices"), Connection::Direct);
+    assert_eq!(net.pool_health(host).lanes[0].state, PoolState::Transparent);
     r.replan();
     assert_eq!(r.applied("invoices"), Some((PoolState::Transparent, None)));
     assert_eq!(net.connection_for(host, "invoices"), Connection::Direct);
     assert_eq!(net.posture(host), Posture::Normal);
     let h = net.pool_health(host);
-    assert!(h.transparent && h.lanes.iter().all(|l| l.state == PoolState::Transparent));
+    assert!(
+        h.transparent
+            && h.lanes
+                .iter()
+                .all(|l| l.state == PoolState::Transparent && l.groups.is_empty())
+    );
 }
 
 #[tokio::test]
-async fn each_lane_plans_over_its_own_proxies_and_rotation_follows_the_clock() {
+async fn each_lane_plans_its_own_route_and_rotation_follows_the_clock() {
     let r = rig(&[A, B]);
     let (net, host) = (&r.net, &r.host);
-    // tor is for the public lane only, vpn for the operators' lane.
+    // tor for the public lane, vpn for the operators' lane.
     r.set(|t| {
-        let (mut tor, mut vpn) = (entry("tor"), entry("vpn"));
-        tor.keys = vec!["invoices".into()];
-        vpn.keys = vec!["admin".into()];
-        t.proxies.list = vec![tor, vpn];
-        t.proxies.mode = ProxyMode::Failover;
+        t.proxies.list = vec![entry("tor"), entry("vpn")];
+        t.proxies.default = proxy("tor");
+        t.proxies.default_keys.insert("admin".into(), proxy("vpn"));
     });
     r.probe("tor", true);
     r.probe("vpn", false);
@@ -397,19 +432,17 @@ async fn each_lane_plans_over_its_own_proxies_and_rotation_follows_the_clock() {
     assert_eq!(net.connection_for(host, "invoices"), via("tor"));
     assert_eq!(net.connection_for(host, "admin"), Connection::Off);
     assert_eq!(net.posture(host), Posture::Off);
-
-    // A lane that no pool proxy is assigned to is offline, not "no proxy, go straight".
-    r.set(|t| t.proxies.list[1].pool = false);
-    r.replan();
-    assert_eq!(r.applied("admin"), Some((PoolState::Offline, None)));
     let h = net.pool_health(host);
     assert_eq!((h.lanes[1].reachable, h.lanes[1].uses_default), (0, true));
+    assert_eq!(h.lanes[1].default, proxy("vpn"));
 
     // Round robin over two reachable proxies: one change per interval, each lane on its own.
     r.set(|t| {
-        t.proxies.list = vec![entry("tor"), entry("vpn")];
-        t.proxies.mode = ProxyMode::RoundRobin;
-        t.proxies.rotate_secs = 600;
+        let mut rr = group("rr", &["tor", "vpn"], Strategy::RoundRobin);
+        rr.rotate_secs = 600;
+        t.proxies.groups = vec![rr];
+        t.proxies.default = to_group("rr");
+        t.proxies.default_keys.clear();
     });
     r.probe("vpn", true);
     r.replan();
@@ -419,11 +452,29 @@ async fn each_lane_plans_over_its_own_proxies_and_rotation_follows_the_clock() {
     r.replan();
     assert_eq!(r.applied("admin"), Some((PoolState::Active, Some("vpn".into()))));
     assert_eq!(net.connection_for(host, "admin"), via("vpn"));
+    {
+        let pool = net.pool.lock().unwrap();
+        assert_eq!(pool.rot.len(), 2, "one rotation per key and group");
+        assert!(pool.rot.contains_key(&("admin".to_string(), "rr".to_string())));
+    }
     // One of two down: rotation is suspended on the one that is left.
     r.probe("vpn", false);
     r.replan();
     assert_eq!(r.applied("invoices"), Some((PoolState::Suspended, Some("tor".into()))));
     assert_eq!(net.pool_health(host).next_switch_at, None);
+    assert_eq!(net.connection_for(host, "invoices"), via("tor"));
+    // A group nothing uses any more is no longer planned, and forgets its rotation.
+    r.set(|t| t.proxies.default = proxy("tor"));
+    r.replan();
+    assert!(net.pool.lock().unwrap().rot.is_empty());
+    assert!(net.pool_health(host).lanes[0].groups.is_empty());
+    // A group that is gone leaves a key that points at it offline.
+    r.set(|t| {
+        t.proxies.default = to_group("rr");
+        t.proxies.groups.clear();
+    });
+    r.replan();
+    assert_eq!(r.applied("invoices"), Some((PoolState::Offline, None)));
 }
 
 #[tokio::test]
@@ -431,13 +482,11 @@ async fn a_rule_moves_single_relays_and_health_reports_where_each_goes() {
     let r = rig(&[A, B, "ws://abc.onion"]);
     let (net, host) = (&r.net, &r.host);
     r.set(|t| {
-        let mut vpn = entry("vpn");
-        vpn.pool = false;
-        t.proxies.list = vec![entry("tor"), vpn];
-        t.proxies.mode = ProxyMode::Failover;
+        t.proxies.list = vec![entry("tor"), entry("vpn")];
+        t.proxies.default = proxy("tor");
         t.proxies.rules = vec![
-            rule(&[B], RouteTo::Proxy("vpn".into()), Fallback::Pool),
-            rule(&["*.onion"], RouteTo::Block, Fallback::Offline),
+            rule(&[B], proxy("vpn"), Fallback::To(proxy("tor"))),
+            rule(&["*.onion"], Destination::Block, Fallback::Offline),
         ];
     });
     r.probe("tor", true);
@@ -469,8 +518,8 @@ async fn a_rule_moves_single_relays_and_health_reports_where_each_goes() {
             (B.to_string(), "socks5://vpn:1".into())
         ])
     );
-    // The rule's own proxy goes down: only its relay moves (to the default
-    // route), and the supervisor is told although no lane's plan changed.
+    // The rule's own proxy goes down: only its relay moves (to its
+    // fallback), and the supervisor is told although no plan changed.
     r.probe("vpn", false);
     r.replan();
     assert!(r.woken().await);
@@ -496,8 +545,8 @@ async fn a_rule_moves_single_relays_and_health_reports_where_each_goes() {
     net.record_probe("vpn", failed);
     let h = net.pool_health(host);
     assert_eq!(
-        (h.state, h.posture, h.mode),
-        (PoolState::Active, Posture::Normal, ProxyMode::Failover)
+        (h.state, h.posture, &h.default),
+        (PoolState::Active, Posture::Normal, &proxy("tor"))
     );
     assert_eq!((h.active.as_deref(), h.reachable, h.total), (Some("tor"), 1, 2));
     assert_eq!(
@@ -510,14 +559,12 @@ async fn a_rule_moves_single_relays_and_health_reports_where_each_goes() {
             vpn.reachable,
             vpn.status.as_deref(),
             vpn.reason.as_deref(),
-            vpn.pool,
             vpn.checked_at
         ),
         (
             Some(false),
             Some("failed"),
             Some("The proxy refused the connection."),
-            false,
             Some(T0)
         )
     );
@@ -533,7 +580,7 @@ async fn a_rule_moves_single_relays_and_health_reports_where_each_goes() {
         (Some(2), RouteVia::Off, None)
     );
     // A rule that sends a relay straight shows as direct.
-    r.set(|t| t.proxies.rules[0].to = RouteTo::Direct);
+    r.set(|t| t.proxies.rules[0].to = Destination::Direct);
     let h = net.pool_health(host);
     let b = h.routes.iter().find(|x| x.key == "invoices" && x.relay == B).unwrap();
     assert_eq!(
@@ -551,20 +598,80 @@ async fn a_rule_moves_single_relays_and_health_reports_where_each_goes() {
 }
 
 #[tokio::test]
+async fn rules_to_groups_rotate_per_key_and_the_policy_follows_where_relays_actually_go() {
+    let r = rig(&[A, B]);
+    let (net, host) = (&r.net, &r.host);
+    // B goes through a chaos group by rule; everything else through tor.
+    r.set(|t| {
+        t.proxies.list = vec![entry("tor"), entry("p1"), entry("p2")];
+        let mut chaos = group("chaos", &["p1", "p2"], Strategy::Chaos);
+        (chaos.chaos_min_secs, chaos.chaos_max_secs) = (60, 60);
+        t.proxies.groups = vec![chaos];
+        t.proxies.default = proxy("tor");
+        t.proxies.rules = vec![rule(&[B], to_group("chaos"), Fallback::Policy)];
+    });
+    for id in ["tor", "p1", "p2"] {
+        r.probe(id, true);
+    }
+    r.replan();
+    let b = |lane: &str| net.routes_for(host, lane)[1].clone();
+    assert!(matches!(b("admin").via, Via::Proxy { ref id, .. } if id.starts_with('p')));
+    assert_eq!(b("admin").reason, Reason::Rule);
+    // The group's switch is due within its interval, for each key on its own.
+    let h = net.pool_health(host);
+    assert_eq!(h.next_switch_at, Some(T0 + 60));
+    assert_eq!(h.lanes[1].groups[0].next_switch_at, Some(T0 + 60));
+    assert_eq!(h.lanes[0].next_switch_at, None, "the default route does not rotate");
+    host.now.store(T0 + 60, Ordering::SeqCst);
+    let before = b("admin").via;
+    r.replan();
+    assert_ne!(b("admin").via, before, "chaos moved to the other proxy");
+
+    // The group goes down while the default route is up: the rule leaves B
+    // to the policy, which now applies, though the default route is fine.
+    r.probe("p1", false);
+    r.probe("p2", false);
+    r.replan();
+    r.set(|t| t.proxies.offline = OfflinePolicy::AdminOnly);
+    assert_eq!((b("admin").via, b("admin").reason), (Via::Direct, Reason::Rule));
+    assert_eq!(
+        (b("invoices").via, b("invoices").reason),
+        (Via::Off, Reason::PoolOffline)
+    );
+    assert_eq!(net.posture(host), Posture::AdminOnly);
+    assert_eq!(r.applied("invoices"), Some((PoolState::Active, Some("tor".into()))));
+
+    // A rule whose proxy is up while its fallback is down is not offline: it
+    // does not need the fallback.
+    r.set(|t| t.proxies.rules = vec![rule(&[B], proxy("tor"), Fallback::To(to_group("chaos")))]);
+    r.replan();
+    assert_eq!(net.posture(host), Posture::Normal);
+    // Down too: the fallback is down, so the policy decides.
+    r.probe("tor", false);
+    r.replan();
+    assert_eq!((b("admin").via, b("admin").reason), (Via::Direct, Reason::Fallback));
+    assert_eq!(net.posture(host), Posture::AdminOnly);
+}
+
+#[tokio::test]
 async fn a_proxy_change_that_leaves_nothing_reachable_is_undone_once() {
     let r = rig(&[A]);
     let (net, host) = (&r.net, &r.host);
     r.set(|t| {
         t.proxies.list = vec![entry("tor")];
-        t.proxies.mode = ProxyMode::Failover;
+        t.proxies.default = proxy("tor");
     });
     r.probe("tor", true);
     r.replan();
     let _ = r.woken().await;
     let working = r.proxies();
+    let only = |t: &mut Topology, id: &str| {
+        t.proxies.list = vec![entry(id)];
+        t.proxies.default = proxy(id);
+    };
 
     // The operator replaces the list with one that does not work.
-    r.set(|t| t.proxies.list = vec![entry("typo")]);
+    r.set(|t| only(t, "typo"));
     net.begin_probation(host, working.clone());
     assert!(net.pool.lock().unwrap().probation.is_some());
     r.probe("typo", false);
@@ -577,14 +684,14 @@ async fn a_proxy_change_that_leaves_nothing_reachable_is_undone_once() {
     assert!(net.pool.lock().unwrap().probation.is_none());
 
     // A change that works ends the probation; so does time running out.
-    r.set(|t| t.proxies.list = vec![entry("vpn")]);
+    r.set(|t| only(t, "vpn"));
     net.begin_probation(host, working.clone());
     r.probe("vpn", true);
     r.replan();
     assert!(net.pool.lock().unwrap().probation.is_none());
     assert_eq!(r.proxies().list[0].id, "vpn");
     let with_vpn = r.proxies();
-    r.set(|t| t.proxies.list = vec![entry("slow")]);
+    r.set(|t| only(t, "slow"));
     net.begin_probation(host, with_vpn.clone());
     host.now.store(T0 + PROBATION_SECS, Ordering::SeqCst);
     r.probe("slow", false);
@@ -597,7 +704,7 @@ async fn a_proxy_change_that_leaves_nothing_reachable_is_undone_once() {
     r.probe("slow", true);
     r.replan();
     let with_slow = r.proxies();
-    r.set(|t| t.proxies.list = vec![entry("typo")]);
+    r.set(|t| only(t, "typo"));
     net.begin_probation(host, with_slow);
     host.broken.store(true, Ordering::SeqCst);
     r.probe("typo", false);
@@ -633,25 +740,47 @@ async fn a_proxy_change_that_leaves_nothing_reachable_is_undone_once() {
 }
 
 #[tokio::test]
-async fn turning_the_strategy_off_would_strand_a_lane_whose_first_proxy_is_down() {
+async fn a_default_route_that_has_nothing_up_would_strand_a_key() {
     let r = rig(&[A]);
     let (net, host) = (&r.net, &r.host);
-    r.set(|t| t.proxies.list = vec![entry("tor"), entry("vpn")]);
-    let next = host.topology();
-    assert_eq!(net.stranded_by_off(&next), None, "nothing probed yet");
+    r.set(|t| {
+        t.proxies.list = vec![entry("tor"), entry("vpn")];
+        t.proxies.groups = vec![group("g", &["tor", "vpn"], Strategy::Failover)];
+        t.proxies.default = to_group("g");
+    });
+    let before = host.topology();
+    let mut next = before.clone();
+    next.proxies.default = proxy("tor");
+    assert_eq!(net.stranded(&before, &next), None, "nothing probed yet");
     r.probe("tor", false);
     r.probe("vpn", true);
-    assert_eq!(net.stranded_by_off(&next).as_deref(), Some("Public invoices"));
+    assert_eq!(net.stranded(&before, &next).as_deref(), Some("Public invoices"));
+    // One key on its own way.
+    let mut admin_only = before.clone();
+    admin_only.proxies.default_keys.insert("admin".into(), proxy("tor"));
+    assert_eq!(net.stranded(&before, &admin_only).as_deref(), Some("Administration"));
+    // A group with every proxy down strands as well; one with one up does not.
+    let mut both_down = before.clone();
+    r.probe("vpn", false);
+    assert_eq!(net.stranded(&next, &both_down), None, "it was down before too");
+    both_down.proxies.default = Destination::Direct;
+    assert_eq!(net.stranded(&both_down, &before).as_deref(), Some("Public invoices"));
+    r.probe("vpn", true);
+    assert_eq!(net.stranded(&both_down, &before), None);
     r.probe("tor", true);
-    assert_eq!(net.stranded_by_off(&next), None);
+    assert_eq!(net.stranded(&before, &next), None);
     r.probe("tor", false);
     let mut transparent = next.clone();
     transparent.proxies.transparent = true;
-    assert_eq!(net.stranded_by_off(&transparent), None);
-    // A lane none of whose relays takes the default route is not hurt.
-    let mut ruled = next;
-    ruled.proxies.rules = vec![rule(&["*"], RouteTo::Direct, Fallback::Offline)];
-    assert_eq!(net.stranded_by_off(&ruled), None);
+    assert_eq!(net.stranded(&before, &transparent), None);
+    // A lane none of whose relays takes the default route is not hurt; nor
+    // is one blocked on purpose.
+    let mut ruled = next.clone();
+    ruled.proxies.rules = vec![rule(&["*"], Destination::Direct, Fallback::Offline)];
+    assert_eq!(net.stranded(&before, &ruled), None);
+    let mut blocked = next;
+    blocked.proxies.default = Destination::Block;
+    assert_eq!(net.stranded(&before, &blocked), None);
 }
 
 /// A relay address that accepts TCP connections (enough for a tunnel through a proxy).
@@ -692,10 +821,9 @@ async fn probing_marks_a_proxy_that_tunnels_up_one_that_does_not_down_and_skips_
     let (good, _p) = deadhop_net::testing::socks5_proxy(None).await;
     let bad = closed_port().await;
     r.set(|t| {
-        let mut idle = proxy_on("idle", bad);
-        idle.pool = false;
-        t.proxies.list = vec![proxy_on("bad", bad), proxy_on("good", good), idle];
-        t.proxies.mode = ProxyMode::Failover;
+        t.proxies.list = vec![proxy_on("bad", bad), proxy_on("good", good), proxy_on("idle", bad)];
+        t.proxies.groups = vec![group("g", &["bad", "good"], Strategy::Failover)];
+        t.proxies.default = to_group("g");
     });
     // A probe left over for the proxy that carries nothing is forgotten.
     r.probe("idle", true);
@@ -711,13 +839,17 @@ async fn probing_marks_a_proxy_that_tunnels_up_one_that_does_not_down_and_skips_
     // The loop probes at once, again when woken, and stops when told to.
     let r = std::sync::Arc::new(r);
     let stop = tokio_util::sync::CancellationToken::new();
-    r.set(|t| t.proxies.list.swap(0, 1));
+    r.set(|t| t.proxies.groups[0].proxies.swap(0, 1));
     let looping = tokio::spawn({
         let (r, stop) = (r.clone(), stop.clone());
         async move { run_probe_loop(&r.net, &r.host, stop).await }
     });
     assert!(r.woken().await || r.applied("admin") == Some((PoolState::Active, Some("good".into()))));
-    r.set(|t| t.proxies.list.truncate(1));
+    r.set(|t| {
+        t.proxies.list.truncate(1);
+        t.proxies.groups.clear();
+        t.proxies.default = proxy("bad");
+    });
     r.net.wake_pool();
     tokio::time::sleep(Duration::from_millis(200)).await;
     assert_eq!(r.net.pool.lock().unwrap().probes.len(), 1);
@@ -764,9 +896,8 @@ async fn a_proxy_is_tested_by_id_by_address_or_as_the_one_in_use() {
     r.set(|t| {
         let mut idle = proxy_on("idle", good + 1);
         idle.url = "socks5://user:secret@127.0.0.1:9".into();
-        idle.pool = false;
         t.proxies.list = vec![proxy_on("good", good), idle];
-        t.proxies.mode = ProxyMode::Failover;
+        t.proxies.default = proxy("good");
     });
     // By id: the result is remembered as that proxy's probe.
     let by_id = net.check_proxy(host, &op(), params(Some("good"), None)).await.unwrap();
@@ -805,8 +936,7 @@ async fn a_proxy_is_tested_by_id_by_address_or_as_the_one_in_use() {
     );
     assert_eq!(
         text(net.check_proxy(host, &op(), params(Some("idle"), None)).await),
-        "invalid parameters: no relay goes through this proxy yet: add a rule that uses it, or put it in the default \
-         route"
+        "invalid parameters: no relay goes through this proxy yet: point a rule, a group or the default route at it"
     );
     assert!(!net.proxy_check_busy.load(Ordering::SeqCst));
     // Locked on the host: only what is listed may be tested.
@@ -872,7 +1002,6 @@ async fn an_i2p_name_is_asked_of_every_registry_through_the_router() {
     host.locked.store(false, Ordering::SeqCst);
     let router_entry = |url: &str| ProxyEntry {
         url: url.into(),
-        pool: false,
         i2p: true,
         ..entry("router")
     };
@@ -979,6 +1108,7 @@ async fn relays_are_checked_the_way_they_are_routed_and_their_results_kept() {
     r.set(|t| {
         t.relays.truncate(1);
         t.proxies.list = vec![proxy_on("good", proxy)];
+        t.proxies.default = crate::hosttests::proxy("good");
     });
     r.probe("good", true);
     r.replan();
@@ -1074,7 +1204,7 @@ async fn the_privacy_audit_is_given_what_the_runtime_and_the_host_know() {
         })
     });
     r.set(|t| {
-        t.proxies.rules = vec![rule(&["*"], RouteTo::Direct, Fallback::Offline)];
+        t.proxies.rules = vec![rule(&["*"], Destination::Direct, Fallback::Offline)];
     });
     let direct = net.privacy_audit(host, &op()).await.unwrap();
     let check = |a: &crate::privacy::PrivacyAudit, id: &str| a.checks.iter().find(|c| c.id == id).cloned();
@@ -1089,6 +1219,7 @@ async fn the_privacy_audit_is_given_what_the_runtime_and_the_host_know() {
     r.set(|t| {
         t.proxies.rules.clear();
         t.proxies.list = vec![entry("tor")];
+        t.proxies.default = proxy("tor");
     });
     r.probe("tor", true);
     r.replan();

@@ -1,28 +1,47 @@
 //! The proxy pool as this service runs it: the tests that need the whole
 //! service (settings saved through the operator tools, the database, the
-//! keys). They were the second half of `proxypool.rs`'s test module and are
-//! unchanged apart from their imports.
+//! keys). They were the second half of `proxypool.rs`'s test module.
 
-use crate::network::{OfflinePolicy, ProxyEntry, ProxyMode, ProxySettings};
+use crate::network::{OfflinePolicy, ProxyEntry, ProxyGroup, ProxySettings, Strategy};
 use crate::privacy::ProxyCheck;
 use crate::proxypool::*;
+use crate::routes::Destination;
 
-fn cfg(mode: ProxyMode, n: usize) -> ProxySettings {
+fn entry(id: &str, url: &str) -> ProxyEntry {
+    ProxyEntry {
+        id: id.into(),
+        name: String::new(),
+        url: url.into(),
+        i2p: false,
+    }
+}
+
+/// `n` proxies p0, p1, ...; with a strategy (and two or more), a group "g" of
+/// them all is the default route, otherwise the first proxy.
+fn cfg(strategy: Option<Strategy>, n: usize) -> ProxySettings {
+    let list: Vec<ProxyEntry> = (0..n)
+        .map(|i| entry(&format!("p{i}"), &format!("socks5://h:{}", i + 1)))
+        .collect();
+    let groups: Vec<ProxyGroup> = strategy
+        .filter(|_| n > 1)
+        .map(|strategy| ProxyGroup {
+            id: "g".into(),
+            name: String::new(),
+            proxies: list.iter().map(|e| e.id.clone()).collect(),
+            strategy,
+            rotate_secs: 600,
+            chaos_min_secs: 300,
+            chaos_max_secs: 900,
+        })
+        .into_iter()
+        .collect();
     ProxySettings {
-        list: (0..n)
-            .map(|i| ProxyEntry {
-                id: format!("p{i}"),
-                name: String::new(),
-                url: format!("socks5://h:{}", i + 1),
-                keys: Vec::new(),
-                pool: true,
-                i2p: false,
-            })
-            .collect(),
-        mode,
-        rotate_secs: 600,
-        chaos_min_secs: 300,
-        chaos_max_secs: 900,
+        default: match groups.first() {
+            Some(_) => Destination::Group("g".into()),
+            None => Destination::Proxy("p0".into()),
+        },
+        list,
+        groups,
         ..ProxySettings::default()
     }
 }
@@ -30,9 +49,10 @@ fn cfg(mode: ProxyMode, n: usize) -> ProxySettings {
 #[tokio::test]
 async fn a_listed_proxy_without_a_plan_reads_as_offline_and_checks_never_connect_straight() {
     let r = rig(|_| {}).await;
-    listed(&r, ProxyMode::Failover, OfflinePolicy::KillSwitch, 1);
+    listed(&r, Some(Strategy::Failover), OfflinePolicy::KillSwitch, 1);
+    // (Waiting for the first probe is not the offline policy's doing.)
     let h = r.svc.pool_health();
-    assert_eq!((h.state, h.posture), (PoolState::Offline, Posture::Off));
+    assert_eq!((h.state, h.posture), (PoolState::Offline, Posture::Normal));
     // No connection is allowed, so the relay check does not make one either.
     assert_eq!(r.svc.refresh_relay_health().await, Some(Vec::new()));
     // Resetting to the environment's (empty) list is a proxy change too.
@@ -59,14 +79,8 @@ async fn a_proxy_is_tested_by_id_by_address_or_as_the_one_in_use() {
     let url = format!("socks5://127.0.0.1:{port}");
     let mut s = r.svc.settings().clone();
     s.relays = vec![format!("ws://127.0.0.1:{}", relay.local_addr().unwrap().port())];
-    s.proxies.list = vec![ProxyEntry {
-        id: "good".into(),
-        name: String::new(),
-        url: url.clone(),
-        keys: Vec::new(),
-        pool: true,
-        i2p: false,
-    }];
+    s.proxies.list = vec![entry("good", &url)];
+    s.proxies.default = Destination::Proxy("good".into());
     r.svc.apply_settings(s);
     r.svc.refresh_pool().await;
     let ask = |id: Option<&str>, proxy: Option<&str>| CheckProxyParams {
@@ -109,35 +123,32 @@ async fn a_proxy_is_tested_by_id_by_address_or_as_the_one_in_use() {
 
 #[tokio::test]
 async fn routing_rules_move_single_relays_and_report_why() {
-    use crate::routes::{Fallback, Reason, RouteTo, Rule};
+    use crate::routes::{Fallback, Reason, Rule};
     let r = rig(|_| {}).await;
     let (onion, vpn, plain) = ("ws://abc.onion", "wss://vpn.example", "wss://plain.example");
     let mut s = r.svc.settings().clone();
     s.relays = vec![onion.into(), vpn.into(), plain.into()];
-    let entry = |id: &str, pool: bool| ProxyEntry {
-        id: id.into(),
+    let named = |id: &str| ProxyEntry {
         name: id.into(),
-        url: format!("socks5://{id}:1"),
-        keys: Vec::new(),
-        pool,
-        i2p: false,
+        ..entry(id, &format!("socks5://{id}:1"))
     };
     s.proxies = ProxySettings {
-        list: vec![entry("tor", true), entry("vpn", false)],
+        list: vec![named("tor"), named("vpn")],
+        default: Destination::Proxy("tor".into()),
         rules: vec![
             Rule {
                 name: String::new(),
                 patterns: vec!["*.onion".into()],
                 keys: Vec::new(),
-                to: RouteTo::Proxy("tor".into()),
+                to: Destination::Proxy("tor".into()),
                 fallback: Fallback::Offline,
             },
             Rule {
                 name: String::new(),
                 patterns: vec![vpn.into()],
                 keys: Vec::new(),
-                to: RouteTo::Proxy("vpn".into()),
-                fallback: Fallback::Pool,
+                to: Destination::Proxy("vpn".into()),
+                fallback: Fallback::To(Destination::Proxy("tor".into())),
             },
         ],
         ..ProxySettings::default()
@@ -170,7 +181,7 @@ async fn routing_rules_move_single_relays_and_report_why() {
     );
     // Drain the wake-up from setting things up.
     let _ = tokio::time::timeout(std::time::Duration::from_millis(50), r.svc.pool_changed()).await;
-    // vpn goes down: only its relay moves (to the default route), and the
+    // vpn goes down: only its relay moves (to its fallback), and the
     // supervisor is told although no key's default route changed.
     probe(&r, "vpn", false);
     r.svc.replan();
@@ -192,11 +203,10 @@ async fn routing_rules_move_single_relays_and_report_why() {
         ),
         (Some(2), RouteVia::Proxy, Some("tor"), Reason::Fallback)
     );
-    assert!(h.proxies.iter().any(|p| p.id == "vpn" && !p.pool));
     assert!(h.lanes.iter().all(|l| l.uses_default));
-    // The pool's only proxy down too: a "stay offline" rule's relay keeps
-    // going through its own proxy; the rest have no default route, so the
-    // kill switch applies.
+    // tor down too: a "stay offline" rule's relay keeps going through its
+    // own proxy; the fallback and the default route are down, so the kill
+    // switch applies.
     probe(&r, "tor", false);
     r.svc.replan();
     assert_eq!(
@@ -219,36 +229,26 @@ async fn routing_rules_move_single_relays_and_report_why() {
 }
 
 #[tokio::test]
-async fn an_empty_default_route_is_offline_never_straight_and_only_matters_when_used() {
-    use crate::routes::{Fallback, Reason, RouteTo, Rule};
+async fn a_default_route_that_blocks_never_connects_and_is_no_reason_for_the_policy() {
+    use crate::routes::{Fallback, Reason, Rule};
     let r = rig(|_| {}).await;
     let mut s = r.svc.settings().clone();
     s.relays = vec!["wss://a.example".into()];
-    s.proxies.list = vec![ProxyEntry {
-        id: "only".into(),
-        name: String::new(),
-        url: "socks5://only:1".into(),
-        keys: Vec::new(),
-        pool: false,
-        i2p: false,
-    }];
+    s.proxies.list = vec![entry("only", "socks5://only:1")];
+    s.proxies.default = Destination::Block;
     r.svc.apply_settings(s.clone());
     probe(&r, "only", true);
     r.svc.replan();
-    // The relay takes the default route, which has no proxy: offline, not straight.
+    // The relay takes the default route, which blocks: off, not straight.
     let x = &r.svc.routes_for("invoices")[0];
-    assert_eq!(
-        (x.via.clone(), x.reason),
-        (crate::routes::Via::Off, Reason::PoolOffline)
-    );
-    assert_eq!(r.svc.posture(), Posture::Off);
-    assert_eq!(r.svc.pool_health().posture, Posture::Off);
-    // With every relay ruled to the proxy, the empty pool hurts nobody.
+    assert_eq!((x.via.clone(), x.reason), (crate::routes::Via::Off, Reason::Blocked));
+    assert_eq!(r.svc.posture(), Posture::Normal);
+    // With every relay ruled to the proxy, the default route is unused.
     s.proxies.rules = vec![Rule {
         name: String::new(),
         patterns: vec!["*".into()],
         keys: Vec::new(),
-        to: RouteTo::Proxy("only".into()),
+        to: Destination::Proxy("only".into()),
         fallback: Fallback::Offline,
     }];
     r.svc.apply_settings(s);
@@ -257,14 +257,12 @@ async fn an_empty_default_route_is_offline_never_straight_and_only_matters_when_
         r.svc.routes_for("admin")[0].via,
         crate::routes::Via::Proxy { .. }
     ));
-    assert_eq!(r.svc.posture(), Posture::Normal);
     let h = r.svc.pool_health();
     assert_eq!(h.posture, Posture::Normal);
-    assert!(h.lanes.iter().all(|l| !l.uses_default && l.state == PoolState::Offline));
+    assert!(h.lanes.iter().all(|l| !l.uses_default && l.state == PoolState::Blocked));
     // A proxy that carries no relay is not probed, and its old probe is forgotten.
     let mut s = r.svc.settings().clone();
     s.proxies.rules.clear();
-    s.proxies.list[0].pool = false;
     r.svc.apply_settings(s);
     r.svc.refresh_pool().await;
     assert!(r.svc.pool.lock().unwrap().probes.is_empty());
@@ -273,7 +271,7 @@ async fn an_empty_default_route_is_offline_never_straight_and_only_matters_when_
 #[tokio::test]
 async fn a_proxy_that_carries_nothing_cannot_be_tested_and_rule_directs_reach_the_audit() {
     use crate::manage::CheckProxyParams;
-    use crate::routes::{Fallback, RouteTo, Rule};
+    use crate::routes::{Fallback, Rule};
     let r = rig(|_| {}).await;
     let mut s = r.svc.settings().clone();
     s.relays = vec![
@@ -283,19 +281,12 @@ async fn a_proxy_that_carries_nothing_cannot_be_tested_and_rule_directs_reach_th
         "wss://relay.home.example".into(),
         "wss://mixed.example".into(),
     ];
-    s.proxies.list = vec![ProxyEntry {
-        id: "spare".into(),
-        name: String::new(),
-        url: "socks5://127.0.0.1:1".into(),
-        keys: Vec::new(),
-        pool: false,
-        i2p: false,
-    }];
+    s.proxies.list = vec![entry("spare", "socks5://127.0.0.1:1")];
     let direct = |p: &str| Rule {
         name: String::new(),
         patterns: vec![p.into()],
         keys: Vec::new(),
-        to: RouteTo::Direct,
+        to: Destination::Direct,
         fallback: Fallback::Offline,
     };
     // Straight to an internet relay is a finding; to the LAN and FIPS it is not.
@@ -346,7 +337,7 @@ use crate::service::tests::{public, rig, Rig, T0};
 use nostr_sdk::Keys;
 use std::sync::atomic::Ordering;
 
-fn listed(r: &Rig, mode: ProxyMode, offline: OfflinePolicy, n: usize) {
+fn listed(r: &Rig, mode: Option<Strategy>, offline: OfflinePolicy, n: usize) {
     let mut s = r.svc.settings().clone();
     s.proxies = ProxySettings {
         offline,
@@ -376,7 +367,7 @@ async fn the_connection_follows_the_plan_and_the_policy() {
     let r = rig(|_| {}).await;
     // No list: straight, by choice. A list with no plan yet: wait, do not leak.
     assert_eq!(r.svc.connection(), Connection::Direct);
-    listed(&r, ProxyMode::Failover, OfflinePolicy::KillSwitch, 2);
+    listed(&r, Some(Strategy::Failover), OfflinePolicy::KillSwitch, 2);
     assert_eq!(r.svc.connection(), Connection::Off);
     assert_eq!(r.svc.posture(), Posture::Normal, "not gated before the first plan");
 
@@ -420,7 +411,7 @@ async fn the_connection_follows_the_plan_and_the_policy() {
             Posture::Open,
         ),
     ] {
-        listed(&r, ProxyMode::Failover, policy, 2);
+        listed(&r, Some(Strategy::Failover), policy, 2);
         r.svc.replan();
         assert_eq!(
             (r.svc.connection(), r.svc.connection_for("admin"), r.svc.posture()),
@@ -436,19 +427,21 @@ async fn the_connection_follows_the_plan_and_the_policy() {
     assert_eq!(proxy_in_use(&r).as_deref(), Some("socks5://h:2"));
 }
 
-fn assign(r: &Rig, keys: &[&[&str]]) {
+/// Each key's own default route (none: the default route for every key).
+fn assign(r: &Rig, keys: &[(&str, &str)]) {
     let mut s = r.svc.settings().clone();
-    for (e, k) in s.proxies.list.iter_mut().zip(keys) {
-        e.keys = k.iter().map(|k| k.to_string()).collect();
-    }
+    s.proxies.default_keys = keys
+        .iter()
+        .map(|(k, p)| (k.to_string(), Destination::Proxy(p.to_string())))
+        .collect();
     r.svc.apply_settings(s);
 }
 
 #[tokio::test]
 async fn each_key_plans_over_its_own_proxies() {
     let r = rig(|_| {}).await;
-    listed(&r, ProxyMode::Failover, OfflinePolicy::KillSwitch, 2);
-    assign(&r, &[&["invoices"], &["admin"]]);
+    listed(&r, None, OfflinePolicy::KillSwitch, 2);
+    assign(&r, &[("admin", "p1")]);
     probe(&r, "p0", true);
     probe(&r, "p1", true);
     r.svc.replan();
@@ -473,7 +466,7 @@ async fn each_key_plans_over_its_own_proxies() {
             ("admin", Some("p1"), PoolState::Active)
         ]
     );
-    assert_eq!(h.proxies[1].keys, ["admin"]);
+    assert_eq!(h.lanes[1].default, Destination::Proxy("p1".into()));
     assert_eq!((h.state, h.active.as_deref()), (PoolState::Active, Some("p0")));
 
     // The administration key's only proxy goes down: only that key is cut off.
@@ -490,7 +483,7 @@ async fn each_key_plans_over_its_own_proxies() {
     assert_eq!(h.posture, Posture::Off);
 
     // A proxy shared by both keys is used by both; a key is unknown to the plan until it runs.
-    assign(&r, &[&[], &[]]);
+    assign(&r, &[]);
     probe(&r, "p1", true);
     r.svc.replan();
     assert_eq!(r.svc.connection_for("invoices"), r.svc.connection_for("admin"));
@@ -515,14 +508,8 @@ async fn a_proxy_is_probed_only_against_the_relays_of_its_keys() {
     let mut s = r.svc.settings().clone();
     s.relays = vec![url(&a), url(&b)];
     s.relay_keys = [(url(&b), vec!["invoices".to_string()])].into();
-    s.proxies.list = vec![ProxyEntry {
-        id: "admin-only".into(),
-        name: String::new(),
-        url: format!("socks5://127.0.0.1:{port}"),
-        keys: vec!["admin".into()],
-        pool: true,
-        i2p: false,
-    }];
+    s.proxies.list = vec![entry("admin-only", &format!("socks5://127.0.0.1:{port}"))];
+    s.proxies.default_keys = [("admin".to_string(), Destination::Proxy("admin-only".into()))].into();
     r.svc.apply_settings(s);
     r.svc.refresh_pool().await;
     let probed: Vec<String> = r.svc.pool.lock().unwrap().probes["admin-only"]
@@ -541,7 +528,7 @@ async fn a_proxy_is_probed_only_against_the_relays_of_its_keys() {
 #[tokio::test]
 async fn rotation_follows_the_clock_and_is_suspended_with_one_proxy() {
     let r = rig(|_| {}).await;
-    listed(&r, ProxyMode::RoundRobin, OfflinePolicy::KillSwitch, 3);
+    listed(&r, Some(Strategy::RoundRobin), OfflinePolicy::KillSwitch, 3);
     for id in ["p0", "p1", "p2"] {
         probe(&r, id, true);
     }
@@ -590,7 +577,7 @@ async fn the_policy_decides_who_may_call() {
     let user = Keys::generate();
     let who = |r: &Rig| public(&user, 4, r.now.load(Ordering::SeqCst));
     let down = |r: &Rig, policy| {
-        listed(r, ProxyMode::Failover, policy, 1);
+        listed(r, Some(Strategy::Failover), policy, 1);
         probe(r, "p0", false);
         r.svc.replan();
     };
@@ -616,7 +603,7 @@ async fn the_policy_decides_who_may_call() {
 #[tokio::test]
 async fn a_transparent_proxy_means_straight_connections_and_no_probing() {
     let r = rig(|_| {}).await;
-    listed(&r, ProxyMode::Chaos, OfflinePolicy::KillSwitch, 2);
+    listed(&r, Some(Strategy::Chaos), OfflinePolicy::KillSwitch, 2);
     let mut s = r.svc.settings().clone();
     s.proxies.transparent = true;
     r.svc.apply_settings(s);
@@ -647,24 +634,24 @@ async fn probing_marks_a_proxy_that_tunnels_up_and_one_that_does_not_down() {
     let relay_url = format!("ws://127.0.0.1:{}", relay.local_addr().unwrap().port());
     let mut s = r.svc.settings().clone();
     s.relays = vec![relay_url];
+    s.proxies = cfg(Some(Strategy::Failover), 0);
     s.proxies.list = vec![
         ProxyEntry {
-            id: "good".into(),
             name: "Tor".into(),
-            url: format!("socks5://127.0.0.1:{port}"),
-            keys: Vec::new(),
-            pool: true,
-            i2p: false,
+            ..entry("good", &format!("socks5://127.0.0.1:{port}"))
         },
-        ProxyEntry {
-            id: "bad".into(),
-            name: String::new(),
-            url: "socks5://127.0.0.1:9".into(),
-            keys: Vec::new(),
-            pool: true,
-            i2p: false,
-        },
+        entry("bad", "socks5://127.0.0.1:9"),
     ];
+    s.proxies.groups = vec![ProxyGroup {
+        id: "g".into(),
+        name: String::new(),
+        proxies: vec!["good".into(), "bad".into()],
+        strategy: Strategy::Failover,
+        rotate_secs: 600,
+        chaos_min_secs: 300,
+        chaos_max_secs: 900,
+    }];
+    s.proxies.default = Destination::Group("g".into());
     r.svc.apply_settings(s);
     r.svc.refresh_pool().await;
     let h = r.svc.pool_health();
@@ -688,21 +675,15 @@ async fn a_change_that_leaves_nothing_reachable_is_undone_once() {
     let relay = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let mut s = r.svc.settings().clone();
     s.relays = vec![format!("ws://127.0.0.1:{}", relay.local_addr().unwrap().port())];
-    s.proxies.list = vec![ProxyEntry {
-        id: "a".into(),
-        name: String::new(),
-        url: format!("socks5://127.0.0.1:{port}"),
-        keys: Vec::new(),
-        pool: true,
-        i2p: false,
-    }];
+    s.proxies.list = vec![entry("a", &format!("socks5://127.0.0.1:{port}"))];
+    s.proxies.default = Destination::Proxy("a".into());
     r.svc.apply_settings(s);
     r.svc.refresh_pool().await;
     assert_eq!(r.svc.pool_health().state, PoolState::Active);
 
     // The operator replaces it with a dead one.
     let bad = serde_json::from_value(serde_json::json!({
-        "proxies": { "list": [{ "url": "socks5://127.0.0.1:9" }] }
+        "proxies": { "list": [{ "id": "b", "url": "socks5://127.0.0.1:9" }], "default": { "proxy": "b" } }
     }))
     .unwrap();
     r.svc
@@ -723,57 +704,55 @@ async fn a_change_that_leaves_nothing_reachable_is_undone_once() {
 }
 
 #[tokio::test]
-async fn the_strategy_cannot_be_turned_off_while_the_first_proxy_is_down() {
+async fn a_default_route_cannot_be_pointed_at_a_proxy_that_is_down() {
     let r = rig(|_| {}).await;
     let save = |v: serde_json::Value| {
         let patch = serde_json::from_value(v).unwrap();
         r.svc
             .update_settings(&r.admin(), crate::manage::UpdateSettingsParams { patch })
     };
-    save(serde_json::json!({ "proxies": { "mode": "failover", "list": [
-        { "id": "p0", "url": "socks5://h:1" }, { "id": "p1", "url": "socks5://h:2" }
-    ] } }))
+    save(serde_json::json!({ "proxies": {
+        "list": [{ "id": "p0", "url": "socks5://h:1" }, { "id": "p1", "url": "socks5://h:2" }],
+        "groups": [{ "id": "g", "proxies": ["p0", "p1"], "strategy": "failover" }],
+        "default": { "group": "g" }
+    } }))
     .unwrap();
     r.svc.pool.lock().unwrap().probation = None;
     probe(&r, "p0", false);
     probe(&r, "p1", true);
     r.svc.replan();
     assert_eq!(r.svc.pool_health().active.as_deref(), Some("p1"));
-    // Off would leave every key offline now, the operators' included.
-    let e = save(serde_json::json!({ "proxies": { "mode": "off" } })).unwrap_err();
-    assert!(e.to_string().contains("first proxy"), "{e}");
-    assert_eq!(r.svc.settings().proxies.mode, ProxyMode::Failover);
-    // With a reachable proxy first, it is taken.
-    save(serde_json::json!({ "proxies": { "mode": "off", "list": [
-        { "id": "p1", "url": "socks5://h:2" }, { "id": "p0", "url": "socks5://h:1" }
-    ] } }))
-    .unwrap();
-    r.svc.pool.lock().unwrap().probation = None;
+    // The first proxy alone would leave every key offline now, the operators' included.
+    let e = save(serde_json::json!({ "proxies": { "default": { "proxy": "p0" } } })).unwrap_err();
+    assert!(e.to_string().contains("would have nothing reachable"), "{e}");
+    assert_eq!(r.svc.settings().proxies.default, Destination::Group("g".into()));
+    // A reachable one is taken.
+    save(serde_json::json!({ "proxies": { "default": { "proxy": "p1" } } })).unwrap();
     r.svc.replan();
     assert_eq!(
         (r.svc.pool_health().active.as_deref(), r.svc.posture()),
         (Some("p1"), Posture::Normal)
     );
-    // Off means it: the first going down cuts the key off, though p0 is up.
+    // One proxy means it: that one going down cuts the key off, though p0 is up.
     probe(&r, "p1", false);
     probe(&r, "p0", true);
     r.svc.replan();
     let h = r.svc.pool_health();
     assert_eq!(
         (h.state, h.reachable, r.svc.posture()),
-        (PoolState::Offline, 1, Posture::Off)
+        (PoolState::Offline, 0, Posture::Off)
     );
     // A transparent proxy does the work: nothing here can strand a key.
-    save(serde_json::json!({ "proxies": { "mode": "failover" } })).unwrap();
-    save(serde_json::json!({ "proxies": { "mode": "off", "transparent": true } })).unwrap();
-    assert_eq!(r.svc.settings().proxies.mode, ProxyMode::Off);
+    save(serde_json::json!({ "proxies": { "default": { "group": "g" } } })).unwrap();
+    save(serde_json::json!({ "proxies": { "default": { "proxy": "p1" }, "transparent": true } })).unwrap();
+    assert_eq!(r.svc.settings().proxies.default, Destination::Proxy("p1".into()));
 }
 
 #[tokio::test]
 async fn a_changed_policy_is_not_undone_when_the_same_proxies_fail_later() {
     let r = rig(|_| {}).await;
     let first = serde_json::from_value(serde_json::json!({
-        "proxies": { "list": [{ "id": "p0", "url": "socks5://h:1" }] }
+        "proxies": { "list": [{ "id": "p0", "url": "socks5://h:1" }], "default": { "proxy": "p0" } }
     }))
     .unwrap();
     r.svc
@@ -814,6 +793,6 @@ async fn a_proxy_saved_before_there_was_a_list_survives_the_upgrade() {
     assert_eq!(live.len(), 1);
     assert_eq!(live[0].url, "socks5://me:pw@10.1.2.3:1080");
     assert_eq!(svc.settings().pow_bits, 21, "nothing else was dropped");
-    assert_eq!(svc.settings().proxies.mode, ProxyMode::Off);
+    assert_eq!(svc.settings().proxies.default, Destination::Proxy("saved".into()));
     assert_eq!(svc.settings().proxies.offline, OfflinePolicy::KillSwitch);
 }

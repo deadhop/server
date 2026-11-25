@@ -11,13 +11,18 @@ use rmcp::schemars::{self, JsonSchema};
 use serde::{Deserialize, Serialize};
 
 use crate::error::{Error, Result};
+use crate::routes::{check_destination, Destination};
 
 /// Inclusive bounds of the network settings.
 pub mod bounds {
     pub const NAME_LEN: usize = 60;
     /// Most proxies in the list.
     pub const PROXIES: usize = 8;
-    /// Every switch of proxy reconnects every relay, so intervals have a floor.
+    /// Most proxy groups.
+    pub const GROUPS: usize = 8;
+    /// Fewest proxies in a group: with one there is nothing to choose.
+    pub const GROUP_MIN: usize = 2;
+    /// Every switch of proxy reconnects the relays it carries, so intervals have a floor.
     pub const PROXY_INTERVAL_SECS: (u64, u64) = (60, 7 * 86_400);
     pub const PROXY_ID_LEN: usize = 24;
 }
@@ -89,36 +94,57 @@ pub struct ProxyEntry {
     pub name: String,
     // `socks5://`, `https://` or `http://` url.
     pub url: String,
-    // The keys (by id) whose default route may use this proxy; empty is every key.
-    #[serde(default)]
-    pub keys: Vec<String>,
-    // Whether this proxy is in the default route (the pool). A proxy left out
-    // is used only by routing rules that name it.
-    #[serde(default = "in_pool")]
-    pub pool: bool,
     // This is an I2P router's HTTP proxy, the one used to look up I2P names.
     #[serde(default)]
     pub i2p: bool,
 }
 
-fn in_pool() -> bool {
-    true
-}
-
-// How the proxies in the list are used.
+// How a group chooses among its proxies.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
-pub enum ProxyMode {
-    // The first proxy in the list only, never another: while it is down the
-    // offline policy applies.
-    Off,
-    // The first reachable proxy in list order; the next one when it fails.
+pub enum Strategy {
+    // The first reachable proxy in the group's order; the next one when it fails.
     Failover,
     // Take the reachable proxies in turn, one change every `rotate_secs`.
     RoundRobin,
     // Change to a random reachable proxy after a random time between
     // `chaos_min_secs` and `chaos_max_secs`.
     Chaos,
+}
+
+fn rotate_secs() -> u64 {
+    3_600
+}
+
+fn chaos_min_secs() -> u64 {
+    300
+}
+
+fn chaos_max_secs() -> u64 {
+    900
+}
+
+// Two or more proxies and how to choose among them. A rule, a fallback or the
+// default route that points at the group goes through the proxy it has chosen.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ProxyGroup {
+    // Stable id, as rules and the default route name it.
+    pub id: String,
+    // Optional label for the dashboard.
+    #[serde(default)]
+    pub name: String,
+    // Proxy ids, in order (failover tries them in this order); each once.
+    pub proxies: Vec<String>,
+    pub strategy: Strategy,
+    // Round robin: seconds between changes.
+    #[serde(default = "rotate_secs")]
+    pub rotate_secs: u64,
+    // Chaos: shortest and longest time (seconds) before the next change.
+    #[serde(default = "chaos_min_secs")]
+    pub chaos_min_secs: u64,
+    #[serde(default = "chaos_max_secs")]
+    pub chaos_max_secs: u64,
 }
 
 // What the service does while no proxy is reachable.
@@ -136,24 +162,29 @@ pub enum OfflinePolicy {
     Open,
 }
 
-// Relay proxies: an ordered list, how to choose among them, and what to do
-// when none works.
+// Relay proxies: an ordered list, groups of them, where relays go by default
+// and by rule, and what to do when nothing reachable is left.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct ProxySettings {
     pub list: Vec<ProxyEntry>,
-    pub mode: ProxyMode,
-    // Round robin: seconds between changes.
-    pub rotate_secs: u64,
-    // Chaos: shortest and longest time (seconds) before the next change.
-    pub chaos_min_secs: u64,
-    pub chaos_max_secs: u64,
+    // Proxy groups, each with its strategy.
+    #[serde(default)]
+    pub groups: Vec<ProxyGroup>,
+    // The default route: where a relay no rule matches goes ("everything
+    // else", the last rule).
+    pub default: Destination,
+    // The default route of single keys (by id), where it differs.
+    #[serde(default)]
+    pub default_keys: BTreeMap<String, Destination>,
+    // What happens while the default route (or a rule whose fallback leaves
+    // it to this policy) has nothing reachable.
     pub offline: OfflinePolicy,
     // The operator runs a transparent proxy around this service: it is not
     // checked, the list is ignored and privacy warnings about the proxy are
     // not raised.
     pub transparent: bool,
     // Routing rules, in order: the first that matches a relay decides its
-    // route; a relay none matches takes the default route (the list above).
+    // route; a relay none matches takes the default route.
     #[serde(default)]
     pub rules: Vec<crate::routes::Rule>,
     // I2P name registries (jump services) asked through the I2P proxy, as url
@@ -166,10 +197,9 @@ impl Default for ProxySettings {
     fn default() -> Self {
         ProxySettings {
             list: Vec::new(),
-            mode: ProxyMode::Off,
-            rotate_secs: 3_600,
-            chaos_min_secs: 300,
-            chaos_max_secs: 900,
+            groups: Vec::new(),
+            default: Destination::Direct,
+            default_keys: BTreeMap::new(),
             offline: OfflinePolicy::KillSwitch,
             transparent: false,
             rules: Vec::new(),
@@ -178,9 +208,27 @@ impl Default for ProxySettings {
     }
 }
 
+/// A field from before proxy groups (#53), refused with a pointer to what
+/// replaced it. Old settings are converted once, when the service starts;
+/// a client that still sends them is told what to send instead.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct Replaced;
+
+/// What a client sending an old proxy field is told.
+pub const REPLACED: &str = "this proxy field is from before proxy groups: a strategy and its intervals \
+     (mode, rotate_secs, chaos_min_secs, chaos_max_secs) now belong to a group in `groups`, and where \
+     relays go by default is `default` (and `default_keys` for single keys), which replace a proxy's \
+     `pool` and `keys`";
+
+impl<'de> Deserialize<'de> for Replaced {
+    fn deserialize<D: serde::Deserializer<'de>>(_: D) -> std::result::Result<Self, D::Error> {
+        Err(serde::de::Error::custom(REPLACED))
+    }
+}
+
 // A proxy as sent from the dashboard. A missing `id` makes a new entry; a
 // url shown as `***` (what the dashboard receives) keeps the stored password.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ProxyEntryInput {
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -188,31 +236,30 @@ pub struct ProxyEntryInput {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub name: Option<String>,
     pub url: String,
-    // The keys that may use this proxy; left out or empty is every key.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub keys: Option<Vec<String>>,
-    // In the default route; left out is yes.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub pool: Option<bool>,
     // An I2P router's HTTP proxy; left out is no.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub i2p: Option<bool>,
+    #[serde(default, skip_serializing)]
+    #[schemars(skip)]
+    pub keys: Option<Replaced>,
+    #[serde(default, skip_serializing)]
+    #[schemars(skip)]
+    pub pool: Option<Replaced>,
 }
 
-// Partial update of [`ProxySettings`]; `list` replaces the whole list.
+// Partial update of [`ProxySettings`]; `list`, `groups`, `default_keys`,
+// `rules` and `i2p_registries` each replace the whole value.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ProxyPatch {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub list: Option<Vec<ProxyEntryInput>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub mode: Option<ProxyMode>,
+    pub groups: Option<Vec<ProxyGroup>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub rotate_secs: Option<u64>,
+    pub default: Option<Destination>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub chaos_min_secs: Option<u64>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub chaos_max_secs: Option<u64>,
+    pub default_keys: Option<BTreeMap<String, Destination>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub offline: Option<OfflinePolicy>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -223,6 +270,18 @@ pub struct ProxyPatch {
     // Replaces the whole registry list.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub i2p_registries: Option<Vec<String>>,
+    #[serde(default, skip_serializing)]
+    #[schemars(skip)]
+    pub mode: Option<Replaced>,
+    #[serde(default, skip_serializing)]
+    #[schemars(skip)]
+    pub rotate_secs: Option<Replaced>,
+    #[serde(default, skip_serializing)]
+    #[schemars(skip)]
+    pub chaos_min_secs: Option<Replaced>,
+    #[serde(default, skip_serializing)]
+    #[schemars(skip)]
+    pub chaos_max_secs: Option<Replaced>,
 }
 
 fn new_proxy_id() -> String {
@@ -238,8 +297,6 @@ pub fn entries_from(list: &[ProxyEntryInput]) -> Vec<ProxyEntry> {
             id: e.id.clone().unwrap_or_else(|| format!("p{i}")),
             name: e.name.clone().unwrap_or_default(),
             url: e.url.clone(),
-            keys: e.keys.clone().unwrap_or_default(),
-            pool: e.pool.unwrap_or(true),
             i2p: e.i2p.unwrap_or(false),
         })
         .collect()
@@ -255,9 +312,8 @@ impl ProxyPatch {
                         id: Some(e.id.clone()),
                         name: Some(e.name.clone()),
                         url: e.url.clone(),
-                        keys: Some(e.keys.clone()),
-                        pool: Some(e.pool),
                         i2p: Some(e.i2p),
+                        ..ProxyEntryInput::default()
                     })
                     .collect(),
             ),
@@ -295,10 +351,9 @@ impl ProxyPatch {
         if let Some(list) = &self.list {
             s.list = entries_from(list);
         }
-        take(&mut s.mode, &self.mode);
-        take(&mut s.rotate_secs, &self.rotate_secs);
-        take(&mut s.chaos_min_secs, &self.chaos_min_secs);
-        take(&mut s.chaos_max_secs, &self.chaos_max_secs);
+        take(&mut s.groups, &self.groups);
+        take(&mut s.default, &self.default);
+        take(&mut s.default_keys, &self.default_keys);
         take(&mut s.offline, &self.offline);
         take(&mut s.transparent, &self.transparent);
         if let Some(rules) = &self.rules {
@@ -311,10 +366,9 @@ impl ProxyPatch {
 
     pub fn merge(&mut self, o: &ProxyPatch) {
         keep(&mut self.list, &o.list);
-        keep(&mut self.mode, &o.mode);
-        keep(&mut self.rotate_secs, &o.rotate_secs);
-        keep(&mut self.chaos_min_secs, &o.chaos_min_secs);
-        keep(&mut self.chaos_max_secs, &o.chaos_max_secs);
+        keep(&mut self.groups, &o.groups);
+        keep(&mut self.default, &o.default);
+        keep(&mut self.default_keys, &o.default_keys);
         keep(&mut self.offline, &o.offline);
         keep(&mut self.transparent, &o.transparent);
         keep(&mut self.rules, &o.rules);
@@ -324,10 +378,9 @@ impl ProxyPatch {
     pub fn names(&self, out: &mut Vec<String>) {
         let fields = [
             ("list", self.list.is_some()),
-            ("mode", self.mode.is_some()),
-            ("rotate_secs", self.rotate_secs.is_some()),
-            ("chaos_min_secs", self.chaos_min_secs.is_some()),
-            ("chaos_max_secs", self.chaos_max_secs.is_some()),
+            ("groups", self.groups.is_some()),
+            ("default", self.default.is_some()),
+            ("default_keys", self.default_keys.is_some()),
             ("offline", self.offline.is_some()),
             ("transparent", self.transparent.is_some()),
             ("rules", self.rules.is_some()),
@@ -337,27 +390,39 @@ impl ProxyPatch {
     }
 }
 
+/// Whether an id is short and made of lower-case letters, digits, `-` and `_`.
+fn good_id(id: &str) -> bool {
+    !id.is_empty()
+        && id.len() <= bounds::PROXY_ID_LEN
+        && id
+            .bytes()
+            .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-' || b == b'_')
+}
+
+fn plain_name(name: &str) -> bool {
+    name.chars().count() <= bounds::NAME_LEN && name.chars().all(deadhop_net::is_plain_text)
+}
+
 impl ProxySettings {
+    /// Where the relays of `lane` that no rule matches go.
+    pub fn default_for(&self, lane: &str) -> &Destination {
+        self.default_keys.get(lane).unwrap_or(&self.default)
+    }
+
     pub fn validate(&self, lanes: &[Lane]) -> Result<()> {
         use bounds::*;
         if self.list.len() > PROXIES {
             return Err(Error::InvalidParams(format!("at most {PROXIES} proxies")));
         }
         for (i, e) in self.list.iter().enumerate() {
-            let ok_id = !e.id.is_empty()
-                && e.id.len() <= PROXY_ID_LEN
-                && e.id
-                    .bytes()
-                    .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-' || b == b'_');
-            if !ok_id {
+            if !good_id(&e.id) {
                 return Err(Error::InvalidParams("proxy: bad id".into()));
             }
-            if e.name.chars().count() > NAME_LEN || !e.name.chars().all(deadhop_net::is_plain_text) {
+            if !plain_name(&e.name) {
                 return Err(Error::InvalidParams(format!(
                     "proxy name must be at most {NAME_LEN} visible characters"
                 )));
             }
-            check_ids(lanes, &e.keys, "proxy")?;
             if deadhop_net::relay::parse_proxy(&e.url)?.is_none() {
                 return Err(Error::InvalidParams("proxy: the address is empty".into()));
             }
@@ -378,6 +443,65 @@ impl ProxySettings {
                 }
             }
         }
+        if self.groups.len() > GROUPS {
+            return Err(Error::InvalidParams(format!("at most {GROUPS} proxy groups")));
+        }
+        for (i, g) in self.groups.iter().enumerate() {
+            let shown = if g.name.is_empty() { &g.id } else { &g.name };
+            if !good_id(&g.id) {
+                return Err(Error::InvalidParams("group: bad id".into()));
+            }
+            if self.groups[..i].iter().any(|o| o.id == g.id) {
+                return Err(Error::InvalidParams("group: the same id is used twice".into()));
+            }
+            if !plain_name(&g.name) {
+                return Err(Error::InvalidParams(format!(
+                    "group name must be at most {NAME_LEN} visible characters"
+                )));
+            }
+            if g.proxies.len() < GROUP_MIN {
+                return Err(Error::InvalidParams(format!(
+                    "group '{shown}' needs at least {GROUP_MIN} proxies; point at a single proxy directly instead"
+                )));
+            }
+            for (j, id) in g.proxies.iter().enumerate() {
+                if !self.list.iter().any(|e| &e.id == id) {
+                    return Err(Error::InvalidParams(format!(
+                        "group '{shown}' holds a proxy that is not in the list; take it out of the group first"
+                    )));
+                }
+                if g.proxies[..j].contains(id) {
+                    return Err(Error::InvalidParams(format!(
+                        "group '{shown}' holds the same proxy twice"
+                    )));
+                }
+            }
+            within(
+                &format!("group '{shown}': rotate_secs"),
+                g.rotate_secs,
+                PROXY_INTERVAL_SECS,
+            )?;
+            within(
+                &format!("group '{shown}': chaos_min_secs"),
+                g.chaos_min_secs,
+                PROXY_INTERVAL_SECS,
+            )?;
+            within(
+                &format!("group '{shown}': chaos_max_secs"),
+                g.chaos_max_secs,
+                PROXY_INTERVAL_SECS,
+            )?;
+            if g.chaos_min_secs > g.chaos_max_secs {
+                return Err(Error::InvalidParams(format!(
+                    "group '{shown}': chaos_min_secs exceeds chaos_max_secs"
+                )));
+            }
+        }
+        check_destination(self, &self.default, "the default route", "it")?;
+        for (key, d) in &self.default_keys {
+            check_ids(lanes, std::slice::from_ref(key), "default route")?;
+            check_destination(self, d, &format!("the default route of key '{key}'"), "it")?;
+        }
         if self.i2p_registries.len() > crate::i2p::MAX_REGISTRIES {
             return Err(Error::InvalidParams(format!(
                 "at most {} I2P name registries",
@@ -389,14 +513,6 @@ impl ProxySettings {
             if self.i2p_registries[..i].contains(r) {
                 return Err(Error::InvalidParams("I2P registry: listed twice".into()));
             }
-        }
-        within("proxies.rotate_secs", self.rotate_secs, PROXY_INTERVAL_SECS)?;
-        within("proxies.chaos_min_secs", self.chaos_min_secs, PROXY_INTERVAL_SECS)?;
-        within("proxies.chaos_max_secs", self.chaos_max_secs, PROXY_INTERVAL_SECS)?;
-        if self.chaos_min_secs > self.chaos_max_secs {
-            return Err(Error::InvalidParams(
-                "proxies.chaos_min_secs exceeds proxies.chaos_max_secs".into(),
-            ));
         }
         Ok(())
     }
@@ -466,38 +582,12 @@ impl Topology {
             .collect()
     }
 
-    /// The relays used by any of the keys a proxy carries (empty: every key),
-    /// in list order.
-    pub fn relays_through(&self, proxy_keys: &[String]) -> Vec<String> {
-        self.relays
-            .iter()
-            .filter(|r| self.relay_users(r).iter().any(|k| assigned(proxy_keys, k)))
-            .cloned()
-            .collect()
-    }
-
     /// Check the network settings and every relationship between them and
     /// the lanes, except the relay list itself.
     pub fn validate(&self) -> Result<()> {
         use bounds::NAME_LEN;
         self.proxies.validate(&self.lanes)?;
         crate::routes::check_rules(self)?;
-        // A key whose relays may take the default route needs a proxy in it:
-        // otherwise those relays would connect straight while the rest hide
-        // behind one. That must be chosen by taking the proxies away, not by
-        // forgetting a key.
-        let proxies = &self.proxies;
-        if !proxies.transparent && !proxies.list.is_empty() {
-            if let Some(k) = self.lanes.iter().find(|k| {
-                crate::routes::uses_default(self, &k.id)
-                    && !proxies.list.iter().any(|e| e.pool && assigned(&e.keys, &k.id))
-            }) {
-                return Err(Error::InvalidParams(format!(
-                    "no proxy in the default route is assigned to the {} key, which would connect without one",
-                    k.label.to_lowercase()
-                )));
-            }
-        }
         for keys in self.relay_keys.values() {
             check_ids(&self.lanes, keys, "relay")?;
         }
@@ -524,7 +614,7 @@ impl Topology {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::routes::{Fallback, RouteTo, Rule};
+    use crate::routes::{Destination, Fallback, Rule};
 
     fn lanes() -> Vec<Lane> {
         [("invoices", "Public invoices"), ("admin", "Administration")]
@@ -545,9 +635,19 @@ mod tests {
             id: id.into(),
             name: String::new(),
             url: url.into(),
-            keys: Vec::new(),
-            pool: true,
             i2p: false,
+        }
+    }
+
+    fn group(id: &str, proxies: &[&str]) -> ProxyGroup {
+        ProxyGroup {
+            id: id.into(),
+            name: String::new(),
+            proxies: ids(proxies),
+            strategy: Strategy::RoundRobin,
+            rotate_secs: 600,
+            chaos_min_secs: 300,
+            chaos_max_secs: 900,
         }
     }
 
@@ -617,12 +717,8 @@ mod tests {
         assert_eq!(patch.list.as_ref().unwrap()[1].url, stored[1].url);
         // Without an id, the stored entry with the same (hidden) address is meant.
         let input = |url: &str| ProxyEntryInput {
-            id: None,
-            name: None,
             url: url.into(),
-            keys: None,
-            pool: None,
-            i2p: None,
+            ..ProxyEntryInput::default()
         };
         let mut by_address = ProxyPatch {
             list: Some(vec![input("socks5://user:***@10.8.0.1:1080"), input("socks5://new:1")]),
@@ -656,32 +752,47 @@ mod tests {
         // Entries get their defaults; everything set is applied, the rest is kept.
         let made = entries_from(&[input("socks5://a:1"), input("socks5://b:1")]);
         assert_eq!((made[0].id.as_str(), made[1].id.as_str()), ("p0", "p1"));
-        assert!(made[0].pool && !made[0].i2p && made[0].keys.is_empty() && made[0].name.is_empty());
+        assert!(!made[0].i2p && made[0].name.is_empty());
         let rule = Rule {
             name: String::new(),
             patterns: ids(&["*.onion"]),
             keys: Vec::new(),
-            to: RouteTo::Block,
+            to: Destination::Block,
             fallback: Fallback::Offline,
         };
         let full = ProxyPatch {
             list: by_address.list.clone(),
-            mode: Some(ProxyMode::Chaos),
-            rotate_secs: Some(120),
-            chaos_min_secs: Some(61),
-            chaos_max_secs: Some(62),
+            groups: Some(vec![group("g", &["vpn", "p1"])]),
+            default: Some(Destination::Group("g".into())),
+            default_keys: Some(BTreeMap::from([(
+                "admin".to_string(),
+                Destination::Proxy("vpn".into()),
+            )])),
             offline: Some(OfflinePolicy::Open),
             transparent: Some(true),
             rules: Some(vec![rule.clone()]),
             i2p_registries: Some(ids(&["http://reg.i2p/?q={name}"])),
+            ..ProxyPatch::default()
         };
         let mut s = ProxySettings::default();
         ProxyPatch::default().apply(&mut s);
         assert_eq!(s, ProxySettings::default());
         full.apply(&mut s);
         assert_eq!(
-            (s.list.len(), s.mode, s.rotate_secs, s.chaos_min_secs, s.chaos_max_secs),
-            (2, ProxyMode::Chaos, 120, 61, 62)
+            (
+                s.list.len(),
+                s.groups.len(),
+                &s.default,
+                s.default_for("admin"),
+                s.default_for("invoices")
+            ),
+            (
+                2,
+                1,
+                &Destination::Group("g".into()),
+                &Destination::Proxy("vpn".into()),
+                &Destination::Group("g".into())
+            )
         );
         assert_eq!(
             (s.offline, s.transparent, s.rules.len()),
@@ -690,11 +801,11 @@ mod tests {
         assert_eq!(s.i2p_registries, ids(&["http://reg.i2p/?q={name}"]));
         // Merging keeps what the newer patch does not mention.
         let mut merged = ProxyPatch {
-            mode: Some(ProxyMode::Failover),
+            default: Some(Destination::Direct),
             ..ProxyPatch::default()
         };
         merged.merge(&ProxyPatch::default());
-        assert_eq!(merged.mode, Some(ProxyMode::Failover));
+        assert_eq!(merged.default, Some(Destination::Direct));
         merged.merge(&full);
         assert_eq!(merged, full);
         let mut names = Vec::new();
@@ -705,10 +816,9 @@ mod tests {
             names,
             [
                 "proxies.list",
-                "proxies.mode",
-                "proxies.rotate_secs",
-                "proxies.chaos_min_secs",
-                "proxies.chaos_max_secs",
+                "proxies.groups",
+                "proxies.default",
+                "proxies.default_keys",
                 "proxies.offline",
                 "proxies.transparent",
                 "proxies.rules",
@@ -716,6 +826,54 @@ mod tests {
             ]
         );
         assert_eq!(s.redacted().list[0].url, "socks5://user:***@10.8.0.1:1080");
+    }
+
+    #[test]
+    fn fields_from_before_groups_are_refused_with_what_replaced_them() {
+        for old in [
+            serde_json::json!({ "mode": "failover" }),
+            serde_json::json!({ "rotate_secs": 600 }),
+            serde_json::json!({ "chaos_min_secs": 60 }),
+            serde_json::json!({ "chaos_max_secs": 60 }),
+            serde_json::json!({ "list": [{ "url": "socks5://h:1", "pool": false }] }),
+            serde_json::json!({ "list": [{ "url": "socks5://h:1", "keys": ["admin"] }] }),
+        ] {
+            let err = serde_json::from_value::<ProxyPatch>(old.clone())
+                .unwrap_err()
+                .to_string();
+            assert!(
+                err.contains("from before proxy groups") && err.contains("`groups`"),
+                "{old}: {err}"
+            );
+        }
+        // What is sent today reads, and writes back without the old fields.
+        let p: ProxyPatch = serde_json::from_value(serde_json::json!({
+            "list": [{ "id": "a", "url": "socks5://h:1" }, { "id": "b", "url": "socks5://h:2" }],
+            "groups": [{ "id": "g", "proxies": ["a", "b"], "strategy": "chaos" }],
+            "default": { "group": "g" },
+            "default_keys": { "admin": { "proxy": "a" } }
+        }))
+        .unwrap();
+        let g = &p.groups.as_ref().unwrap()[0];
+        assert_eq!(
+            (
+                g.name.as_str(),
+                g.strategy,
+                g.rotate_secs,
+                g.chaos_min_secs,
+                g.chaos_max_secs
+            ),
+            ("", Strategy::Chaos, 3_600, 300, 900)
+        );
+        let back = serde_json::to_value(&p).unwrap();
+        assert_eq!(back["default"]["group"], "g");
+        assert_eq!(back["default_keys"]["admin"]["proxy"], "a");
+        assert_eq!(back["list"][0], serde_json::json!({ "id": "a", "url": "socks5://h:1" }));
+        assert!(back.get("mode").is_none());
+        assert!(serde_json::from_value::<ProxyGroup>(serde_json::json!({
+            "id": "g", "proxies": [], "strategy": "failover", "mode": "x"
+        }))
+        .is_err());
     }
 
     #[test]
@@ -747,7 +905,6 @@ mod tests {
                 with(vec![named("a", &|e| e.name = "a\u{200b}b".into())]),
                 "proxy name must be at most 60 visible characters",
             ),
-            (with(vec![named("a", &|e| e.keys = ids(&["nobody"]))]), "proxy: there is no key 'nobody'"),
             (with(vec![entry("a", "")]), "proxy: the address is empty"),
             (with(vec![entry("a", "ftp://h:1")]), "proxy: scheme must be socks5://, https:// or http://"),
             (
@@ -790,43 +947,105 @@ mod tests {
                 },
                 "I2P registry: listed twice",
             ),
-            (
-                ProxySettings {
-                    rotate_secs: 1,
-                    ..ProxySettings::default()
-                },
-                "proxies.rotate_secs must be between 60 and 604800",
-            ),
-            (
-                ProxySettings {
-                    chaos_min_secs: 1,
-                    ..ProxySettings::default()
-                },
-                "proxies.chaos_min_secs must be between 60 and 604800",
-            ),
-            (
-                ProxySettings {
-                    chaos_max_secs: 1,
-                    ..ProxySettings::default()
-                },
-                "proxies.chaos_max_secs must be between 60 and 604800",
-            ),
-            (
-                ProxySettings {
-                    chaos_min_secs: 900,
-                    chaos_max_secs: 300,
-                    ..ProxySettings::default()
-                },
-                "proxies.chaos_min_secs exceeds proxies.chaos_max_secs",
-            ),
         ];
+        let two = || vec![entry("a", "socks5://h:1"), entry("b", "socks5://h:2")];
+        let grouped = |g: ProxyGroup| ProxySettings {
+            list: two(),
+            groups: vec![g],
+            ..ProxySettings::default()
+        };
+        let changed = |f: &dyn Fn(&mut ProxyGroup)| {
+            let mut g = group("g", &["a", "b"]);
+            f(&mut g);
+            grouped(g)
+        };
+        let pointed = |default: Destination, keys: &[(&str, Destination)]| ProxySettings {
+            list: two(),
+            groups: vec![group("g", &["a", "b"])],
+            default,
+            default_keys: keys.iter().map(|(k, d)| (k.to_string(), d.clone())).collect(),
+            ..ProxySettings::default()
+        };
+        let cases: Vec<(ProxySettings, &str)> = cases
+            .into_iter()
+            .chain([
+                (
+                    ProxySettings {
+                        list: two(),
+                        groups: (0..9).map(|i| group(&format!("g{i}"), &["a", "b"])).collect(),
+                        ..ProxySettings::default()
+                    },
+                    "at most 8 proxy groups",
+                ),
+                (changed(&|g| g.id = "Bad".into()), "group: bad id"),
+                (
+                    ProxySettings {
+                        list: two(),
+                        groups: vec![group("g", &["a", "b"]), group("g", &["b", "a"])],
+                        ..ProxySettings::default()
+                    },
+                    "group: the same id is used twice",
+                ),
+                (
+                    changed(&|g| g.name = "n".repeat(61)),
+                    "group name must be at most 60 visible characters",
+                ),
+                (
+                    changed(&|g| g.proxies = ids(&["a"])),
+                    "group 'g' needs at least 2 proxies; point at a single proxy directly instead",
+                ),
+                (
+                    changed(&|g| (g.name, g.proxies) = ("Exits".into(), ids(&["a", "gone"]))),
+                    "group 'Exits' holds a proxy that is not in the list; take it out of the group first",
+                ),
+                (
+                    changed(&|g| g.proxies = ids(&["a", "a"])),
+                    "group 'g' holds the same proxy twice",
+                ),
+                (
+                    changed(&|g| g.rotate_secs = 1),
+                    "group 'g': rotate_secs must be between 60 and 604800",
+                ),
+                (
+                    changed(&|g| g.chaos_min_secs = 1),
+                    "group 'g': chaos_min_secs must be between 60 and 604800",
+                ),
+                (
+                    changed(&|g| g.chaos_max_secs = 1),
+                    "group 'g': chaos_max_secs must be between 60 and 604800",
+                ),
+                (
+                    changed(&|g| (g.chaos_min_secs, g.chaos_max_secs) = (900, 300)),
+                    "group 'g': chaos_min_secs exceeds chaos_max_secs",
+                ),
+                (
+                    pointed(Destination::Proxy("gone".into()), &[]),
+                    "the default route points at a proxy that is not in the list; change it first",
+                ),
+                (
+                    pointed(Destination::Direct, &[("admin", Destination::Group("gone".into()))]),
+                    "the default route of key 'admin' points at a group that does not exist; change it first",
+                ),
+                (
+                    pointed(Destination::Direct, &[("nobody", Destination::Block)]),
+                    "default route: there is no key 'nobody'",
+                ),
+            ])
+            .collect();
         for (settings, text) in cases {
             assert_eq!(why(settings.validate(&lanes())), format!("invalid parameters: {text}"));
         }
-        // An I2P router's own http:// proxy is fine.
+        // An I2P router's own http:// proxy is fine; so is a group, and a
+        // default route through it (with one key on its own way).
         with(vec![named("i2p", &|e| {
-            (e.i2p, e.url, e.pool) = (true, "http://127.0.0.1:4444".into(), false)
+            (e.i2p, e.url) = (true, "http://127.0.0.1:4444".into())
         })])
+        .validate(&lanes())
+        .unwrap();
+        pointed(
+            Destination::Group("g".into()),
+            &[("admin", Destination::Proxy("a".into()))],
+        )
         .validate(&lanes())
         .unwrap();
     }
@@ -842,8 +1061,6 @@ mod tests {
         assert_eq!(t.relay_users(b), ids(&["invoices"]));
         assert_eq!(t.relays_for("admin"), ids(&[a]));
         assert_eq!(t.relays_for("invoices"), ids(&[a, b]));
-        assert_eq!(t.relays_through(&ids(&["admin"])), ids(&[a]));
-        assert_eq!(t.relays_through(&[]), ids(&[a, b]));
         // The settings are reached through the topology, and can be changed there.
         assert_eq!(t.relays.len(), 2);
         t.relays.pop();
@@ -861,35 +1078,22 @@ mod tests {
         };
         // The proxies and the rules are checked first.
         assert_eq!(
-            refused(&|t| t.proxies.rotate_secs = 1),
-            "invalid parameters: proxies.rotate_secs must be between 60 and 604800"
+            refused(&|t| t.proxies.default = Destination::Proxy("gone".into())),
+            "invalid parameters: the default route points at a proxy that is not in the list; change it first"
         );
         assert_eq!(
             refused(&|t| t.proxies.rules = vec![Rule {
                 name: String::new(),
                 patterns: Vec::new(),
                 keys: Vec::new(),
-                to: RouteTo::Block,
+                to: Destination::Block,
                 fallback: Fallback::Offline,
             }]),
             "invalid parameters: rule 1: between 1 and 16 relays or patterns are required"
         );
-        // A lane whose relays take the default route needs a proxy in it.
-        assert_eq!(
-            refused(&|t| {
-                let mut tor = entry("tor", "socks5://h:1");
-                tor.keys = ids(&["invoices"]);
-                t.proxies.list = vec![tor];
-            }),
-            "invalid parameters: no proxy in the default route is assigned to the administration key, which would \
-             connect without one"
-        );
-        // With a transparent proxy, or a proxy for every lane, there is nothing to forget.
+        // A default route straight while proxies are listed is the operator's choice.
         let mut ok = topology(&[a, b]);
         ok.proxies.list = vec![entry("tor", "socks5://h:1")];
-        ok.validate().unwrap();
-        ok.proxies.list[0].keys = ids(&["invoices"]);
-        ok.proxies.transparent = true;
         ok.validate().unwrap();
         assert_eq!(
             refused(&|t| {
@@ -918,18 +1122,18 @@ mod tests {
     }
 
     #[test]
-    fn stored_proxy_settings_read_back_with_their_defaults() {
-        let old: ProxySettings = serde_json::from_value(serde_json::json!({
+    fn proxy_settings_read_back_with_their_defaults() {
+        let read: ProxySettings = serde_json::from_value(serde_json::json!({
             "list": [{ "id": "a", "name": "", "url": "http://127.0.0.1:4444" }],
-            "mode": "failover", "rotate_secs": 3600, "chaos_min_secs": 300, "chaos_max_secs": 900,
+            "default": { "proxy": "a" },
             "offline": "kill_switch", "transparent": false
         }))
         .unwrap();
-        assert!(old.list[0].pool && !old.list[0].i2p && old.list[0].keys.is_empty());
-        assert!(old.rules.is_empty());
-        assert_eq!(old.i2p_registries, crate::i2p::default_registries());
+        assert!(!read.list[0].i2p && read.groups.is_empty() && read.default_keys.is_empty());
+        assert!(read.rules.is_empty());
+        assert_eq!(read.i2p_registries, crate::i2p::default_registries());
         let network: NetworkSettings =
-            serde_json::from_value(serde_json::json!({ "relays": ["wss://a.example"], "proxies": old })).unwrap();
+            serde_json::from_value(serde_json::json!({ "relays": ["wss://a.example"], "proxies": read })).unwrap();
         assert!(network.relay_keys.is_empty() && network.relay_names.is_empty());
     }
 }
