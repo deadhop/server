@@ -739,6 +739,13 @@ async fn a_proxy_change_that_leaves_nothing_reachable_is_undone_once() {
         net.pool.lock().unwrap().probation.is_none(),
         "there was no proxy before"
     );
+    // Unless the host takes straight connections as the way back.
+    net.begin_probation_back_to_direct(host, ProxySettings::default());
+    assert!(
+        net.pool.lock().unwrap().probation.is_some(),
+        "straight connections are the previous settings"
+    );
+    net.pool.lock().unwrap().probation = None;
     let mut transparent = with_vpn;
     transparent.transparent = true;
     net.begin_probation(host, transparent);

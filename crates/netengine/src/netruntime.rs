@@ -676,6 +676,18 @@ impl NetworkRuntime {
     /// Look at the proxies again at once, and undo the change (once) if none
     /// of the new ones is reachable: the proxies are the way back in.
     pub fn begin_probation(&self, host: &dyn NetworkHost, previous: ProxySettings) {
+        self.probation(host, previous, false);
+    }
+
+    /// The same, and also when the previous settings had no proxy at all:
+    /// for a host where going back to straight connections is the safe
+    /// undo (its address is public anyway), so a first proxy that does not
+    /// work cannot cut it off for good.
+    pub fn begin_probation_back_to_direct(&self, host: &dyn NetworkHost, previous: ProxySettings) {
+        self.probation(host, previous, true);
+    }
+
+    fn probation(&self, host: &dyn NetworkHost, previous: ProxySettings, direct_ok: bool) {
         let now = host.now();
         let now_set = host.topology().settings.proxies;
         // What decides where relays go: the proxies, the groups, the default
@@ -695,7 +707,7 @@ impl NetworkRuntime {
         // Only a change of where relays go can be a mistake worth undoing; a
         // changed policy is not, and must not be undone when the same
         // proxies fail later.
-        if routes_changed && was_working && !previous.transparent && !previous.list.is_empty() {
+        if routes_changed && was_working && !previous.transparent && (direct_ok || !previous.list.is_empty()) {
             self.pool
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner)
