@@ -26,7 +26,7 @@ use crate::keyholder;
 use crate::keys::{open_identities, Identity, KeyDef, INVOICES};
 use crate::manage::BACKUP_DIR;
 use crate::mcp::PayServer;
-use crate::relay::{parse_proxy, Pool};
+use crate::relay::Pool;
 use crate::service::{system_clock, RelayProbe, RelayState, Service};
 use crate::wallet::Wallet;
 
@@ -258,13 +258,10 @@ impl Link {
 
 /// Each relay and its parsed proxy.
 fn specs(routes: &Routes) -> Result<Vec<(String, Option<crate::relay::ProxySpec>)>> {
-    routes.iter().map(|(r, p)| Ok((r.clone(), parse_proxy(p)?))).collect()
+    Ok(crate::netruntime::route_specs(routes)?)
 }
 
-/// Whether two sets of routes name the same relays in the same order.
-fn same_relays(a: &Routes, b: &Routes) -> bool {
-    a.iter().map(|r| &r.0).eq(b.iter().map(|r| &r.0))
-}
+use crate::netruntime::same_relays;
 
 /// Whether any relay of `link` is connected within `limit`.
 async fn connects_within(link: &Link, limit: Duration) -> bool {

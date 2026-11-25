@@ -362,11 +362,8 @@ pub struct AuditInputs<'a> {
     pub offline: crate::network::OfflinePolicy,
     pub relays: Vec<RelayState>,
     pub last_check: Option<ProxyCheck>,
-    /// The Electrum server, `host:port`.
-    pub electrum: String,
-    pub electrum_plain: bool,
-    pub electrum_transport: String,
-    pub announce: bool,
+    /// What the host says about itself.
+    pub facts: AuditFacts,
     pub listening: Option<Listening>,
     /// Relays that a routing rule, or the default route, sends straight to
     /// an internet host.
@@ -376,7 +373,44 @@ pub struct AuditInputs<'a> {
     pub now: u64,
 }
 
-/// Whether a host is on this machine or a private network.
+/// What the privacy audit needs to know about the host itself, and the
+/// names its operators know the host's settings by.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AuditFacts {
+    /// What the service is called in findings, as in "deadhop listens on nothing".
+    pub service: String,
+    /// The chain backend, for a service that has one.
+    pub electrum: Option<ElectrumFacts>,
+    /// Whether the service announces itself on its relays, for a service
+    /// that can (`None`: it never does).
+    pub announce: Option<AnnounceFacts>,
+    /// The host setting that locks the proxies, such as `DEADHOP_PROXY_LOCKED`.
+    pub lock_setting: String,
+    /// Where an operator tests a proxy, as in "Test in Settings".
+    pub test_place: String,
+}
+
+/// The chain backend of a service.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ElectrumFacts {
+    /// Its address, `host:port`.
+    pub address: String,
+    /// Whether the link to it is unencrypted.
+    pub plain: bool,
+    /// Its transport, as shown to operators.
+    pub transport: String,
+    /// The host setting that names it, such as `DEADHOP_ELECTRUM`.
+    pub setting: String,
+}
+
+/// Whether a service announces itself, and the host setting that says so.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AnnounceFacts {
+    pub on: bool,
+    /// Such as `DEADHOP_ANNOUNCE`.
+    pub setting: String,
+}
+
 /// Looks up the addresses of `host`; empty when it cannot be resolved.
 pub type Resolver = std::sync::Arc<
     dyn Fn(String, u16) -> std::pin::Pin<Box<dyn std::future::Future<Output = Vec<std::net::IpAddr>> + Send>>
@@ -432,9 +466,66 @@ fn finding(
     }
 }
 
+/// Where the chain backend is, and how the link to it is protected.
+fn electrum_checks(e: &ElectrumFacts, checks: &mut Vec<PrivacyCheck>) {
+    let electrum_host = e.address.rsplit_once(':').map_or(e.address.as_str(), |(h, _)| h);
+    let private = is_private_host(electrum_host);
+    checks.push(if private {
+        finding(
+            "electrum_network",
+            "network",
+            "Electrum stays on your network",
+            "pass",
+            0,
+            "The chain backend is on this machine or a private network; it does not use the proxy.",
+            vec![format!("electrum   {}", e.address)],
+            None,
+        )
+    } else {
+        finding(
+            "electrum_network",
+            "network",
+            "Electrum is outside your network",
+            "to_fix",
+            10,
+            "The Electrum server sees this machine's IP and which addresses it watches.",
+            vec![format!("electrum   {}", e.address)],
+            Some(&format!(
+                "Run Fulcrum or electrs on your own node and point {} at it.",
+                e.setting
+            )),
+        )
+    });
+    checks.push(if e.plain && !is_loopback_host(&electrum_host.to_ascii_lowercase()) {
+        finding(
+            "electrum_link",
+            "network",
+            "The Electrum link is not encrypted",
+            "to_fix",
+            10,
+            "Anyone on the network path can read which addresses the service watches.",
+            vec![format!("transport   {}", e.transport)],
+            Some("Use the server's TLS port (tls://) and pin its certificate."),
+        )
+    } else {
+        finding(
+            "electrum_link",
+            "network",
+            "The Electrum link is protected",
+            "pass",
+            0,
+            "TLS, or a server on this machine.",
+            vec![format!("transport   {}", e.transport)],
+            None,
+        )
+    });
+}
+
 /// Score what can be measured; list what cannot.
 pub fn audit(i: AuditInputs<'_>) -> PrivacyAudit {
     let mut checks = Vec::new();
+    let facts = &i.facts;
+    let test_in = |what: &str| format!("{what} {}.", facts.test_place);
     if !i.direct_by_rule.is_empty() && !i.transparent {
         checks.push(finding(
             "relays_direct_by_rule",
@@ -511,7 +602,7 @@ pub fn audit(i: AuditInputs<'_>) -> PrivacyAudit {
                 ),
                 relays_line,
             ],
-            Some("Bring a proxy back, or check each with Test in Settings."),
+            Some(&test_in("Bring a proxy back, or check each with Test in")),
         )),
         None => checks.push(finding(
             "relays_via_proxy",
@@ -544,7 +635,7 @@ pub fn audit(i: AuditInputs<'_>) -> PrivacyAudit {
                     30,
                     "The service cannot be reached until a relay connects through the proxy.",
                     vec![format!("proxy   {}", i.proxy_shown), relays_line],
-                    Some("Check the proxy with Test in Settings."),
+                    Some(&test_in("Check the proxy with Test in")),
                 ));
             }
             checks.push(if i.proxy_locked {
@@ -555,7 +646,7 @@ pub fn audit(i: AuditInputs<'_>) -> PrivacyAudit {
                     "pass",
                     0,
                     "A stolen operator key cannot point the service at a proxy that learns its IP.",
-                    vec!["DEADHOP_PROXY_LOCKED   true".into()],
+                    vec![format!("{}   true", facts.lock_setting)],
                     None,
                 )
             } else {
@@ -566,8 +657,8 @@ pub fn audit(i: AuditInputs<'_>) -> PrivacyAudit {
                     "to_fix",
                     10,
                     "A stolen operator key could set a proxy it controls and learn this machine's IP.",
-                    vec!["DEADHOP_PROXY_LOCKED   false".into()],
-                    Some("Set DEADHOP_PROXY_LOCKED=true on the host."),
+                    vec![format!("{}   false", facts.lock_setting)],
+                    Some(&format!("Set {}=true on the host.", facts.lock_setting)),
                 )
             });
             checks.push(finding(
@@ -594,7 +685,7 @@ pub fn audit(i: AuditInputs<'_>) -> PrivacyAudit {
                     "The proxy has not been tested yet",
                     "not_checked",
                     0,
-                    "Run Test next to the proxy in Settings.",
+                    test_in("Run Test next to the proxy in"),
                     Vec::new(),
                     None,
                 ),
@@ -629,7 +720,7 @@ pub fn audit(i: AuditInputs<'_>) -> PrivacyAudit {
                             20,
                             "The last test reached no relay.",
                             evidence,
-                            Some("Check the proxy with Test in Settings."),
+                            Some(&test_in("Check the proxy with Test in")),
                         ),
                     }
                 }
@@ -637,56 +728,9 @@ pub fn audit(i: AuditInputs<'_>) -> PrivacyAudit {
         }
     }
 
-    let electrum_host = i.electrum.rsplit_once(':').map_or(i.electrum.as_str(), |(h, _)| h);
-    let private = is_private_host(electrum_host);
-    checks.push(if private {
-        finding(
-            "electrum_network",
-            "network",
-            "Electrum stays on your network",
-            "pass",
-            0,
-            "The chain backend is on this machine or a private network; it does not use the proxy.",
-            vec![format!("electrum   {}", i.electrum)],
-            None,
-        )
-    } else {
-        finding(
-            "electrum_network",
-            "network",
-            "Electrum is outside your network",
-            "to_fix",
-            10,
-            "The Electrum server sees this machine's IP and which addresses it watches.",
-            vec![format!("electrum   {}", i.electrum)],
-            Some("Run Fulcrum or electrs on your own node and point DEADHOP_ELECTRUM at it."),
-        )
-    });
-    checks.push(
-        if i.electrum_plain && !is_loopback_host(&electrum_host.to_ascii_lowercase()) {
-            finding(
-                "electrum_link",
-                "network",
-                "The Electrum link is not encrypted",
-                "to_fix",
-                10,
-                "Anyone on the network path can read which addresses the service watches.",
-                vec![format!("transport   {}", i.electrum_transport)],
-                Some("Use the server's TLS port (tls://) and pin its certificate."),
-            )
-        } else {
-            finding(
-                "electrum_link",
-                "network",
-                "The Electrum link is protected",
-                "pass",
-                0,
-                "TLS, or a server on this machine.",
-                vec![format!("transport   {}", i.electrum_transport)],
-                None,
-            )
-        },
-    );
+    if let Some(e) = &facts.electrum {
+        electrum_checks(e, &mut checks);
+    }
 
     checks.push(match &i.listening {
         None => finding(
@@ -702,7 +746,7 @@ pub fn audit(i: AuditInputs<'_>) -> PrivacyAudit {
         Some(l) if l.open.is_empty() => finding(
             "service_ports",
             "ports",
-            "deadhop listens on nothing",
+            &format!("{} listens on nothing", facts.service),
             "pass",
             0,
             if l.loopback.is_empty() {
@@ -745,28 +789,30 @@ pub fn audit(i: AuditInputs<'_>) -> PrivacyAudit {
         Some("Scan your public address from another network you control."),
     ));
 
-    checks.push(if i.announce {
-        finding(
+    checks.push(match &facts.announce {
+        Some(a) if a.on => finding(
             "announce",
             "exposure",
             "The service announces itself",
             "to_fix",
             5,
             "Public discovery events make the service easy to find and watch.",
-            vec!["DEADHOP_ANNOUNCE   true".into()],
-            Some("Set DEADHOP_ANNOUNCE=false unless you want to be listed."),
-        )
-    } else {
-        finding(
+            vec![format!("{}   true", a.setting)],
+            Some(&format!("Set {}=false unless you want to be listed.", a.setting)),
+        ),
+        _ => finding(
             "announce",
             "exposure",
             "No public announcements",
             "pass",
             0,
             "The service publishes no discovery events.",
-            vec!["DEADHOP_ANNOUNCE   false".into()],
+            vec![facts
+                .announce
+                .as_ref()
+                .map_or_else(|| "announce   never".to_string(), |a| format!("{}   false", a.setting))],
             None,
-        )
+        ),
     });
 
     let lost: u32 = checks.iter().map(|c| c.points).sum();
@@ -1032,6 +1078,25 @@ mod tests {
             .all(|c| c.id != "proxy_check" && c.id != "names_at_proxy"));
     }
 
+    /// The payment service's facts, as its host gives them.
+    fn deadhop_facts() -> AuditFacts {
+        AuditFacts {
+            service: "deadhop".into(),
+            electrum: Some(ElectrumFacts {
+                address: "127.0.0.1:50001".into(),
+                plain: true,
+                transport: "tcp".into(),
+                setting: "DEADHOP_ELECTRUM".into(),
+            }),
+            announce: Some(AnnounceFacts {
+                on: false,
+                setting: "DEADHOP_ANNOUNCE".into(),
+            }),
+            lock_setting: "DEADHOP_PROXY_LOCKED".into(),
+            test_place: "Settings".into(),
+        }
+    }
+
     fn inputs(proxy: Option<&ProxySpec>) -> AuditInputs<'_> {
         AuditInputs {
             proxy,
@@ -1042,10 +1107,7 @@ mod tests {
             offline: crate::network::OfflinePolicy::KillSwitch,
             relays: vec![relay(true)],
             last_check: Some(proxy_check("connected")),
-            electrum: "127.0.0.1:50001".into(),
-            electrum_plain: true,
-            electrum_transport: "tcp".into(),
-            announce: false,
+            facts: deadhop_facts(),
             listening: Some(Listening::default()),
             direct_by_rule: Vec::new(),
             default_direct: false,
@@ -1095,6 +1157,37 @@ mod tests {
     }
 
     #[test]
+    fn the_host_names_its_settings_and_skips_what_it_does_not_have() {
+        let tor = parse_proxy("socks5://127.0.0.1:9050").unwrap().unwrap();
+        let mut i = inputs(Some(&tor));
+        i.facts = AuditFacts {
+            service: "lnaddr-node".into(),
+            electrum: None,
+            announce: None,
+            lock_setting: "LNADDR_NODE_PROXY_LOCKED".into(),
+            test_place: "the console".into(),
+        };
+        i.proxy_locked = false;
+        i.last_check = None;
+        let a = audit(i);
+        assert!(a.checks.iter().all(|c| !c.id.starts_with("electrum")));
+        let find = |id: &str| a.checks.iter().find(|c| c.id == id).unwrap();
+        assert_eq!(find("announce").evidence, ["announce   never"]);
+        assert_eq!(find("announce").result, "pass");
+        assert_eq!(find("proxy_locked").evidence, ["LNADDR_NODE_PROXY_LOCKED   false"]);
+        assert_eq!(
+            find("proxy_locked").fix.as_deref(),
+            Some("Set LNADDR_NODE_PROXY_LOCKED=true on the host.")
+        );
+        assert_eq!(
+            find("proxy_check").summary,
+            "Run Test next to the proxy in the console."
+        );
+        assert_eq!(find("service_ports").title, "lnaddr-node listens on nothing");
+        assert_eq!((a.score, a.checked, a.total), (90, 5, 8));
+    }
+
+    #[test]
     fn the_audit_scores_only_what_it_can_measure() {
         let tor = parse_proxy("socks5://127.0.0.1:9050").unwrap().unwrap();
         let web = parse_proxy("http://proxy.lan:3128").unwrap().unwrap();
@@ -1137,9 +1230,9 @@ mod tests {
 
         // A public Electrum server over plaintext, open ports, announcements.
         let mut i = inputs(Some(&tor));
-        i.electrum = "electrum.example:50001".into();
+        i.facts.electrum.as_mut().unwrap().address = "electrum.example:50001".into();
         i.listening = Some(listening(&[22, 8080], &[]));
-        i.announce = true;
+        i.facts.announce.as_mut().unwrap().on = true;
         let exposed = audit(i);
         assert_eq!(result(&exposed, "electrum_network"), "to_fix");
         assert_eq!(result(&exposed, "electrum_link"), "to_fix");

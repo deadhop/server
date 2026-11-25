@@ -138,10 +138,19 @@ impl NetworkHost for FakeHost {
 
     fn audit_facts(&self) -> AuditFacts {
         AuditFacts {
-            electrum: "127.0.0.1:50001".into(),
-            electrum_plain: true,
-            electrum_transport: "tcp".into(),
-            announce: false,
+            service: "deadhop".into(),
+            electrum: Some(crate::netruntime::ElectrumFacts {
+                address: "127.0.0.1:50001".into(),
+                plain: true,
+                transport: "tcp".into(),
+                setting: "DEADHOP_ELECTRUM".into(),
+            }),
+            announce: Some(crate::netruntime::AnnounceFacts {
+                on: false,
+                setting: "DEADHOP_ANNOUNCE".into(),
+            }),
+            lock_setting: "DEADHOP_PROXY_LOCKED".into(),
+            test_place: "Settings".into(),
         }
     }
 }
@@ -1453,4 +1462,23 @@ async fn the_network_tools_are_served_by_whichever_service_merges_them() {
         assert!(refused.contains("not authorized"), "{tool}: {refused}");
     }
     client.cancel().await.unwrap();
+}
+
+#[test]
+fn routes_become_pool_specs_and_compare_by_relay() {
+    use crate::netruntime::{route_specs, same_relays, Routes};
+    let a: Routes = vec![
+        ("ws://a".into(), String::new()),
+        ("ws://b".into(), "socks5://127.0.0.1:9050".into()),
+    ];
+    let specs = route_specs(&a).unwrap();
+    assert!(specs[0].1.is_none());
+    assert_eq!(specs[1].1.as_ref().unwrap().port, 9050);
+    assert!(route_specs(&vec![("ws://a".into(), "gopher://x:1".into())]).is_err());
+    let moved: Routes = vec![
+        ("ws://a".into(), "socks5://127.0.0.1:9050".into()),
+        ("ws://b".into(), String::new()),
+    ];
+    assert!(same_relays(&a, &moved));
+    assert!(!same_relays(&a, &moved[..1].to_vec()));
 }
