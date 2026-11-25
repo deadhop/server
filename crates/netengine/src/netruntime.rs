@@ -73,18 +73,7 @@ pub struct RelayEventRow {
     pub ms: Option<u64>,
 }
 
-/// What the privacy audit needs to know about the host itself.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct AuditFacts {
-    /// Address of the chain backend.
-    pub electrum: String,
-    /// Whether the link to it is unencrypted.
-    pub electrum_plain: bool,
-    /// Its transport, as shown to operators.
-    pub electrum_transport: String,
-    /// Whether the service announces itself on its relays.
-    pub announce: bool,
-}
+pub use crate::privacy::{AnnounceFacts, AuditFacts, ElectrumFacts};
 
 /// On-demand relay checks allowed per minute, all operators together.
 pub const RELAY_CHECKS_PER_MIN: usize = 6;
@@ -240,6 +229,17 @@ impl Default for NetworkRuntime {
 /// Each relay of a lane and the proxy url it goes through ("" for straight).
 pub type Routes = Vec<(String, String)>;
 
+/// Each relay of `routes` and its parsed proxy, as a routed relay pool takes them.
+pub fn route_specs(routes: &Routes) -> Result<Vec<(String, Option<deadhop_net::relay::ProxySpec>)>> {
+    routes.iter().map(|(r, p)| Ok((r.clone(), parse_proxy(p)?))).collect()
+}
+
+/// Whether two sets of routes name the same relays in the same order (so
+/// the relays can move to their new routes on the connections they have).
+pub fn same_relays(a: &Routes, b: &Routes) -> bool {
+    a.iter().map(|r| &r.0).eq(b.iter().map(|r| &r.0))
+}
+
 impl NetworkRuntime {
     /// How a lane should be connected now: each relay that has a route and
     /// its proxy, or `None` when no relay of the lane should connect at all
@@ -268,7 +268,7 @@ impl NetworkRuntime {
 
     /// Test a proxy against the live relays (operators only). It opens
     /// connections from this machine to the proxy, so it is admitted and
-    /// recorded like a change, honours `DEADHOP_PROXY_LOCKED`, tunnels only to
+    /// recorded like a change, honours the host's proxy lock, tunnels only to
     /// the live relays, runs one at a time and has a per-minute budget.
     pub async fn check_proxy(
         &self,
@@ -304,9 +304,10 @@ impl NetworkRuntime {
         // Testing opens connections to whatever address is given, so a locked
         // proxy list only allows testing what is already in it.
         if host.proxy_locked() && !raw.is_empty() && id.is_none() {
-            return Err(Error::InvalidParams(
-                "the proxies are locked on the host (DEADHOP_PROXY_LOCKED); only the listed ones can be tested".into(),
-            ));
+            return Err(Error::InvalidParams(format!(
+                "the proxies are locked on the host ({}); only the listed ones can be tested",
+                host.audit_facts().lock_setting
+            )));
         }
         let spec = parse_proxy(&raw)?;
         let now = host.now();
@@ -370,9 +371,10 @@ impl NetworkRuntime {
     ) -> Result<crate::i2p::I2pNameLookup> {
         let actor = host.admit_change(caller)?;
         if host.proxy_locked() {
-            return Err(Error::InvalidParams(
-                "the proxies are locked on the host (DEADHOP_PROXY_LOCKED), so I2P names cannot be looked up".into(),
-            ));
+            return Err(Error::InvalidParams(format!(
+                "the proxies are locked on the host ({}), so I2P names cannot be looked up",
+                host.audit_facts().lock_setting
+            )));
         }
         let name = p.name.trim().to_string();
         crate::i2p::check_name(&name)?;
@@ -587,12 +589,7 @@ impl NetworkRuntime {
         let facts = host.audit_facts();
         let relays = host.relay_states().await;
         let s = host.topology();
-        let (offline, configured, transparent, announce) = (
-            s.proxies.offline,
-            s.proxies.list.len(),
-            s.proxies.transparent,
-            facts.announce,
-        );
+        let (offline, configured, transparent) = (s.proxies.offline, s.proxies.list.len(), s.proxies.transparent);
         let default_direct = configured > 0
             && s.lanes.iter().any(|k| {
                 *s.proxies.default_for(&k.id) == crate::routes::Destination::Direct
@@ -625,10 +622,7 @@ impl NetworkRuntime {
             offline,
             relays,
             last_check,
-            electrum: facts.electrum,
-            electrum_plain: facts.electrum_plain,
-            electrum_transport: facts.electrum_transport,
-            announce,
+            facts,
             listening: own_listening(&self.proc_net),
             direct_by_rule: self.direct_by_rule(host).await,
             default_direct,

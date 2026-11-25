@@ -319,40 +319,7 @@ impl PayServer {
     }
 }
 
-/// Most serialized bytes of tool descriptions in one page of `tools/list`. A
-/// reply travels as one encrypted Nostr event, which cannot be larger than
-/// 64 KiB (NIP-44) once it is escaped and wrapped, and oversized transfers are
-/// off (see `Link::up`). The whole list is already above that, so it is paged.
-const LIST_PAGE_BYTES: usize = 28_000;
-
-/// The tools sorted by name, and the one page that starts at `cursor` (an
-/// index, as text), with the cursor of the next page if there is one.
-fn tool_page(
-    mut tools: Vec<rmcp::model::Tool>,
-    cursor: Option<&str>,
-) -> Result<(Vec<rmcp::model::Tool>, Option<String>), ErrorData> {
-    tools.sort_by(|a, b| a.name.cmp(&b.name));
-    let start = match cursor {
-        None => 0,
-        Some(c) => c
-            .parse::<usize>()
-            .ok()
-            .filter(|i| *i < tools.len())
-            .ok_or_else(|| ErrorData::invalid_params("unknown cursor", None))?,
-    };
-    let mut bytes = 0;
-    let mut end = start;
-    while end < tools.len() {
-        bytes += serde_json::to_string(&tools[end]).map_or(0, |t| t.len());
-        // A page holds at least one tool, however large.
-        if end > start && bytes > LIST_PAGE_BYTES {
-            break;
-        }
-        end += 1;
-    }
-    let next = (end < tools.len()).then(|| end.to_string());
-    Ok((tools[start..end].to_vec(), next))
-}
+pub use deadhop_netengine::tools::{tool_page, LIST_PAGE_BYTES};
 
 #[tool_handler(router = self.router)]
 impl ServerHandler for PayServer {

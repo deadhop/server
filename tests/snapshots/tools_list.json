@@ -130,7 +130,7 @@
           "description": "One of the service's keys and what it is for.",
           "properties": {
             "id": {
-              "description": "`invoices` or `admin`.",
+              "description": "Its id, such as `invoices` or `admin`.",
               "type": "string"
             },
             "label": {
@@ -1246,7 +1246,7 @@
           "description": "One of the service's keys and what it is for.",
           "properties": {
             "id": {
-              "description": "`invoices` or `admin`.",
+              "description": "Its id, such as `invoices` or `admin`.",
               "type": "string"
             },
             "label": {
@@ -2225,7 +2225,7 @@
           "description": "One of the service's keys and what it is for.",
           "properties": {
             "id": {
-              "description": "`invoices` or `admin`.",
+              "description": "Its id, such as `invoices` or `admin`.",
               "type": "string"
             },
             "label": {
@@ -3019,7 +3019,7 @@
           "description": "One of the service's keys and what it is for.",
           "properties": {
             "id": {
-              "description": "`invoices` or `admin`.",
+              "description": "Its id, such as `invoices` or `admin`.",
               "type": "string"
             },
             "label": {
@@ -3965,7 +3965,7 @@
           "description": "One of the service's keys and what it is for.",
           "properties": {
             "id": {
-              "description": "`invoices` or `admin`.",
+              "description": "Its id, such as `invoices` or `admin`.",
               "type": "string"
             },
             "label": {
@@ -4563,7 +4563,7 @@
           "description": "One of the service's keys and what it is for.",
           "properties": {
             "id": {
-              "description": "`invoices` or `admin`.",
+              "description": "Its id, such as `invoices` or `admin`.",
               "type": "string"
             },
             "label": {
@@ -5534,7 +5534,7 @@
           "description": "One of the service's keys and what it is for.",
           "properties": {
             "id": {
-              "description": "`invoices` or `admin`.",
+              "description": "Its id, such as `invoices` or `admin`.",
               "type": "string"
             },
             "label": {
@@ -6485,7 +6485,7 @@
           "description": "One of the service's keys and what it is for.",
           "properties": {
             "id": {
-              "description": "`invoices` or `admin`.",
+              "description": "Its id, such as `invoices` or `admin`.",
               "type": "string"
             },
             "label": {

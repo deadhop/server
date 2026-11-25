@@ -7,8 +7,8 @@ use crate::db::RelayEventRow;
 use crate::electrum::Security;
 use crate::error::{to_engine, Result};
 use crate::netruntime::{
-    AuditFacts, CheckProxyParams, NetworkHost, RelayHealthReport, RelayHistory, RelayHistoryParams,
-    ResolveI2pNameParams,
+    AnnounceFacts, AuditFacts, CheckProxyParams, ElectrumFacts, NetworkHost, RelayHealthReport, RelayHistory,
+    RelayHistoryParams, ResolveI2pNameParams,
 };
 use crate::network::{OfflinePolicy, ProxySettings, Topology};
 use crate::privacy::{PrivacyAudit, ProxyCheck};
@@ -70,10 +70,19 @@ impl NetworkHost for Service {
 
     fn audit_facts(&self) -> AuditFacts {
         AuditFacts {
-            electrum: self.cfg.electrum.clone(),
-            electrum_plain: matches!(self.cfg.electrum_security, Security::Plain),
-            electrum_transport: self.cfg.electrum_security.label().to_string(),
-            announce: self.cfg.announce,
+            service: "deadhop".into(),
+            electrum: Some(ElectrumFacts {
+                address: self.cfg.electrum.clone(),
+                plain: matches!(self.cfg.electrum_security, Security::Plain),
+                transport: self.cfg.electrum_security.label().to_string(),
+                setting: "DEADHOP_ELECTRUM".into(),
+            }),
+            announce: Some(AnnounceFacts {
+                on: self.cfg.announce,
+                setting: "DEADHOP_ANNOUNCE".into(),
+            }),
+            lock_setting: "DEADHOP_PROXY_LOCKED".into(),
+            test_place: "Settings".into(),
         }
     }
 }

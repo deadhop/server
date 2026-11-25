@@ -26,7 +26,7 @@ use crate::keyholder;
 use crate::keys::{open_identities, Identity, KeyDef, INVOICES};
 use crate::manage::BACKUP_DIR;
 use crate::mcp::PayServer;
-use crate::relay::{parse_proxy, Pool};
+use crate::relay::Pool;
 use crate::service::{system_clock, RelayProbe, RelayState, Service};
 use crate::wallet::Wallet;
 
@@ -258,13 +258,10 @@ impl Link {
 
 /// Each relay and its parsed proxy.
 fn specs(routes: &Routes) -> Result<Vec<(String, Option<crate::relay::ProxySpec>)>> {
-    routes.iter().map(|(r, p)| Ok((r.clone(), parse_proxy(p)?))).collect()
+    Ok(crate::netruntime::route_specs(routes)?)
 }
 
-/// Whether two sets of routes name the same relays in the same order.
-fn same_relays(a: &Routes, b: &Routes) -> bool {
-    a.iter().map(|r| &r.0).eq(b.iter().map(|r| &r.0))
-}
+use crate::netruntime::same_relays;
 
 /// Whether any relay of `link` is connected within `limit`.
 async fn connects_within(link: &Link, limit: Duration) -> bool {
@@ -481,7 +478,10 @@ async fn supervise(
                 futures_util::future::select_all(ended.iter().map(|t| Box::pin(t.cancelled()))).await;
             }
         };
+        // In this order: a change of relays is remade (and checked) by the
+        // restart arm, never by a move of routes that happens to come first.
         tokio::select! {
+            biased;
             _ = stop.cancelled() => {
                 close_all(&mut links).await;
                 return;
@@ -506,6 +506,11 @@ async fn supervise(
                 // only the keys whose connections differ from what they
                 // should be now, and of those only the relays whose route
                 // changed: a relay a rule keeps on its proxy stays connected.
+                // Other relays are the restart arm's: it checks that they
+                // connect and goes back if not.
+                if relay_setup(&svc) != live {
+                    continue;
+                }
                 let mut moved = false;
                 for id in &ids {
                     let at = links.iter().position(|l| l.key.id == id.def.id);
@@ -525,11 +530,12 @@ async fn supervise(
                     // The same relays on other routes: the link stays up. (A
                     // different set of relays needs a new link, which also
                     // announces the right relay list.)
-                    if let (Some(i), Some(routes)) = (at, want) {
-                        if same_relays(&links[i].routes, &routes) {
+                    match (at, want) {
+                        (Some(i), Some(routes)) if same_relays(&links[i].routes, &routes) => {
                             let Some(()) = or_fail(links[i].reroute(routes).await, "could not switch the relay connections", &failed) else { return };
                             continue;
                         }
+                        _ => {}
                     }
                     if let Some(i) = at {
                         links.remove(i).close().await;
@@ -2284,6 +2290,35 @@ mod tests {
         // Reachable again over the environment's relay.
         let admin = connect(&s, &app.admin_pubkey, s.admin.clone()).await;
         assert_eq!(call(&admin, "get_info", json!({})).await.unwrap()["is_admin"], true);
+        app.stop().await;
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_route_move_leaves_new_relays_to_the_restart_that_checks_them() {
+        let s = stack().await;
+        let app = App::start(load(&s.env).unwrap()).await.unwrap();
+        // New relays are live and the proxy pool wakes first: it must not
+        // connect them, or the restart would find nothing to check and revert.
+        let mut moved = app.svc.settings().clone();
+        moved.relays = vec!["ws://127.0.0.1:9".into()];
+        app.svc.apply_settings(moved);
+        app.svc.pool_switch.notify_one();
+        tokio::time::sleep(RESTART_GRACE + Duration::from_millis(500)).await;
+        app.svc.schedule_restart();
+        let env_relays = vec![s.relay_url.clone()];
+        eventually("the revert", Duration::from_secs(20), || {
+            app.svc.settings().relays == env_relays
+        })
+        .await;
+        // The restart's check undid it (the watchdog would give another
+        // reason). Other entries may follow it on a loaded machine.
+        let recent = app.svc.db.audit_recent(10).unwrap();
+        assert!(
+            recent
+                .iter()
+                .any(|e| e.action == "revert_connection" && e.detail == "no relay connected with the new relays"),
+            "{recent:?}"
+        );
         app.stop().await;
     }
 
