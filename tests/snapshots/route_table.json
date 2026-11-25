@@ -1,54 +1,60 @@
 {
-  "full / admin / default direct, proxies up": [
-    "Resolved { relay: \"wss://relay-a.example\", rule: Some(4), via: Direct, reason: Rule }",
-    "Resolved { relay: \"wss://relay-b.example\", rule: Some(2), via: Direct, reason: Rule }",
-    "Resolved { relay: \"ws://abcdefghij.onion\", rule: Some(0), via: Proxy { id: \"tor\", url: \"socks5://127.0.0.1:9050\" }, reason: Rule }",
-    "Resolved { relay: \"ws://nostr-not.i2p\", rule: Some(1), via: Proxy { id: \"i2p\", url: \"http://127.0.0.1:4444\" }, reason: Rule }"
+  "full / admin / groups used": [
+    "exits"
   ],
-  "full / admin / default off, proxies down": [
-    "Resolved { relay: \"wss://relay-a.example\", rule: Some(4), via: Off, reason: PoolOffline }",
-    "Resolved { relay: \"wss://relay-b.example\", rule: Some(2), via: Direct, reason: Rule }",
-    "Resolved { relay: \"ws://abcdefghij.onion\", rule: Some(0), via: Proxy { id: \"tor\", url: \"socks5://127.0.0.1:9050\" }, reason: Rule }",
-    "Resolved { relay: \"ws://nostr-not.i2p\", rule: Some(1), via: Proxy { id: \"i2p\", url: \"http://127.0.0.1:4444\" }, reason: Rule }"
+  "full / admin / nothing probed yet": [
+    "Resolved { relay: \"wss://relay-a.example\", rule: Some(4), via: Off, reason: PoolOffline, by_policy: false }",
+    "Resolved { relay: \"wss://relay-b.example\", rule: Some(2), via: Direct, reason: Rule, by_policy: false }",
+    "Resolved { relay: \"ws://abcdefghij.onion\", rule: Some(0), via: Proxy { id: \"tor\", url: \"socks5://127.0.0.1:9050\" }, reason: Rule, by_policy: false }",
+    "Resolved { relay: \"ws://nostr-not.i2p\", rule: Some(1), via: Proxy { id: \"i2p\", url: \"http://127.0.0.1:4444\" }, reason: Rule, by_policy: false }"
   ],
-  "full / admin / default through tor, proxies down": [
-    "Resolved { relay: \"wss://relay-a.example\", rule: Some(4), via: Proxy { id: \"tor\", url: \"socks5://127.0.0.1:9050\" }, reason: Rule }",
-    "Resolved { relay: \"wss://relay-b.example\", rule: Some(2), via: Direct, reason: Rule }",
-    "Resolved { relay: \"ws://abcdefghij.onion\", rule: Some(0), via: Proxy { id: \"tor\", url: \"socks5://127.0.0.1:9050\" }, reason: Rule }",
-    "Resolved { relay: \"ws://nostr-not.i2p\", rule: Some(1), via: Proxy { id: \"i2p\", url: \"http://127.0.0.1:4444\" }, reason: Rule }"
+  "full / admin / proxies down, the policy connects straight": [
+    "Resolved { relay: \"wss://relay-a.example\", rule: Some(4), via: Direct, reason: Rule, by_policy: true }",
+    "Resolved { relay: \"wss://relay-b.example\", rule: Some(2), via: Direct, reason: Rule, by_policy: false }",
+    "Resolved { relay: \"ws://abcdefghij.onion\", rule: Some(0), via: Proxy { id: \"tor\", url: \"socks5://127.0.0.1:9050\" }, reason: Rule, by_policy: false }",
+    "Resolved { relay: \"ws://nostr-not.i2p\", rule: Some(1), via: Proxy { id: \"i2p\", url: \"http://127.0.0.1:4444\" }, reason: Rule, by_policy: false }"
   ],
-  "full / admin / default through tor, proxies up": [
-    "Resolved { relay: \"wss://relay-a.example\", rule: Some(4), via: Proxy { id: \"tor\", url: \"socks5://127.0.0.1:9050\" }, reason: Rule }",
-    "Resolved { relay: \"wss://relay-b.example\", rule: Some(2), via: Direct, reason: Rule }",
-    "Resolved { relay: \"ws://abcdefghij.onion\", rule: Some(0), via: Proxy { id: \"tor\", url: \"socks5://127.0.0.1:9050\" }, reason: Rule }",
-    "Resolved { relay: \"ws://nostr-not.i2p\", rule: Some(1), via: Proxy { id: \"i2p\", url: \"http://127.0.0.1:4444\" }, reason: Rule }"
+  "full / admin / proxies down, the policy keeps the key off": [
+    "Resolved { relay: \"wss://relay-a.example\", rule: Some(4), via: Off, reason: PoolOffline, by_policy: true }",
+    "Resolved { relay: \"wss://relay-b.example\", rule: Some(2), via: Direct, reason: Rule, by_policy: false }",
+    "Resolved { relay: \"ws://abcdefghij.onion\", rule: Some(0), via: Proxy { id: \"tor\", url: \"socks5://127.0.0.1:9050\" }, reason: Rule, by_policy: false }",
+    "Resolved { relay: \"ws://nostr-not.i2p\", rule: Some(1), via: Proxy { id: \"i2p\", url: \"http://127.0.0.1:4444\" }, reason: Rule, by_policy: false }"
   ],
-  "full / admin / uses the default route": true,
-  "full / invoices / default direct, proxies up": [
-    "Resolved { relay: \"wss://relay-a.example\", rule: Some(4), via: Direct, reason: Rule }",
-    "Resolved { relay: \"wss://relay-b.example\", rule: Some(2), via: Direct, reason: Rule }",
-    "Resolved { relay: \"ws://abcdefghij.onion\", rule: Some(0), via: Proxy { id: \"tor\", url: \"socks5://127.0.0.1:9050\" }, reason: Rule }",
-    "Resolved { relay: \"ws://nostr-not.i2p\", rule: Some(1), via: Proxy { id: \"i2p\", url: \"http://127.0.0.1:4444\" }, reason: Rule }"
+  "full / admin / proxies up": [
+    "Resolved { relay: \"wss://relay-a.example\", rule: Some(4), via: Proxy { id: \"tor\", url: \"socks5://127.0.0.1:9050\" }, reason: Rule, by_policy: false }",
+    "Resolved { relay: \"wss://relay-b.example\", rule: Some(2), via: Direct, reason: Rule, by_policy: false }",
+    "Resolved { relay: \"ws://abcdefghij.onion\", rule: Some(0), via: Proxy { id: \"tor\", url: \"socks5://127.0.0.1:9050\" }, reason: Rule, by_policy: false }",
+    "Resolved { relay: \"ws://nostr-not.i2p\", rule: Some(1), via: Proxy { id: \"i2p\", url: \"http://127.0.0.1:4444\" }, reason: Rule, by_policy: false }"
   ],
-  "full / invoices / default off, proxies down": [
-    "Resolved { relay: \"wss://relay-a.example\", rule: Some(4), via: Off, reason: PoolOffline }",
-    "Resolved { relay: \"wss://relay-b.example\", rule: Some(2), via: Direct, reason: Rule }",
-    "Resolved { relay: \"ws://abcdefghij.onion\", rule: Some(0), via: Proxy { id: \"tor\", url: \"socks5://127.0.0.1:9050\" }, reason: Rule }",
-    "Resolved { relay: \"ws://nostr-not.i2p\", rule: Some(1), via: Proxy { id: \"i2p\", url: \"http://127.0.0.1:4444\" }, reason: Rule }"
+  "full / admin / uses the default route": false,
+  "full / invoices / groups used": [
+    "exits"
   ],
-  "full / invoices / default through tor, proxies down": [
-    "Resolved { relay: \"wss://relay-a.example\", rule: Some(4), via: Proxy { id: \"tor\", url: \"socks5://127.0.0.1:9050\" }, reason: Rule }",
-    "Resolved { relay: \"wss://relay-b.example\", rule: Some(2), via: Direct, reason: Rule }",
-    "Resolved { relay: \"ws://abcdefghij.onion\", rule: Some(0), via: Proxy { id: \"tor\", url: \"socks5://127.0.0.1:9050\" }, reason: Rule }",
-    "Resolved { relay: \"ws://nostr-not.i2p\", rule: Some(1), via: Proxy { id: \"i2p\", url: \"http://127.0.0.1:4444\" }, reason: Rule }"
+  "full / invoices / nothing probed yet": [
+    "Resolved { relay: \"wss://relay-a.example\", rule: Some(4), via: Off, reason: PoolOffline, by_policy: false }",
+    "Resolved { relay: \"wss://relay-b.example\", rule: Some(2), via: Direct, reason: Rule, by_policy: false }",
+    "Resolved { relay: \"ws://abcdefghij.onion\", rule: Some(0), via: Proxy { id: \"tor\", url: \"socks5://127.0.0.1:9050\" }, reason: Rule, by_policy: false }",
+    "Resolved { relay: \"ws://nostr-not.i2p\", rule: Some(1), via: Proxy { id: \"i2p\", url: \"http://127.0.0.1:4444\" }, reason: Rule, by_policy: false }"
   ],
-  "full / invoices / default through tor, proxies up": [
-    "Resolved { relay: \"wss://relay-a.example\", rule: Some(4), via: Proxy { id: \"tor\", url: \"socks5://127.0.0.1:9050\" }, reason: Rule }",
-    "Resolved { relay: \"wss://relay-b.example\", rule: Some(2), via: Direct, reason: Rule }",
-    "Resolved { relay: \"ws://abcdefghij.onion\", rule: Some(0), via: Proxy { id: \"tor\", url: \"socks5://127.0.0.1:9050\" }, reason: Rule }",
-    "Resolved { relay: \"ws://nostr-not.i2p\", rule: Some(1), via: Proxy { id: \"i2p\", url: \"http://127.0.0.1:4444\" }, reason: Rule }"
+  "full / invoices / proxies down, the policy connects straight": [
+    "Resolved { relay: \"wss://relay-a.example\", rule: Some(4), via: Direct, reason: Rule, by_policy: true }",
+    "Resolved { relay: \"wss://relay-b.example\", rule: Some(2), via: Direct, reason: Rule, by_policy: false }",
+    "Resolved { relay: \"ws://abcdefghij.onion\", rule: Some(0), via: Proxy { id: \"tor\", url: \"socks5://127.0.0.1:9050\" }, reason: Rule, by_policy: false }",
+    "Resolved { relay: \"ws://nostr-not.i2p\", rule: Some(1), via: Proxy { id: \"i2p\", url: \"http://127.0.0.1:4444\" }, reason: Rule, by_policy: false }"
   ],
-  "full / invoices / uses the default route": true,
+  "full / invoices / proxies down, the policy keeps the key off": [
+    "Resolved { relay: \"wss://relay-a.example\", rule: Some(4), via: Off, reason: PoolOffline, by_policy: true }",
+    "Resolved { relay: \"wss://relay-b.example\", rule: Some(2), via: Direct, reason: Rule, by_policy: false }",
+    "Resolved { relay: \"ws://abcdefghij.onion\", rule: Some(0), via: Proxy { id: \"tor\", url: \"socks5://127.0.0.1:9050\" }, reason: Rule, by_policy: false }",
+    "Resolved { relay: \"ws://nostr-not.i2p\", rule: Some(1), via: Proxy { id: \"i2p\", url: \"http://127.0.0.1:4444\" }, reason: Rule, by_policy: false }"
+  ],
+  "full / invoices / proxies up": [
+    "Resolved { relay: \"wss://relay-a.example\", rule: Some(4), via: Proxy { id: \"tor\", url: \"socks5://127.0.0.1:9050\" }, reason: Rule, by_policy: false }",
+    "Resolved { relay: \"wss://relay-b.example\", rule: Some(2), via: Direct, reason: Rule, by_policy: false }",
+    "Resolved { relay: \"ws://abcdefghij.onion\", rule: Some(0), via: Proxy { id: \"tor\", url: \"socks5://127.0.0.1:9050\" }, reason: Rule, by_policy: false }",
+    "Resolved { relay: \"ws://nostr-not.i2p\", rule: Some(1), via: Proxy { id: \"i2p\", url: \"http://127.0.0.1:4444\" }, reason: Rule, by_policy: false }"
+  ],
+  "full / invoices / uses the default route": false,
   "full / relays through ghost": [],
   "full / relays through i2p": [
     "ws://nostr-not.i2p"
@@ -57,55 +63,63 @@
     "wss://relay-a.example",
     "ws://abcdefghij.onion"
   ],
-  "full / relays through vpn": [],
-  "keyed / admin / default direct, proxies up": [
-    "Resolved { relay: \"wss://relay-a.example\", rule: Some(4), via: Direct, reason: Rule }",
-    "Resolved { relay: \"ws://abcdefghij.onion\", rule: Some(0), via: Proxy { id: \"tor\", url: \"socks5://127.0.0.1:9050\" }, reason: Rule }",
-    "Resolved { relay: \"ws://nostr-not.i2p\", rule: Some(1), via: Proxy { id: \"i2p\", url: \"http://127.0.0.1:4444\" }, reason: Rule }",
-    "Resolved { relay: \"wss://relay.example\", rule: Some(5), via: Proxy { id: \"vpn\", url: \"socks5://user:secret@10.8.0.1:1080\" }, reason: Rule }"
+  "full / relays through vpn": [
+    "wss://relay-a.example"
   ],
-  "keyed / admin / default off, proxies down": [
-    "Resolved { relay: \"wss://relay-a.example\", rule: Some(4), via: Off, reason: PoolOffline }",
-    "Resolved { relay: \"ws://abcdefghij.onion\", rule: Some(0), via: Proxy { id: \"tor\", url: \"socks5://127.0.0.1:9050\" }, reason: Rule }",
-    "Resolved { relay: \"ws://nostr-not.i2p\", rule: Some(1), via: Proxy { id: \"i2p\", url: \"http://127.0.0.1:4444\" }, reason: Rule }",
-    "Resolved { relay: \"wss://relay.example\", rule: Some(5), via: Off, reason: PoolOffline }"
+  "keyed / admin / groups used": [
+    "exits"
   ],
-  "keyed / admin / default through tor, proxies down": [
-    "Resolved { relay: \"wss://relay-a.example\", rule: Some(4), via: Proxy { id: \"tor\", url: \"socks5://127.0.0.1:9050\" }, reason: Rule }",
-    "Resolved { relay: \"ws://abcdefghij.onion\", rule: Some(0), via: Proxy { id: \"tor\", url: \"socks5://127.0.0.1:9050\" }, reason: Rule }",
-    "Resolved { relay: \"ws://nostr-not.i2p\", rule: Some(1), via: Proxy { id: \"i2p\", url: \"http://127.0.0.1:4444\" }, reason: Rule }",
-    "Resolved { relay: \"wss://relay.example\", rule: Some(5), via: Proxy { id: \"tor\", url: \"socks5://127.0.0.1:9050\" }, reason: Fallback }"
+  "keyed / admin / nothing probed yet": [
+    "Resolved { relay: \"wss://relay-a.example\", rule: Some(4), via: Off, reason: ProxyDown, by_policy: false }",
+    "Resolved { relay: \"ws://abcdefghij.onion\", rule: Some(0), via: Proxy { id: \"tor\", url: \"socks5://127.0.0.1:9050\" }, reason: Rule, by_policy: false }",
+    "Resolved { relay: \"ws://nostr-not.i2p\", rule: Some(1), via: Proxy { id: \"i2p\", url: \"http://127.0.0.1:4444\" }, reason: Rule, by_policy: false }",
+    "Resolved { relay: \"wss://relay.example\", rule: Some(5), via: Off, reason: PoolOffline, by_policy: false }"
   ],
-  "keyed / admin / default through tor, proxies up": [
-    "Resolved { relay: \"wss://relay-a.example\", rule: Some(4), via: Proxy { id: \"tor\", url: \"socks5://127.0.0.1:9050\" }, reason: Rule }",
-    "Resolved { relay: \"ws://abcdefghij.onion\", rule: Some(0), via: Proxy { id: \"tor\", url: \"socks5://127.0.0.1:9050\" }, reason: Rule }",
-    "Resolved { relay: \"ws://nostr-not.i2p\", rule: Some(1), via: Proxy { id: \"i2p\", url: \"http://127.0.0.1:4444\" }, reason: Rule }",
-    "Resolved { relay: \"wss://relay.example\", rule: Some(5), via: Proxy { id: \"vpn\", url: \"socks5://user:secret@10.8.0.1:1080\" }, reason: Rule }"
+  "keyed / admin / proxies down, the policy connects straight": [
+    "Resolved { relay: \"wss://relay-a.example\", rule: Some(4), via: Off, reason: ProxyDown, by_policy: false }",
+    "Resolved { relay: \"ws://abcdefghij.onion\", rule: Some(0), via: Proxy { id: \"tor\", url: \"socks5://127.0.0.1:9050\" }, reason: Rule, by_policy: false }",
+    "Resolved { relay: \"ws://nostr-not.i2p\", rule: Some(1), via: Proxy { id: \"i2p\", url: \"http://127.0.0.1:4444\" }, reason: Rule, by_policy: false }",
+    "Resolved { relay: \"wss://relay.example\", rule: Some(5), via: Direct, reason: Fallback, by_policy: true }"
   ],
-  "keyed / admin / uses the default route": true,
-  "keyed / invoices / default direct, proxies up": [
-    "Resolved { relay: \"wss://relay-a.example\", rule: Some(4), via: Direct, reason: Rule }",
-    "Resolved { relay: \"wss://relay-b.example\", rule: Some(2), via: Direct, reason: Rule }",
-    "Resolved { relay: \"ws://abcdefghij.onion\", rule: None, via: Off, reason: NeverDirect }",
-    "Resolved { relay: \"wss://relay.example\", rule: Some(5), via: Proxy { id: \"vpn\", url: \"socks5://user:secret@10.8.0.1:1080\" }, reason: Rule }"
+  "keyed / admin / proxies down, the policy keeps the key off": [
+    "Resolved { relay: \"wss://relay-a.example\", rule: Some(4), via: Off, reason: ProxyDown, by_policy: false }",
+    "Resolved { relay: \"ws://abcdefghij.onion\", rule: Some(0), via: Proxy { id: \"tor\", url: \"socks5://127.0.0.1:9050\" }, reason: Rule, by_policy: false }",
+    "Resolved { relay: \"ws://nostr-not.i2p\", rule: Some(1), via: Proxy { id: \"i2p\", url: \"http://127.0.0.1:4444\" }, reason: Rule, by_policy: false }",
+    "Resolved { relay: \"wss://relay.example\", rule: Some(5), via: Off, reason: PoolOffline, by_policy: true }"
   ],
-  "keyed / invoices / default off, proxies down": [
-    "Resolved { relay: \"wss://relay-a.example\", rule: Some(4), via: Off, reason: PoolOffline }",
-    "Resolved { relay: \"wss://relay-b.example\", rule: Some(2), via: Direct, reason: Rule }",
-    "Resolved { relay: \"ws://abcdefghij.onion\", rule: None, via: Off, reason: PoolOffline }",
-    "Resolved { relay: \"wss://relay.example\", rule: Some(5), via: Off, reason: PoolOffline }"
+  "keyed / admin / proxies up": [
+    "Resolved { relay: \"wss://relay-a.example\", rule: Some(4), via: Proxy { id: \"tor\", url: \"socks5://127.0.0.1:9050\" }, reason: Rule, by_policy: false }",
+    "Resolved { relay: \"ws://abcdefghij.onion\", rule: Some(0), via: Proxy { id: \"tor\", url: \"socks5://127.0.0.1:9050\" }, reason: Rule, by_policy: false }",
+    "Resolved { relay: \"ws://nostr-not.i2p\", rule: Some(1), via: Proxy { id: \"i2p\", url: \"http://127.0.0.1:4444\" }, reason: Rule, by_policy: false }",
+    "Resolved { relay: \"wss://relay.example\", rule: Some(5), via: Proxy { id: \"vpn\", url: \"socks5://user:secret@10.8.0.1:1080\" }, reason: Rule, by_policy: false }"
   ],
-  "keyed / invoices / default through tor, proxies down": [
-    "Resolved { relay: \"wss://relay-a.example\", rule: Some(4), via: Proxy { id: \"tor\", url: \"socks5://127.0.0.1:9050\" }, reason: Rule }",
-    "Resolved { relay: \"wss://relay-b.example\", rule: Some(2), via: Direct, reason: Rule }",
-    "Resolved { relay: \"ws://abcdefghij.onion\", rule: None, via: Proxy { id: \"tor\", url: \"socks5://127.0.0.1:9050\" }, reason: Default }",
-    "Resolved { relay: \"wss://relay.example\", rule: Some(5), via: Proxy { id: \"tor\", url: \"socks5://127.0.0.1:9050\" }, reason: Fallback }"
+  "keyed / admin / uses the default route": false,
+  "keyed / invoices / groups used": [
+    "exits"
   ],
-  "keyed / invoices / default through tor, proxies up": [
-    "Resolved { relay: \"wss://relay-a.example\", rule: Some(4), via: Proxy { id: \"tor\", url: \"socks5://127.0.0.1:9050\" }, reason: Rule }",
-    "Resolved { relay: \"wss://relay-b.example\", rule: Some(2), via: Direct, reason: Rule }",
-    "Resolved { relay: \"ws://abcdefghij.onion\", rule: None, via: Proxy { id: \"tor\", url: \"socks5://127.0.0.1:9050\" }, reason: Default }",
-    "Resolved { relay: \"wss://relay.example\", rule: Some(5), via: Proxy { id: \"vpn\", url: \"socks5://user:secret@10.8.0.1:1080\" }, reason: Rule }"
+  "keyed / invoices / nothing probed yet": [
+    "Resolved { relay: \"wss://relay-a.example\", rule: Some(4), via: Off, reason: ProxyDown, by_policy: false }",
+    "Resolved { relay: \"wss://relay-b.example\", rule: Some(2), via: Direct, reason: Rule, by_policy: false }",
+    "Resolved { relay: \"ws://abcdefghij.onion\", rule: None, via: Off, reason: PoolOffline, by_policy: false }",
+    "Resolved { relay: \"wss://relay.example\", rule: Some(5), via: Off, reason: PoolOffline, by_policy: false }"
+  ],
+  "keyed / invoices / proxies down, the policy connects straight": [
+    "Resolved { relay: \"wss://relay-a.example\", rule: Some(4), via: Off, reason: ProxyDown, by_policy: false }",
+    "Resolved { relay: \"wss://relay-b.example\", rule: Some(2), via: Direct, reason: Rule, by_policy: false }",
+    "Resolved { relay: \"ws://abcdefghij.onion\", rule: None, via: Off, reason: NeverDirect, by_policy: true }",
+    "Resolved { relay: \"wss://relay.example\", rule: Some(5), via: Direct, reason: Fallback, by_policy: true }"
+  ],
+  "keyed / invoices / proxies down, the policy keeps the key off": [
+    "Resolved { relay: \"wss://relay-a.example\", rule: Some(4), via: Off, reason: ProxyDown, by_policy: false }",
+    "Resolved { relay: \"wss://relay-b.example\", rule: Some(2), via: Direct, reason: Rule, by_policy: false }",
+    "Resolved { relay: \"ws://abcdefghij.onion\", rule: None, via: Off, reason: PoolOffline, by_policy: true }",
+    "Resolved { relay: \"wss://relay.example\", rule: Some(5), via: Off, reason: PoolOffline, by_policy: true }"
+  ],
+  "keyed / invoices / proxies up": [
+    "Resolved { relay: \"wss://relay-a.example\", rule: Some(4), via: Proxy { id: \"tor\", url: \"socks5://127.0.0.1:9050\" }, reason: Rule, by_policy: false }",
+    "Resolved { relay: \"wss://relay-b.example\", rule: Some(2), via: Direct, reason: Rule, by_policy: false }",
+    "Resolved { relay: \"ws://abcdefghij.onion\", rule: None, via: Proxy { id: \"tor\", url: \"socks5://127.0.0.1:9050\" }, reason: Default, by_policy: false }",
+    "Resolved { relay: \"wss://relay.example\", rule: Some(5), via: Proxy { id: \"vpn\", url: \"socks5://user:secret@10.8.0.1:1080\" }, reason: Rule, by_policy: false }"
   ],
   "keyed / invoices / uses the default route": true,
   "keyed / relays through ghost": [],
@@ -118,6 +132,7 @@
     "wss://relay.example"
   ],
   "keyed / relays through vpn": [
+    "wss://relay-a.example",
     "wss://relay.example"
   ]
 }

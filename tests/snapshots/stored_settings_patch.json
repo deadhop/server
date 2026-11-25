@@ -1,8 +1,23 @@
 {
   "name": "snapshot service",
   "proxies": {
-    "chaos_max_secs": 600,
-    "chaos_min_secs": 120,
+    "default": {
+      "proxy": "tor"
+    },
+    "groups": [
+      {
+        "chaos_max_secs": 600,
+        "chaos_min_secs": 120,
+        "id": "exits",
+        "name": "Exits",
+        "proxies": [
+          "tor",
+          "vpn"
+        ],
+        "rotate_secs": 1800,
+        "strategy": "round_robin"
+      }
+    ],
     "i2p_registries": [
       "http://notbob.i2p/cgi-bin/jump.cgi?q={name}",
       "http://reg.i2p/?a={name}"
@@ -16,20 +31,16 @@
       {
         "id": "vpn",
         "name": "VPN",
-        "pool": false,
         "url": "socks5://user:secret@10.8.0.1:1080"
       },
       {
         "i2p": true,
         "id": "i2p",
         "name": "I2P router",
-        "pool": false,
         "url": "http://127.0.0.1:4444"
       }
     ],
-    "mode": "round_robin",
     "offline": "kill_switch",
-    "rotate_secs": 1800,
     "rules": [
       {
         "fallback": "offline",
@@ -72,13 +83,15 @@
         "to": "block"
       },
       {
-        "fallback": "offline",
+        "fallback": "policy",
         "keys": [],
         "match": [
           "relay-a.example"
         ],
         "name": "",
-        "to": "pool"
+        "to": {
+          "group": "exits"
+        }
       }
     ]
   },

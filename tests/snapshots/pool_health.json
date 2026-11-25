@@ -1,35 +1,59 @@
 {
   "full / all up": {
     "active": "tor",
+    "default": {
+      "proxy": "tor"
+    },
     "lanes": [
       {
         "active": "tor",
+        "default": {
+          "proxy": "tor"
+        },
+        "groups": [
+          {
+            "active": "tor",
+            "group": "exits",
+            "next_switch_at": 1700001800,
+            "reachable": 2,
+            "state": "active"
+          }
+        ],
         "key": "invoices",
         "next_switch_at": null,
         "reachable": 1,
         "state": "active",
-        "uses_default": true
+        "uses_default": false
       },
       {
         "active": "tor",
+        "default": {
+          "proxy": "tor"
+        },
+        "groups": [
+          {
+            "active": "tor",
+            "group": "exits",
+            "next_switch_at": 1700001800,
+            "reachable": 2,
+            "state": "active"
+          }
+        ],
         "key": "admin",
         "next_switch_at": null,
         "reachable": 1,
         "state": "active",
-        "uses_default": true
+        "uses_default": false
       }
     ],
-    "mode": "round_robin",
-    "next_switch_at": null,
+    "next_switch_at": 1700001800,
     "offline": "kill_switch",
     "posture": "normal",
     "proxies": [
       {
         "checked_at": 1700000000,
         "id": "tor",
-        "keys": [],
         "name": "Tor",
-        "pool": true,
         "reachable": true,
         "reason": null,
         "status": "connected",
@@ -38,9 +62,7 @@
       {
         "checked_at": 1700000000,
         "id": "vpn",
-        "keys": [],
         "name": "VPN",
-        "pool": false,
         "reachable": true,
         "reason": null,
         "status": "connected",
@@ -49,9 +71,7 @@
       {
         "checked_at": 1700000000,
         "id": "i2p",
-        "keys": [],
         "name": "I2P router",
-        "pool": false,
         "reachable": true,
         "reason": null,
         "status": "connected",
@@ -131,25 +151,51 @@
   },
   "full / nothing probed": {
     "active": null,
+    "default": {
+      "proxy": "tor"
+    },
     "lanes": [
       {
         "active": null,
+        "default": {
+          "proxy": "tor"
+        },
+        "groups": [
+          {
+            "active": null,
+            "group": "exits",
+            "next_switch_at": null,
+            "reachable": 0,
+            "state": "offline"
+          }
+        ],
         "key": "invoices",
         "next_switch_at": null,
         "reachable": 0,
         "state": "offline",
-        "uses_default": true
+        "uses_default": false
       },
       {
         "active": null,
+        "default": {
+          "proxy": "tor"
+        },
+        "groups": [
+          {
+            "active": null,
+            "group": "exits",
+            "next_switch_at": null,
+            "reachable": 0,
+            "state": "offline"
+          }
+        ],
         "key": "admin",
         "next_switch_at": null,
         "reachable": 0,
         "state": "offline",
-        "uses_default": true
+        "uses_default": false
       }
     ],
-    "mode": "round_robin",
     "next_switch_at": null,
     "offline": "kill_switch",
     "posture": "off",
@@ -157,9 +203,7 @@
       {
         "checked_at": null,
         "id": "tor",
-        "keys": [],
         "name": "Tor",
-        "pool": true,
         "reachable": null,
         "reason": null,
         "status": null,
@@ -168,9 +212,7 @@
       {
         "checked_at": null,
         "id": "vpn",
-        "keys": [],
         "name": "VPN",
-        "pool": false,
         "reachable": null,
         "reason": null,
         "status": null,
@@ -179,9 +221,7 @@
       {
         "checked_at": null,
         "id": "i2p",
-        "keys": [],
         "name": "I2P router",
-        "pool": false,
         "reachable": null,
         "reason": null,
         "status": null,
@@ -261,35 +301,59 @@
   },
   "full / tor down": {
     "active": null,
+    "default": {
+      "proxy": "tor"
+    },
     "lanes": [
       {
         "active": null,
+        "default": {
+          "proxy": "tor"
+        },
+        "groups": [
+          {
+            "active": "vpn",
+            "group": "exits",
+            "next_switch_at": null,
+            "reachable": 1,
+            "state": "suspended"
+          }
+        ],
         "key": "invoices",
         "next_switch_at": null,
         "reachable": 0,
         "state": "offline",
-        "uses_default": true
+        "uses_default": false
       },
       {
         "active": null,
+        "default": {
+          "proxy": "tor"
+        },
+        "groups": [
+          {
+            "active": "vpn",
+            "group": "exits",
+            "next_switch_at": null,
+            "reachable": 1,
+            "state": "suspended"
+          }
+        ],
         "key": "admin",
         "next_switch_at": null,
         "reachable": 0,
         "state": "offline",
-        "uses_default": true
+        "uses_default": false
       }
     ],
-    "mode": "round_robin",
     "next_switch_at": null,
     "offline": "kill_switch",
-    "posture": "off",
+    "posture": "normal",
     "proxies": [
       {
         "checked_at": 1700000000,
         "id": "tor",
-        "keys": [],
         "name": "Tor",
-        "pool": true,
         "reachable": false,
         "reason": null,
         "status": "failed",
@@ -298,9 +362,7 @@
       {
         "checked_at": 1700000000,
         "id": "vpn",
-        "keys": [],
         "name": "VPN",
-        "pool": false,
         "reachable": true,
         "reason": null,
         "status": "connected",
@@ -309,9 +371,7 @@
       {
         "checked_at": 1700000000,
         "id": "i2p",
-        "keys": [],
         "name": "I2P router",
-        "pool": false,
         "reachable": true,
         "reason": null,
         "status": "connected",
@@ -322,11 +382,11 @@
     "routes": [
       {
         "key": "invoices",
-        "proxy": null,
-        "reason": "pool_offline",
+        "proxy": "vpn",
+        "reason": "rule",
         "relay": "wss://relay-a.example",
         "rule": 5,
-        "via": "off"
+        "via": "proxy"
       },
       {
         "key": "invoices",
@@ -354,11 +414,11 @@
       },
       {
         "key": "admin",
-        "proxy": null,
-        "reason": "pool_offline",
+        "proxy": "vpn",
+        "reason": "rule",
         "relay": "wss://relay-a.example",
         "rule": 5,
-        "via": "off"
+        "via": "proxy"
       },
       {
         "key": "admin",
@@ -390,7 +450,7 @@
     "transparent": false
   },
   "full / tor down / posture, connection, proxy in use": [
-    "Off",
+    "Normal",
     "Off",
     "None",
     "Off",
@@ -398,9 +458,24 @@
   ],
   "keyed / all up": {
     "active": "tor",
+    "default": {
+      "proxy": "tor"
+    },
     "lanes": [
       {
         "active": "tor",
+        "default": {
+          "proxy": "tor"
+        },
+        "groups": [
+          {
+            "active": "tor",
+            "group": "exits",
+            "next_switch_at": 1700001800,
+            "reachable": 2,
+            "state": "active"
+          }
+        ],
         "key": "invoices",
         "next_switch_at": null,
         "reachable": 1,
@@ -409,24 +484,33 @@
       },
       {
         "active": "tor",
+        "default": {
+          "group": "exits"
+        },
+        "groups": [
+          {
+            "active": "tor",
+            "group": "exits",
+            "next_switch_at": 1700001800,
+            "reachable": 2,
+            "state": "active"
+          }
+        ],
         "key": "admin",
-        "next_switch_at": null,
-        "reachable": 1,
+        "next_switch_at": 1700001800,
+        "reachable": 2,
         "state": "active",
-        "uses_default": true
+        "uses_default": false
       }
     ],
-    "mode": "round_robin",
-    "next_switch_at": null,
+    "next_switch_at": 1700001800,
     "offline": "kill_switch",
     "posture": "normal",
     "proxies": [
       {
         "checked_at": 1700000000,
         "id": "tor",
-        "keys": [],
         "name": "Tor",
-        "pool": true,
         "reachable": true,
         "reason": null,
         "status": "connected",
@@ -435,9 +519,7 @@
       {
         "checked_at": 1700000000,
         "id": "vpn",
-        "keys": [],
         "name": "VPN",
-        "pool": false,
         "reachable": true,
         "reason": null,
         "status": "connected",
@@ -446,9 +528,7 @@
       {
         "checked_at": 1700000000,
         "id": "i2p",
-        "keys": [],
         "name": "I2P router",
-        "pool": false,
         "reachable": true,
         "reason": null,
         "status": "connected",
@@ -528,9 +608,24 @@
   },
   "keyed / nothing probed": {
     "active": null,
+    "default": {
+      "proxy": "tor"
+    },
     "lanes": [
       {
         "active": null,
+        "default": {
+          "proxy": "tor"
+        },
+        "groups": [
+          {
+            "active": null,
+            "group": "exits",
+            "next_switch_at": null,
+            "reachable": 0,
+            "state": "offline"
+          }
+        ],
         "key": "invoices",
         "next_switch_at": null,
         "reachable": 0,
@@ -539,14 +634,25 @@
       },
       {
         "active": null,
+        "default": {
+          "group": "exits"
+        },
+        "groups": [
+          {
+            "active": null,
+            "group": "exits",
+            "next_switch_at": null,
+            "reachable": 0,
+            "state": "offline"
+          }
+        ],
         "key": "admin",
         "next_switch_at": null,
         "reachable": 0,
         "state": "offline",
-        "uses_default": true
+        "uses_default": false
       }
     ],
-    "mode": "round_robin",
     "next_switch_at": null,
     "offline": "kill_switch",
     "posture": "off",
@@ -554,9 +660,7 @@
       {
         "checked_at": null,
         "id": "tor",
-        "keys": [],
         "name": "Tor",
-        "pool": true,
         "reachable": null,
         "reason": null,
         "status": null,
@@ -565,9 +669,7 @@
       {
         "checked_at": null,
         "id": "vpn",
-        "keys": [],
         "name": "VPN",
-        "pool": false,
         "reachable": null,
         "reason": null,
         "status": null,
@@ -576,9 +678,7 @@
       {
         "checked_at": null,
         "id": "i2p",
-        "keys": [],
         "name": "I2P router",
-        "pool": false,
         "reachable": null,
         "reason": null,
         "status": null,
@@ -590,7 +690,7 @@
       {
         "key": "invoices",
         "proxy": null,
-        "reason": "pool_offline",
+        "reason": "proxy_down",
         "relay": "wss://relay-a.example",
         "rule": 5,
         "via": "off"
@@ -622,7 +722,7 @@
       {
         "key": "admin",
         "proxy": null,
-        "reason": "pool_offline",
+        "reason": "proxy_down",
         "relay": "wss://relay-a.example",
         "rule": 5,
         "via": "off"
@@ -658,9 +758,24 @@
   },
   "keyed / tor down": {
     "active": null,
+    "default": {
+      "proxy": "tor"
+    },
     "lanes": [
       {
         "active": null,
+        "default": {
+          "proxy": "tor"
+        },
+        "groups": [
+          {
+            "active": "vpn",
+            "group": "exits",
+            "next_switch_at": null,
+            "reachable": 1,
+            "state": "suspended"
+          }
+        ],
         "key": "invoices",
         "next_switch_at": null,
         "reachable": 0,
@@ -668,15 +783,26 @@
         "uses_default": true
       },
       {
-        "active": null,
+        "active": "vpn",
+        "default": {
+          "group": "exits"
+        },
+        "groups": [
+          {
+            "active": "vpn",
+            "group": "exits",
+            "next_switch_at": null,
+            "reachable": 1,
+            "state": "suspended"
+          }
+        ],
         "key": "admin",
         "next_switch_at": null,
-        "reachable": 0,
-        "state": "offline",
-        "uses_default": true
+        "reachable": 1,
+        "state": "suspended",
+        "uses_default": false
       }
     ],
-    "mode": "round_robin",
     "next_switch_at": null,
     "offline": "kill_switch",
     "posture": "off",
@@ -684,9 +810,7 @@
       {
         "checked_at": 1700000000,
         "id": "tor",
-        "keys": [],
         "name": "Tor",
-        "pool": true,
         "reachable": false,
         "reason": null,
         "status": "failed",
@@ -695,9 +819,7 @@
       {
         "checked_at": 1700000000,
         "id": "vpn",
-        "keys": [],
         "name": "VPN",
-        "pool": false,
         "reachable": true,
         "reason": null,
         "status": "connected",
@@ -706,9 +828,7 @@
       {
         "checked_at": 1700000000,
         "id": "i2p",
-        "keys": [],
         "name": "I2P router",
-        "pool": false,
         "reachable": true,
         "reason": null,
         "status": "connected",
@@ -719,11 +839,11 @@
     "routes": [
       {
         "key": "invoices",
-        "proxy": null,
-        "reason": "pool_offline",
+        "proxy": "vpn",
+        "reason": "rule",
         "relay": "wss://relay-a.example",
         "rule": 5,
-        "via": "off"
+        "via": "proxy"
       },
       {
         "key": "invoices",
@@ -751,11 +871,11 @@
       },
       {
         "key": "admin",
-        "proxy": null,
-        "reason": "pool_offline",
+        "proxy": "vpn",
+        "reason": "rule",
         "relay": "wss://relay-a.example",
         "rule": 5,
-        "via": "off"
+        "via": "proxy"
       },
       {
         "key": "admin",
@@ -790,7 +910,7 @@
     "Off",
     "Off",
     "None",
-    "Off",
-    "None"
+    "Via(\"socks5://user:secret@10.8.0.1:1080\")",
+    "Some(\"socks5://user:secret@10.8.0.1:1080\")"
   ]
 }

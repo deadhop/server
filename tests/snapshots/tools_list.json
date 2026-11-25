@@ -25,12 +25,63 @@
     "name": "add_operator",
     "outputSchema": {
       "$defs": {
+        "Destination": {
+          "oneOf": [
+            {
+              "enum": [
+                "direct",
+                "block"
+              ],
+              "type": "string"
+            },
+            {
+              "additionalProperties": false,
+              "properties": {
+                "proxy": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "proxy"
+              ],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "properties": {
+                "group": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "group"
+              ],
+              "type": "object"
+            }
+          ]
+        },
         "Fallback": {
-          "enum": [
-            "offline",
-            "pool"
-          ],
-          "type": "string"
+          "oneOf": [
+            {
+              "enum": [
+                "offline",
+                "policy"
+              ],
+              "type": "string"
+            },
+            {
+              "additionalProperties": false,
+              "properties": {
+                "to": {
+                  "$ref": "#/$defs/Destination"
+                }
+              },
+              "required": [
+                "to"
+              ],
+              "type": "object"
+            }
+          ]
         },
         "FixedSettings": {
           "description": "What can only be changed on the host.",
@@ -167,19 +218,8 @@
             "id": {
               "type": "string"
             },
-            "keys": {
-              "default": [],
-              "items": {
-                "type": "string"
-              },
-              "type": "array"
-            },
             "name": {
               "type": "string"
-            },
-            "pool": {
-              "default": true,
-              "type": "boolean"
             },
             "url": {
               "type": "string"
@@ -192,26 +232,69 @@
           ],
           "type": "object"
         },
-        "ProxyMode": {
-          "enum": [
-            "off",
-            "failover",
-            "round_robin",
-            "chaos"
-          ],
-          "type": "string"
-        },
-        "ProxySettings": {
+        "ProxyGroup": {
+          "additionalProperties": false,
           "properties": {
             "chaos_max_secs": {
+              "default": 900,
               "format": "uint64",
               "minimum": 0,
               "type": "integer"
             },
             "chaos_min_secs": {
+              "default": 300,
               "format": "uint64",
               "minimum": 0,
               "type": "integer"
+            },
+            "id": {
+              "type": "string"
+            },
+            "name": {
+              "default": "",
+              "type": "string"
+            },
+            "proxies": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "rotate_secs": {
+              "default": 3600,
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "strategy": {
+              "$ref": "#/$defs/Strategy"
+            }
+          },
+          "required": [
+            "id",
+            "proxies",
+            "strategy"
+          ],
+          "type": "object"
+        },
+        "ProxySettings": {
+          "properties": {
+            "default": {
+              "$ref": "#/$defs/Destination"
+            },
+            "default_keys": {
+              "additionalProperties": {
+                "$ref": "#/$defs/Destination"
+              },
+              "default": {},
+              "type": "object"
+            },
+            "groups": {
+              "default": [],
+              "items": {
+                "$ref": "#/$defs/ProxyGroup"
+              },
+              "type": "array"
             },
             "i2p_registries": {
               "default": [
@@ -229,16 +312,8 @@
               },
               "type": "array"
             },
-            "mode": {
-              "$ref": "#/$defs/ProxyMode"
-            },
             "offline": {
               "$ref": "#/$defs/OfflinePolicy"
-            },
-            "rotate_secs": {
-              "format": "uint64",
-              "minimum": 0,
-              "type": "integer"
             },
             "rules": {
               "default": [],
@@ -253,38 +328,11 @@
           },
           "required": [
             "list",
-            "mode",
-            "rotate_secs",
-            "chaos_min_secs",
-            "chaos_max_secs",
+            "default",
             "offline",
             "transparent"
           ],
           "type": "object"
-        },
-        "RouteTo": {
-          "oneOf": [
-            {
-              "enum": [
-                "pool",
-                "direct",
-                "block"
-              ],
-              "type": "string"
-            },
-            {
-              "additionalProperties": false,
-              "properties": {
-                "proxy": {
-                  "type": "string"
-                }
-              },
-              "required": [
-                "proxy"
-              ],
-              "type": "object"
-            }
-          ]
         },
         "Rule": {
           "additionalProperties": false,
@@ -311,7 +359,7 @@
               "type": "string"
             },
             "to": {
-              "$ref": "#/$defs/RouteTo"
+              "$ref": "#/$defs/Destination"
             }
           },
           "required": [
@@ -461,6 +509,14 @@
             "sweep"
           ],
           "type": "object"
+        },
+        "Strategy": {
+          "enum": [
+            "failover",
+            "round_robin",
+            "chaos"
+          ],
+          "type": "string"
         },
         "Sweep": {
           "description": "Policy for moving funds out once they pile up. Stored and reported only:\nthis service holds no spending keys, so a separate signer must carry it\nout. There is intentionally no destination field; the signer owns that.",
@@ -1116,6 +1172,76 @@
           ],
           "type": "object"
         },
+        "Destination": {
+          "oneOf": [
+            {
+              "enum": [
+                "direct",
+                "block"
+              ],
+              "type": "string"
+            },
+            {
+              "additionalProperties": false,
+              "properties": {
+                "proxy": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "proxy"
+              ],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "properties": {
+                "group": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "group"
+              ],
+              "type": "object"
+            }
+          ]
+        },
+        "GroupHealth": {
+          "properties": {
+            "active": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "group": {
+              "type": "string"
+            },
+            "next_switch_at": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "reachable": {
+              "format": "uint",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "state": {
+              "$ref": "#/$defs/PoolState"
+            }
+          },
+          "required": [
+            "group",
+            "state",
+            "reachable"
+          ],
+          "type": "object"
+        },
         "KeyInfo": {
           "description": "One of the service's keys and what it is for.",
           "properties": {
@@ -1168,6 +1294,15 @@
                 "null"
               ]
             },
+            "default": {
+              "$ref": "#/$defs/Destination"
+            },
+            "groups": {
+              "items": {
+                "$ref": "#/$defs/GroupHealth"
+              },
+              "type": "array"
+            },
             "key": {
               "type": "string"
             },
@@ -1193,9 +1328,11 @@
           },
           "required": [
             "key",
+            "default",
             "state",
             "reachable",
-            "uses_default"
+            "uses_default",
+            "groups"
           ],
           "type": "object"
         },
@@ -1216,14 +1353,14 @@
                 "null"
               ]
             },
+            "default": {
+              "$ref": "#/$defs/Destination"
+            },
             "lanes": {
               "items": {
                 "$ref": "#/$defs/LaneHealth"
               },
               "type": "array"
-            },
-            "mode": {
-              "$ref": "#/$defs/ProxyMode"
             },
             "next_switch_at": {
               "format": "uint64",
@@ -1271,7 +1408,7 @@
           "required": [
             "state",
             "posture",
-            "mode",
+            "default",
             "offline",
             "transparent",
             "reachable",
@@ -1288,7 +1425,8 @@
             "direct",
             "active",
             "suspended",
-            "offline"
+            "offline",
+            "blocked"
           ],
           "type": "string"
         },
@@ -1347,17 +1485,8 @@
             "id": {
               "type": "string"
             },
-            "keys": {
-              "items": {
-                "type": "string"
-              },
-              "type": "array"
-            },
             "name": {
               "type": "string"
-            },
-            "pool": {
-              "type": "boolean"
             },
             "reachable": {
               "type": [
@@ -1384,20 +1513,9 @@
           "required": [
             "id",
             "name",
-            "url",
-            "keys",
-            "pool"
+            "url"
           ],
           "type": "object"
-        },
-        "ProxyMode": {
-          "enum": [
-            "off",
-            "failover",
-            "round_robin",
-            "chaos"
-          ],
-          "type": "string"
         },
         "Reason": {
           "description": "Why a relay goes the way it does.",
@@ -2045,12 +2163,63 @@
     "name": "get_network",
     "outputSchema": {
       "$defs": {
+        "Destination": {
+          "oneOf": [
+            {
+              "enum": [
+                "direct",
+                "block"
+              ],
+              "type": "string"
+            },
+            {
+              "additionalProperties": false,
+              "properties": {
+                "proxy": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "proxy"
+              ],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "properties": {
+                "group": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "group"
+              ],
+              "type": "object"
+            }
+          ]
+        },
         "Fallback": {
-          "enum": [
-            "offline",
-            "pool"
-          ],
-          "type": "string"
+          "oneOf": [
+            {
+              "enum": [
+                "offline",
+                "policy"
+              ],
+              "type": "string"
+            },
+            {
+              "additionalProperties": false,
+              "properties": {
+                "to": {
+                  "$ref": "#/$defs/Destination"
+                }
+              },
+              "required": [
+                "to"
+              ],
+              "type": "object"
+            }
+          ]
         },
         "KeyInfo": {
           "description": "One of the service's keys and what it is for.",
@@ -2153,19 +2322,8 @@
             "id": {
               "type": "string"
             },
-            "keys": {
-              "default": [],
-              "items": {
-                "type": "string"
-              },
-              "type": "array"
-            },
             "name": {
               "type": "string"
-            },
-            "pool": {
-              "default": true,
-              "type": "boolean"
             },
             "url": {
               "type": "string"
@@ -2178,26 +2336,69 @@
           ],
           "type": "object"
         },
-        "ProxyMode": {
-          "enum": [
-            "off",
-            "failover",
-            "round_robin",
-            "chaos"
-          ],
-          "type": "string"
-        },
-        "ProxySettings": {
+        "ProxyGroup": {
+          "additionalProperties": false,
           "properties": {
             "chaos_max_secs": {
+              "default": 900,
               "format": "uint64",
               "minimum": 0,
               "type": "integer"
             },
             "chaos_min_secs": {
+              "default": 300,
               "format": "uint64",
               "minimum": 0,
               "type": "integer"
+            },
+            "id": {
+              "type": "string"
+            },
+            "name": {
+              "default": "",
+              "type": "string"
+            },
+            "proxies": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "rotate_secs": {
+              "default": 3600,
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "strategy": {
+              "$ref": "#/$defs/Strategy"
+            }
+          },
+          "required": [
+            "id",
+            "proxies",
+            "strategy"
+          ],
+          "type": "object"
+        },
+        "ProxySettings": {
+          "properties": {
+            "default": {
+              "$ref": "#/$defs/Destination"
+            },
+            "default_keys": {
+              "additionalProperties": {
+                "$ref": "#/$defs/Destination"
+              },
+              "default": {},
+              "type": "object"
+            },
+            "groups": {
+              "default": [],
+              "items": {
+                "$ref": "#/$defs/ProxyGroup"
+              },
+              "type": "array"
             },
             "i2p_registries": {
               "default": [
@@ -2215,16 +2416,8 @@
               },
               "type": "array"
             },
-            "mode": {
-              "$ref": "#/$defs/ProxyMode"
-            },
             "offline": {
               "$ref": "#/$defs/OfflinePolicy"
-            },
-            "rotate_secs": {
-              "format": "uint64",
-              "minimum": 0,
-              "type": "integer"
             },
             "rules": {
               "default": [],
@@ -2239,38 +2432,11 @@
           },
           "required": [
             "list",
-            "mode",
-            "rotate_secs",
-            "chaos_min_secs",
-            "chaos_max_secs",
+            "default",
             "offline",
             "transparent"
           ],
           "type": "object"
-        },
-        "RouteTo": {
-          "oneOf": [
-            {
-              "enum": [
-                "pool",
-                "direct",
-                "block"
-              ],
-              "type": "string"
-            },
-            {
-              "additionalProperties": false,
-              "properties": {
-                "proxy": {
-                  "type": "string"
-                }
-              },
-              "required": [
-                "proxy"
-              ],
-              "type": "object"
-            }
-          ]
         },
         "Rule": {
           "additionalProperties": false,
@@ -2297,7 +2463,7 @@
               "type": "string"
             },
             "to": {
-              "$ref": "#/$defs/RouteTo"
+              "$ref": "#/$defs/Destination"
             }
           },
           "required": [
@@ -2305,6 +2471,14 @@
             "to"
           ],
           "type": "object"
+        },
+        "Strategy": {
+          "enum": [
+            "failover",
+            "round_robin",
+            "chaos"
+          ],
+          "type": "string"
         }
       },
       "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -2740,12 +2914,63 @@
     "name": "get_settings",
     "outputSchema": {
       "$defs": {
+        "Destination": {
+          "oneOf": [
+            {
+              "enum": [
+                "direct",
+                "block"
+              ],
+              "type": "string"
+            },
+            {
+              "additionalProperties": false,
+              "properties": {
+                "proxy": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "proxy"
+              ],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "properties": {
+                "group": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "group"
+              ],
+              "type": "object"
+            }
+          ]
+        },
         "Fallback": {
-          "enum": [
-            "offline",
-            "pool"
-          ],
-          "type": "string"
+          "oneOf": [
+            {
+              "enum": [
+                "offline",
+                "policy"
+              ],
+              "type": "string"
+            },
+            {
+              "additionalProperties": false,
+              "properties": {
+                "to": {
+                  "$ref": "#/$defs/Destination"
+                }
+              },
+              "required": [
+                "to"
+              ],
+              "type": "object"
+            }
+          ]
         },
         "FixedSettings": {
           "description": "What can only be changed on the host.",
@@ -2882,19 +3107,8 @@
             "id": {
               "type": "string"
             },
-            "keys": {
-              "default": [],
-              "items": {
-                "type": "string"
-              },
-              "type": "array"
-            },
             "name": {
               "type": "string"
-            },
-            "pool": {
-              "default": true,
-              "type": "boolean"
             },
             "url": {
               "type": "string"
@@ -2907,26 +3121,69 @@
           ],
           "type": "object"
         },
-        "ProxyMode": {
-          "enum": [
-            "off",
-            "failover",
-            "round_robin",
-            "chaos"
-          ],
-          "type": "string"
-        },
-        "ProxySettings": {
+        "ProxyGroup": {
+          "additionalProperties": false,
           "properties": {
             "chaos_max_secs": {
+              "default": 900,
               "format": "uint64",
               "minimum": 0,
               "type": "integer"
             },
             "chaos_min_secs": {
+              "default": 300,
               "format": "uint64",
               "minimum": 0,
               "type": "integer"
+            },
+            "id": {
+              "type": "string"
+            },
+            "name": {
+              "default": "",
+              "type": "string"
+            },
+            "proxies": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "rotate_secs": {
+              "default": 3600,
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "strategy": {
+              "$ref": "#/$defs/Strategy"
+            }
+          },
+          "required": [
+            "id",
+            "proxies",
+            "strategy"
+          ],
+          "type": "object"
+        },
+        "ProxySettings": {
+          "properties": {
+            "default": {
+              "$ref": "#/$defs/Destination"
+            },
+            "default_keys": {
+              "additionalProperties": {
+                "$ref": "#/$defs/Destination"
+              },
+              "default": {},
+              "type": "object"
+            },
+            "groups": {
+              "default": [],
+              "items": {
+                "$ref": "#/$defs/ProxyGroup"
+              },
+              "type": "array"
             },
             "i2p_registries": {
               "default": [
@@ -2944,16 +3201,8 @@
               },
               "type": "array"
             },
-            "mode": {
-              "$ref": "#/$defs/ProxyMode"
-            },
             "offline": {
               "$ref": "#/$defs/OfflinePolicy"
-            },
-            "rotate_secs": {
-              "format": "uint64",
-              "minimum": 0,
-              "type": "integer"
             },
             "rules": {
               "default": [],
@@ -2968,38 +3217,11 @@
           },
           "required": [
             "list",
-            "mode",
-            "rotate_secs",
-            "chaos_min_secs",
-            "chaos_max_secs",
+            "default",
             "offline",
             "transparent"
           ],
           "type": "object"
-        },
-        "RouteTo": {
-          "oneOf": [
-            {
-              "enum": [
-                "pool",
-                "direct",
-                "block"
-              ],
-              "type": "string"
-            },
-            {
-              "additionalProperties": false,
-              "properties": {
-                "proxy": {
-                  "type": "string"
-                }
-              },
-              "required": [
-                "proxy"
-              ],
-              "type": "object"
-            }
-          ]
         },
         "Rule": {
           "additionalProperties": false,
@@ -3026,7 +3248,7 @@
               "type": "string"
             },
             "to": {
-              "$ref": "#/$defs/RouteTo"
+              "$ref": "#/$defs/Destination"
             }
           },
           "required": [
@@ -3176,6 +3398,14 @@
             "sweep"
           ],
           "type": "object"
+        },
+        "Strategy": {
+          "enum": [
+            "failover",
+            "round_robin",
+            "chaos"
+          ],
+          "type": "string"
         },
         "Sweep": {
           "description": "Policy for moving funds out once they pile up. Stored and reported only:\nthis service holds no spending keys, so a separate signer must carry it\nout. There is intentionally no destination field; the signer owns that.",
@@ -3630,12 +3860,63 @@
     "name": "remove_operator",
     "outputSchema": {
       "$defs": {
+        "Destination": {
+          "oneOf": [
+            {
+              "enum": [
+                "direct",
+                "block"
+              ],
+              "type": "string"
+            },
+            {
+              "additionalProperties": false,
+              "properties": {
+                "proxy": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "proxy"
+              ],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "properties": {
+                "group": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "group"
+              ],
+              "type": "object"
+            }
+          ]
+        },
         "Fallback": {
-          "enum": [
-            "offline",
-            "pool"
-          ],
-          "type": "string"
+          "oneOf": [
+            {
+              "enum": [
+                "offline",
+                "policy"
+              ],
+              "type": "string"
+            },
+            {
+              "additionalProperties": false,
+              "properties": {
+                "to": {
+                  "$ref": "#/$defs/Destination"
+                }
+              },
+              "required": [
+                "to"
+              ],
+              "type": "object"
+            }
+          ]
         },
         "FixedSettings": {
           "description": "What can only be changed on the host.",
@@ -3772,19 +4053,8 @@
             "id": {
               "type": "string"
             },
-            "keys": {
-              "default": [],
-              "items": {
-                "type": "string"
-              },
-              "type": "array"
-            },
             "name": {
               "type": "string"
-            },
-            "pool": {
-              "default": true,
-              "type": "boolean"
             },
             "url": {
               "type": "string"
@@ -3797,26 +4067,69 @@
           ],
           "type": "object"
         },
-        "ProxyMode": {
-          "enum": [
-            "off",
-            "failover",
-            "round_robin",
-            "chaos"
-          ],
-          "type": "string"
-        },
-        "ProxySettings": {
+        "ProxyGroup": {
+          "additionalProperties": false,
           "properties": {
             "chaos_max_secs": {
+              "default": 900,
               "format": "uint64",
               "minimum": 0,
               "type": "integer"
             },
             "chaos_min_secs": {
+              "default": 300,
               "format": "uint64",
               "minimum": 0,
               "type": "integer"
+            },
+            "id": {
+              "type": "string"
+            },
+            "name": {
+              "default": "",
+              "type": "string"
+            },
+            "proxies": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "rotate_secs": {
+              "default": 3600,
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "strategy": {
+              "$ref": "#/$defs/Strategy"
+            }
+          },
+          "required": [
+            "id",
+            "proxies",
+            "strategy"
+          ],
+          "type": "object"
+        },
+        "ProxySettings": {
+          "properties": {
+            "default": {
+              "$ref": "#/$defs/Destination"
+            },
+            "default_keys": {
+              "additionalProperties": {
+                "$ref": "#/$defs/Destination"
+              },
+              "default": {},
+              "type": "object"
+            },
+            "groups": {
+              "default": [],
+              "items": {
+                "$ref": "#/$defs/ProxyGroup"
+              },
+              "type": "array"
             },
             "i2p_registries": {
               "default": [
@@ -3834,16 +4147,8 @@
               },
               "type": "array"
             },
-            "mode": {
-              "$ref": "#/$defs/ProxyMode"
-            },
             "offline": {
               "$ref": "#/$defs/OfflinePolicy"
-            },
-            "rotate_secs": {
-              "format": "uint64",
-              "minimum": 0,
-              "type": "integer"
             },
             "rules": {
               "default": [],
@@ -3858,38 +4163,11 @@
           },
           "required": [
             "list",
-            "mode",
-            "rotate_secs",
-            "chaos_min_secs",
-            "chaos_max_secs",
+            "default",
             "offline",
             "transparent"
           ],
           "type": "object"
-        },
-        "RouteTo": {
-          "oneOf": [
-            {
-              "enum": [
-                "pool",
-                "direct",
-                "block"
-              ],
-              "type": "string"
-            },
-            {
-              "additionalProperties": false,
-              "properties": {
-                "proxy": {
-                  "type": "string"
-                }
-              },
-              "required": [
-                "proxy"
-              ],
-              "type": "object"
-            }
-          ]
         },
         "Rule": {
           "additionalProperties": false,
@@ -3916,7 +4194,7 @@
               "type": "string"
             },
             "to": {
-              "$ref": "#/$defs/RouteTo"
+              "$ref": "#/$defs/Destination"
             }
           },
           "required": [
@@ -4066,6 +4344,14 @@
             "sweep"
           ],
           "type": "object"
+        },
+        "Strategy": {
+          "enum": [
+            "failover",
+            "round_robin",
+            "chaos"
+          ],
+          "type": "string"
         },
         "Sweep": {
           "description": "Policy for moving funds out once they pile up. Stored and reported only:\nthis service holds no spending keys, so a separate signer must carry it\nout. There is intentionally no destination field; the signer owns that.",
@@ -4172,12 +4458,63 @@
     "name": "reset_settings",
     "outputSchema": {
       "$defs": {
+        "Destination": {
+          "oneOf": [
+            {
+              "enum": [
+                "direct",
+                "block"
+              ],
+              "type": "string"
+            },
+            {
+              "additionalProperties": false,
+              "properties": {
+                "proxy": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "proxy"
+              ],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "properties": {
+                "group": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "group"
+              ],
+              "type": "object"
+            }
+          ]
+        },
         "Fallback": {
-          "enum": [
-            "offline",
-            "pool"
-          ],
-          "type": "string"
+          "oneOf": [
+            {
+              "enum": [
+                "offline",
+                "policy"
+              ],
+              "type": "string"
+            },
+            {
+              "additionalProperties": false,
+              "properties": {
+                "to": {
+                  "$ref": "#/$defs/Destination"
+                }
+              },
+              "required": [
+                "to"
+              ],
+              "type": "object"
+            }
+          ]
         },
         "FixedSettings": {
           "description": "What can only be changed on the host.",
@@ -4314,19 +4651,8 @@
             "id": {
               "type": "string"
             },
-            "keys": {
-              "default": [],
-              "items": {
-                "type": "string"
-              },
-              "type": "array"
-            },
             "name": {
               "type": "string"
-            },
-            "pool": {
-              "default": true,
-              "type": "boolean"
             },
             "url": {
               "type": "string"
@@ -4339,26 +4665,69 @@
           ],
           "type": "object"
         },
-        "ProxyMode": {
-          "enum": [
-            "off",
-            "failover",
-            "round_robin",
-            "chaos"
-          ],
-          "type": "string"
-        },
-        "ProxySettings": {
+        "ProxyGroup": {
+          "additionalProperties": false,
           "properties": {
             "chaos_max_secs": {
+              "default": 900,
               "format": "uint64",
               "minimum": 0,
               "type": "integer"
             },
             "chaos_min_secs": {
+              "default": 300,
               "format": "uint64",
               "minimum": 0,
               "type": "integer"
+            },
+            "id": {
+              "type": "string"
+            },
+            "name": {
+              "default": "",
+              "type": "string"
+            },
+            "proxies": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "rotate_secs": {
+              "default": 3600,
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "strategy": {
+              "$ref": "#/$defs/Strategy"
+            }
+          },
+          "required": [
+            "id",
+            "proxies",
+            "strategy"
+          ],
+          "type": "object"
+        },
+        "ProxySettings": {
+          "properties": {
+            "default": {
+              "$ref": "#/$defs/Destination"
+            },
+            "default_keys": {
+              "additionalProperties": {
+                "$ref": "#/$defs/Destination"
+              },
+              "default": {},
+              "type": "object"
+            },
+            "groups": {
+              "default": [],
+              "items": {
+                "$ref": "#/$defs/ProxyGroup"
+              },
+              "type": "array"
             },
             "i2p_registries": {
               "default": [
@@ -4376,16 +4745,8 @@
               },
               "type": "array"
             },
-            "mode": {
-              "$ref": "#/$defs/ProxyMode"
-            },
             "offline": {
               "$ref": "#/$defs/OfflinePolicy"
-            },
-            "rotate_secs": {
-              "format": "uint64",
-              "minimum": 0,
-              "type": "integer"
             },
             "rules": {
               "default": [],
@@ -4400,38 +4761,11 @@
           },
           "required": [
             "list",
-            "mode",
-            "rotate_secs",
-            "chaos_min_secs",
-            "chaos_max_secs",
+            "default",
             "offline",
             "transparent"
           ],
           "type": "object"
-        },
-        "RouteTo": {
-          "oneOf": [
-            {
-              "enum": [
-                "pool",
-                "direct",
-                "block"
-              ],
-              "type": "string"
-            },
-            {
-              "additionalProperties": false,
-              "properties": {
-                "proxy": {
-                  "type": "string"
-                }
-              },
-              "required": [
-                "proxy"
-              ],
-              "type": "object"
-            }
-          ]
         },
         "Rule": {
           "additionalProperties": false,
@@ -4458,7 +4792,7 @@
               "type": "string"
             },
             "to": {
-              "$ref": "#/$defs/RouteTo"
+              "$ref": "#/$defs/Destination"
             }
           },
           "required": [
@@ -4608,6 +4942,14 @@
             "sweep"
           ],
           "type": "object"
+        },
+        "Strategy": {
+          "enum": [
+            "failover",
+            "round_robin",
+            "chaos"
+          ],
+          "type": "string"
         },
         "Sweep": {
           "description": "Policy for moving funds out once they pile up. Stored and reported only:\nthis service holds no spending keys, so a separate signer must carry it\nout. There is intentionally no destination field; the signer owns that.",
@@ -4799,12 +5141,63 @@
     "description": "Operators only: change the network settings; anything left out stays as it is. Checked, stored and applied exactly like update_settings.",
     "inputSchema": {
       "$defs": {
+        "Destination": {
+          "oneOf": [
+            {
+              "enum": [
+                "direct",
+                "block"
+              ],
+              "type": "string"
+            },
+            {
+              "additionalProperties": false,
+              "properties": {
+                "proxy": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "proxy"
+              ],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "properties": {
+                "group": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "group"
+              ],
+              "type": "object"
+            }
+          ]
+        },
         "Fallback": {
-          "enum": [
-            "offline",
-            "pool"
-          ],
-          "type": "string"
+          "oneOf": [
+            {
+              "enum": [
+                "offline",
+                "policy"
+              ],
+              "type": "string"
+            },
+            {
+              "additionalProperties": false,
+              "properties": {
+                "to": {
+                  "$ref": "#/$defs/Destination"
+                }
+              },
+              "required": [
+                "to"
+              ],
+              "type": "object"
+            }
+          ]
         },
         "NetworkPatch": {
           "additionalProperties": false,
@@ -4883,24 +5276,9 @@
                 "null"
               ]
             },
-            "keys": {
-              "items": {
-                "type": "string"
-              },
-              "type": [
-                "array",
-                "null"
-              ]
-            },
             "name": {
               "type": [
                 "string",
-                "null"
-              ]
-            },
-            "pool": {
-              "type": [
-                "boolean",
                 "null"
               ]
             },
@@ -4913,31 +5291,79 @@
           ],
           "type": "object"
         },
-        "ProxyMode": {
-          "enum": [
-            "off",
-            "failover",
-            "round_robin",
-            "chaos"
+        "ProxyGroup": {
+          "additionalProperties": false,
+          "properties": {
+            "chaos_max_secs": {
+              "default": 900,
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "chaos_min_secs": {
+              "default": 300,
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "id": {
+              "type": "string"
+            },
+            "name": {
+              "default": "",
+              "type": "string"
+            },
+            "proxies": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "rotate_secs": {
+              "default": 3600,
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "strategy": {
+              "$ref": "#/$defs/Strategy"
+            }
+          },
+          "required": [
+            "id",
+            "proxies",
+            "strategy"
           ],
-          "type": "string"
+          "type": "object"
         },
         "ProxyPatch": {
           "additionalProperties": false,
           "properties": {
-            "chaos_max_secs": {
-              "format": "uint64",
-              "minimum": 0,
+            "default": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/Destination"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "default_keys": {
+              "additionalProperties": {
+                "$ref": "#/$defs/Destination"
+              },
               "type": [
-                "integer",
+                "object",
                 "null"
               ]
             },
-            "chaos_min_secs": {
-              "format": "uint64",
-              "minimum": 0,
+            "groups": {
+              "items": {
+                "$ref": "#/$defs/ProxyGroup"
+              },
               "type": [
-                "integer",
+                "array",
                 "null"
               ]
             },
@@ -4959,16 +5385,6 @@
                 "null"
               ]
             },
-            "mode": {
-              "anyOf": [
-                {
-                  "$ref": "#/$defs/ProxyMode"
-                },
-                {
-                  "type": "null"
-                }
-              ]
-            },
             "offline": {
               "anyOf": [
                 {
@@ -4977,14 +5393,6 @@
                 {
                   "type": "null"
                 }
-              ]
-            },
-            "rotate_secs": {
-              "format": "uint64",
-              "minimum": 0,
-              "type": [
-                "integer",
-                "null"
               ]
             },
             "rules": {
@@ -5004,30 +5412,6 @@
             }
           },
           "type": "object"
-        },
-        "RouteTo": {
-          "oneOf": [
-            {
-              "enum": [
-                "pool",
-                "direct",
-                "block"
-              ],
-              "type": "string"
-            },
-            {
-              "additionalProperties": false,
-              "properties": {
-                "proxy": {
-                  "type": "string"
-                }
-              },
-              "required": [
-                "proxy"
-              ],
-              "type": "object"
-            }
-          ]
         },
         "Rule": {
           "additionalProperties": false,
@@ -5054,7 +5438,7 @@
               "type": "string"
             },
             "to": {
-              "$ref": "#/$defs/RouteTo"
+              "$ref": "#/$defs/Destination"
             }
           },
           "required": [
@@ -5062,6 +5446,14 @@
             "to"
           ],
           "type": "object"
+        },
+        "Strategy": {
+          "enum": [
+            "failover",
+            "round_robin",
+            "chaos"
+          ],
+          "type": "string"
         }
       },
       "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -5080,12 +5472,63 @@
     "name": "update_network",
     "outputSchema": {
       "$defs": {
+        "Destination": {
+          "oneOf": [
+            {
+              "enum": [
+                "direct",
+                "block"
+              ],
+              "type": "string"
+            },
+            {
+              "additionalProperties": false,
+              "properties": {
+                "proxy": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "proxy"
+              ],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "properties": {
+                "group": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "group"
+              ],
+              "type": "object"
+            }
+          ]
+        },
         "Fallback": {
-          "enum": [
-            "offline",
-            "pool"
-          ],
-          "type": "string"
+          "oneOf": [
+            {
+              "enum": [
+                "offline",
+                "policy"
+              ],
+              "type": "string"
+            },
+            {
+              "additionalProperties": false,
+              "properties": {
+                "to": {
+                  "$ref": "#/$defs/Destination"
+                }
+              },
+              "required": [
+                "to"
+              ],
+              "type": "object"
+            }
+          ]
         },
         "KeyInfo": {
           "description": "One of the service's keys and what it is for.",
@@ -5188,19 +5631,8 @@
             "id": {
               "type": "string"
             },
-            "keys": {
-              "default": [],
-              "items": {
-                "type": "string"
-              },
-              "type": "array"
-            },
             "name": {
               "type": "string"
-            },
-            "pool": {
-              "default": true,
-              "type": "boolean"
             },
             "url": {
               "type": "string"
@@ -5213,26 +5645,69 @@
           ],
           "type": "object"
         },
-        "ProxyMode": {
-          "enum": [
-            "off",
-            "failover",
-            "round_robin",
-            "chaos"
-          ],
-          "type": "string"
-        },
-        "ProxySettings": {
+        "ProxyGroup": {
+          "additionalProperties": false,
           "properties": {
             "chaos_max_secs": {
+              "default": 900,
               "format": "uint64",
               "minimum": 0,
               "type": "integer"
             },
             "chaos_min_secs": {
+              "default": 300,
               "format": "uint64",
               "minimum": 0,
               "type": "integer"
+            },
+            "id": {
+              "type": "string"
+            },
+            "name": {
+              "default": "",
+              "type": "string"
+            },
+            "proxies": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "rotate_secs": {
+              "default": 3600,
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "strategy": {
+              "$ref": "#/$defs/Strategy"
+            }
+          },
+          "required": [
+            "id",
+            "proxies",
+            "strategy"
+          ],
+          "type": "object"
+        },
+        "ProxySettings": {
+          "properties": {
+            "default": {
+              "$ref": "#/$defs/Destination"
+            },
+            "default_keys": {
+              "additionalProperties": {
+                "$ref": "#/$defs/Destination"
+              },
+              "default": {},
+              "type": "object"
+            },
+            "groups": {
+              "default": [],
+              "items": {
+                "$ref": "#/$defs/ProxyGroup"
+              },
+              "type": "array"
             },
             "i2p_registries": {
               "default": [
@@ -5250,16 +5725,8 @@
               },
               "type": "array"
             },
-            "mode": {
-              "$ref": "#/$defs/ProxyMode"
-            },
             "offline": {
               "$ref": "#/$defs/OfflinePolicy"
-            },
-            "rotate_secs": {
-              "format": "uint64",
-              "minimum": 0,
-              "type": "integer"
             },
             "rules": {
               "default": [],
@@ -5274,38 +5741,11 @@
           },
           "required": [
             "list",
-            "mode",
-            "rotate_secs",
-            "chaos_min_secs",
-            "chaos_max_secs",
+            "default",
             "offline",
             "transparent"
           ],
           "type": "object"
-        },
-        "RouteTo": {
-          "oneOf": [
-            {
-              "enum": [
-                "pool",
-                "direct",
-                "block"
-              ],
-              "type": "string"
-            },
-            {
-              "additionalProperties": false,
-              "properties": {
-                "proxy": {
-                  "type": "string"
-                }
-              },
-              "required": [
-                "proxy"
-              ],
-              "type": "object"
-            }
-          ]
         },
         "Rule": {
           "additionalProperties": false,
@@ -5332,7 +5772,7 @@
               "type": "string"
             },
             "to": {
-              "$ref": "#/$defs/RouteTo"
+              "$ref": "#/$defs/Destination"
             }
           },
           "required": [
@@ -5340,6 +5780,14 @@
             "to"
           ],
           "type": "object"
+        },
+        "Strategy": {
+          "enum": [
+            "failover",
+            "round_robin",
+            "chaos"
+          ],
+          "type": "string"
         }
       },
       "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -5400,12 +5848,63 @@
     "description": "Operators only: change settings at runtime. A new relay list restarts the relay connections.",
     "inputSchema": {
       "$defs": {
+        "Destination": {
+          "oneOf": [
+            {
+              "enum": [
+                "direct",
+                "block"
+              ],
+              "type": "string"
+            },
+            {
+              "additionalProperties": false,
+              "properties": {
+                "proxy": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "proxy"
+              ],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "properties": {
+                "group": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "group"
+              ],
+              "type": "object"
+            }
+          ]
+        },
         "Fallback": {
-          "enum": [
-            "offline",
-            "pool"
-          ],
-          "type": "string"
+          "oneOf": [
+            {
+              "enum": [
+                "offline",
+                "policy"
+              ],
+              "type": "string"
+            },
+            {
+              "additionalProperties": false,
+              "properties": {
+                "to": {
+                  "$ref": "#/$defs/Destination"
+                }
+              },
+              "required": [
+                "to"
+              ],
+              "type": "object"
+            }
+          ]
         },
         "OfflinePolicy": {
           "enum": [
@@ -5431,24 +5930,9 @@
                 "null"
               ]
             },
-            "keys": {
-              "items": {
-                "type": "string"
-              },
-              "type": [
-                "array",
-                "null"
-              ]
-            },
             "name": {
               "type": [
                 "string",
-                "null"
-              ]
-            },
-            "pool": {
-              "type": [
-                "boolean",
                 "null"
               ]
             },
@@ -5461,31 +5945,79 @@
           ],
           "type": "object"
         },
-        "ProxyMode": {
-          "enum": [
-            "off",
-            "failover",
-            "round_robin",
-            "chaos"
+        "ProxyGroup": {
+          "additionalProperties": false,
+          "properties": {
+            "chaos_max_secs": {
+              "default": 900,
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "chaos_min_secs": {
+              "default": 300,
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "id": {
+              "type": "string"
+            },
+            "name": {
+              "default": "",
+              "type": "string"
+            },
+            "proxies": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "rotate_secs": {
+              "default": 3600,
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "strategy": {
+              "$ref": "#/$defs/Strategy"
+            }
+          },
+          "required": [
+            "id",
+            "proxies",
+            "strategy"
           ],
-          "type": "string"
+          "type": "object"
         },
         "ProxyPatch": {
           "additionalProperties": false,
           "properties": {
-            "chaos_max_secs": {
-              "format": "uint64",
-              "minimum": 0,
+            "default": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/Destination"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "default_keys": {
+              "additionalProperties": {
+                "$ref": "#/$defs/Destination"
+              },
               "type": [
-                "integer",
+                "object",
                 "null"
               ]
             },
-            "chaos_min_secs": {
-              "format": "uint64",
-              "minimum": 0,
+            "groups": {
+              "items": {
+                "$ref": "#/$defs/ProxyGroup"
+              },
               "type": [
-                "integer",
+                "array",
                 "null"
               ]
             },
@@ -5507,16 +6039,6 @@
                 "null"
               ]
             },
-            "mode": {
-              "anyOf": [
-                {
-                  "$ref": "#/$defs/ProxyMode"
-                },
-                {
-                  "type": "null"
-                }
-              ]
-            },
             "offline": {
               "anyOf": [
                 {
@@ -5525,14 +6047,6 @@
                 {
                   "type": "null"
                 }
-              ]
-            },
-            "rotate_secs": {
-              "format": "uint64",
-              "minimum": 0,
-              "type": [
-                "integer",
-                "null"
               ]
             },
             "rules": {
@@ -5552,30 +6066,6 @@
             }
           },
           "type": "object"
-        },
-        "RouteTo": {
-          "oneOf": [
-            {
-              "enum": [
-                "pool",
-                "direct",
-                "block"
-              ],
-              "type": "string"
-            },
-            {
-              "additionalProperties": false,
-              "properties": {
-                "proxy": {
-                  "type": "string"
-                }
-              },
-              "required": [
-                "proxy"
-              ],
-              "type": "object"
-            }
-          ]
         },
         "Rule": {
           "additionalProperties": false,
@@ -5602,7 +6092,7 @@
               "type": "string"
             },
             "to": {
-              "$ref": "#/$defs/RouteTo"
+              "$ref": "#/$defs/Destination"
             }
           },
           "required": [
@@ -5721,7 +6211,7 @@
               ]
             },
             "proxy": {
-              "description": "Old form of a single proxy url (empty turns it off); read for\nsettings saved before there was a list, and turned into one entry.",
+              "description": "Old form of a single proxy url (empty: no proxy). It replaces the\nwhole proxy setup with that one proxy as the default route; it is\nnever stored.",
               "type": [
                 "string",
                 "null"
@@ -5810,6 +6300,14 @@
           },
           "type": "object"
         },
+        "Strategy": {
+          "enum": [
+            "failover",
+            "round_robin",
+            "chaos"
+          ],
+          "type": "string"
+        },
         "SweepMode": {
           "description": "How a future sweep would leave this wallet.",
           "enum": [
@@ -5882,12 +6380,63 @@
     "name": "update_settings",
     "outputSchema": {
       "$defs": {
+        "Destination": {
+          "oneOf": [
+            {
+              "enum": [
+                "direct",
+                "block"
+              ],
+              "type": "string"
+            },
+            {
+              "additionalProperties": false,
+              "properties": {
+                "proxy": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "proxy"
+              ],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "properties": {
+                "group": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "group"
+              ],
+              "type": "object"
+            }
+          ]
+        },
         "Fallback": {
-          "enum": [
-            "offline",
-            "pool"
-          ],
-          "type": "string"
+          "oneOf": [
+            {
+              "enum": [
+                "offline",
+                "policy"
+              ],
+              "type": "string"
+            },
+            {
+              "additionalProperties": false,
+              "properties": {
+                "to": {
+                  "$ref": "#/$defs/Destination"
+                }
+              },
+              "required": [
+                "to"
+              ],
+              "type": "object"
+            }
+          ]
         },
         "FixedSettings": {
           "description": "What can only be changed on the host.",
@@ -6024,19 +6573,8 @@
             "id": {
               "type": "string"
             },
-            "keys": {
-              "default": [],
-              "items": {
-                "type": "string"
-              },
-              "type": "array"
-            },
             "name": {
               "type": "string"
-            },
-            "pool": {
-              "default": true,
-              "type": "boolean"
             },
             "url": {
               "type": "string"
@@ -6049,26 +6587,69 @@
           ],
           "type": "object"
         },
-        "ProxyMode": {
-          "enum": [
-            "off",
-            "failover",
-            "round_robin",
-            "chaos"
-          ],
-          "type": "string"
-        },
-        "ProxySettings": {
+        "ProxyGroup": {
+          "additionalProperties": false,
           "properties": {
             "chaos_max_secs": {
+              "default": 900,
               "format": "uint64",
               "minimum": 0,
               "type": "integer"
             },
             "chaos_min_secs": {
+              "default": 300,
               "format": "uint64",
               "minimum": 0,
               "type": "integer"
+            },
+            "id": {
+              "type": "string"
+            },
+            "name": {
+              "default": "",
+              "type": "string"
+            },
+            "proxies": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "rotate_secs": {
+              "default": 3600,
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "strategy": {
+              "$ref": "#/$defs/Strategy"
+            }
+          },
+          "required": [
+            "id",
+            "proxies",
+            "strategy"
+          ],
+          "type": "object"
+        },
+        "ProxySettings": {
+          "properties": {
+            "default": {
+              "$ref": "#/$defs/Destination"
+            },
+            "default_keys": {
+              "additionalProperties": {
+                "$ref": "#/$defs/Destination"
+              },
+              "default": {},
+              "type": "object"
+            },
+            "groups": {
+              "default": [],
+              "items": {
+                "$ref": "#/$defs/ProxyGroup"
+              },
+              "type": "array"
             },
             "i2p_registries": {
               "default": [
@@ -6086,16 +6667,8 @@
               },
               "type": "array"
             },
-            "mode": {
-              "$ref": "#/$defs/ProxyMode"
-            },
             "offline": {
               "$ref": "#/$defs/OfflinePolicy"
-            },
-            "rotate_secs": {
-              "format": "uint64",
-              "minimum": 0,
-              "type": "integer"
             },
             "rules": {
               "default": [],
@@ -6110,38 +6683,11 @@
           },
           "required": [
             "list",
-            "mode",
-            "rotate_secs",
-            "chaos_min_secs",
-            "chaos_max_secs",
+            "default",
             "offline",
             "transparent"
           ],
           "type": "object"
-        },
-        "RouteTo": {
-          "oneOf": [
-            {
-              "enum": [
-                "pool",
-                "direct",
-                "block"
-              ],
-              "type": "string"
-            },
-            {
-              "additionalProperties": false,
-              "properties": {
-                "proxy": {
-                  "type": "string"
-                }
-              },
-              "required": [
-                "proxy"
-              ],
-              "type": "object"
-            }
-          ]
         },
         "Rule": {
           "additionalProperties": false,
@@ -6168,7 +6714,7 @@
               "type": "string"
             },
             "to": {
-              "$ref": "#/$defs/RouteTo"
+              "$ref": "#/$defs/Destination"
             }
           },
           "required": [
@@ -6318,6 +6864,14 @@
             "sweep"
           ],
           "type": "object"
+        },
+        "Strategy": {
+          "enum": [
+            "failover",
+            "round_robin",
+            "chaos"
+          ],
+          "type": "string"
         },
         "Sweep": {
           "description": "Policy for moving funds out once they pile up. Stored and reported only:\nthis service holds no spending keys, so a separate signer must carry it\nout. There is intentionally no destination field; the signer owns that.",
