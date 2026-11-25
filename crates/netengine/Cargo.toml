@@ -39,3 +39,8 @@ rmcp = { version = "1.8", features = ["server", "client", "macros", "transport-w
 tempfile = "3"
 # Same version as the relay library uses, so its websocket message type is shared.
 tokio-tungstenite = { version = "=0.26.2", default-features = false, features = ["connect", "handshake", "rustls-tls-webpki-roots"] }
+
+# rmcp 1.8.0 with the response-task reaping fix backported from rmcp 3.x
+# (#46). Drop when contextvm-sdk moves to rmcp 3.x.
+[patch.crates-io]
+rmcp = { path = "../../vendor/rmcp" }
