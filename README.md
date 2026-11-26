@@ -190,6 +190,23 @@ there: after it merges, they move with `just update-server-crates`. Each crate h
 [SECURITY.md](SECURITY.md) has the threat model, the findings and their status, the
 remote-management rules, the open risks and the deployment checklist.
 
+## Agent skills
+
+This repository ships [agent skills](https://deadhop.run/docs/skills.html) for Claude Code,
+Codex, Cursor and other agents that read `SKILL.md`:
+
+```sh
+npx skills add deadhop/server
+```
+
+| Skill | Use it to |
+| --- | --- |
+| `deadhop-server-operate` | configure, hide and troubleshoot the payment service: Electrum pinning, wallet key, operators, the production checklist |
+| `deadhop-server-develop` | change this repository: the 100% coverage gate, snapshots, and the follow-ups in deadhop/lnaddr, deadhop/wallet and deadhop/js |
+
+Install one with `--skill <name>`. Every deadhop skill is listed on
+[Agent skills](https://deadhop.run/docs/skills.html).
+
 ## Contributing
 
 Issues and pull requests are welcome here. CI runs `just check` on every pull request; run it
