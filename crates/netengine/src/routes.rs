@@ -483,7 +483,7 @@ mod tests {
     fn patterns_match_hosts_as_documented() {
         // The same cases run in the dashboard (dashboard/src/lib/routes.test.ts).
         let fixture: serde_json::Value =
-            serde_json::from_str(include_str!("../../../../fixtures/route-patterns.json")).unwrap();
+            serde_json::from_str(include_str!("../../../fixtures/route-patterns.json")).unwrap();
         let cases = fixture["cases"].as_array().unwrap();
         assert!(cases.len() > 20);
         for c in cases {

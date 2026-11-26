@@ -1,0 +1,31 @@
+{
+  "about": "Routing rule patterns: [pattern, relay, matches]. Run by the server (server/src/routes.rs) and the dashboard (dashboard/src/lib/routes.test.ts) so the two matchers agree.",
+  "cases": [
+    ["*.onion", "ws://abc.onion/", true],
+    ["*.onion", "ws://ABC.ONION", true],
+    ["*.onion", "ws://a.onion.example", false],
+    ["*.example.com", "wss://example.com", false],
+    ["*.example.com", "wss://a.b.example.com", true],
+    ["relay*.contextvm.org", "wss://relay2.contextvm.org", true],
+    ["relay*.contextvm.org", "wss://bucket.contextvm.org", false],
+    ["*", "wss://anything.example", true],
+    ["*.lan:4869", "ws://relay.lan:4869", true],
+    ["*.lan:4869", "ws://relay.lan:4870", false],
+    ["relay.example:443", "wss://relay.example", true],
+    ["relay.example:80", "wss://relay.example", false],
+    ["relay.example:80", "ws://relay.example", true],
+    ["[::1]:7777", "ws://[::1]:7777", true],
+    ["[::1]", "ws://[::1]:7777", true],
+    ["127.0.0.1", "ws://127.0.0.1:7777", true],
+    ["127.0.0.1", "ws://127.0.0.1:80@evil.example", false],
+    ["evil.example", "ws://127.0.0.1:80@evil.example", true],
+    ["wss://relay.example", "wss://relay.example/", true],
+    ["wss://relay.example/", "WSS://Relay.Example", true],
+    ["wss://relay.example", "wss://relay.example.org", false],
+    ["  *.onion  ", "ws://abc.onion", true],
+    ["x*", "not a url", false],
+    ["*.fips", "ws://npub1abc.fips:7777", true],
+    ["a*b*c", "wss://aXbYc", true],
+    ["a*b*c", "wss://aXbY", false]
+  ]
+}
