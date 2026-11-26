@@ -128,7 +128,7 @@ Severity is the reviewer's. "Fixed" means changed in code and covered by a test.
 | 10c | In-browser mining had no upper bound. | **Fixed.** Refuses above 28 bits and stops after 25 seconds. |
 | 10d | Responses were not bound to requests. | **Fixed.** Amount and id are compared with what was asked. |
 | 10e | `config.json` is a single point of trust. | **Accepted, documented.** The page now shows the service key so it can be compared. See "Open risks". |
-| 11 | The development stack is unsafe if copied to production. | **Documented** in `deploy/docker-compose.yml`; dev scripts now use a private umask and validate their arguments. |
+| 11 | The development stack is unsafe if copied to production. | **Documented** in deadhop/stack `dev/docker-compose.yml`; dev scripts now use a private umask and validate their arguments. |
 
 ### Red-team review (GitHub issues)
 
