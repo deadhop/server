@@ -46,6 +46,12 @@ const OLD_NAME: &str = "cvmpay";
 /// Longest wait for one exchange with the Electrum server.
 const ELECTRUM_TIMEOUT: Duration = Duration::from_secs(20);
 
+/// Whether the data directory holds a database (under the project's name or
+/// its old one): the service has been set up before.
+pub fn has_database(data_dir: &Path) -> bool {
+    data_dir.join(DB_FILE).exists() || data_dir.join(format!("{OLD_NAME}.sqlite")).exists()
+}
+
 /// Move a database and backups made under the project's old name to their
 /// new names, so an existing deployment keeps its invoices and addresses.
 /// Does nothing when there is nothing to move or the new database exists.
@@ -816,7 +822,7 @@ pub fn log_filter(value: Option<String>) -> String {
 
 /// Usage text for unknown commands.
 pub const USAGE: &str = "usage:
-  deadhop                          run the service (configured by DEADHOP_* variables)
+  deadhop                          run the service (configured by DEADHOP_* variables; never set up: wait for them)
   deadhop fingerprint HOST:PORT    print the SHA-256 fingerprint of an Electrum server's TLS certificate
   deadhop pubkey [KEY]             print a public key of the service (hex): invoices (the default), admin, or an added
                                    invoice key's id; the built-in keys are created in DEADHOP_DATA_DIR if needed
@@ -874,6 +880,13 @@ pub async fn cli(lookup: impl Fn(&str) -> Option<String>, shutdown: impl Future<
         .with_writer(std::io::stderr)
         .with_ansi(std::io::IsTerminal::is_terminal(&std::io::stderr()))
         .try_init();
+    let data = data_dir(lookup("DEADHOP_DATA_DIR").filter(|v| !v.trim().is_empty()));
+    let public = crate::setup::public_dir(&lookup);
+    if let Some(status) = crate::setup::status(&lookup, has_database(&data)) {
+        crate::setup::wait(status, public.as_deref(), shutdown, crate::setup::REMIND_EVERY).await;
+        return ExitCode::SUCCESS;
+    }
+    crate::setup::clear(public.as_deref());
     let outcome = match Config::from_lookup(lookup) {
         Ok(cfg) => run(cfg, shutdown).await,
         Err(e) => Err(e),
@@ -2180,10 +2193,6 @@ mod tests {
     #[tokio::test]
     async fn commands_are_dispatched() {
         let none = |_: &str| None;
-        assert!(
-            command(&[], none, std::future::ready(())).await == ExitCode::FAILURE,
-            "unconfigured service"
-        );
         let unknown = ["help".to_string()];
         assert!(command(&unknown, none, std::future::ready(())).await == ExitCode::from(2));
         let unknown_wallet = ["wallet".to_string(), "help".to_string()];
@@ -2206,6 +2215,42 @@ mod tests {
         assert!(command(&wallet("serve"), &lookup, std::future::ready(())).await == ExitCode::SUCCESS);
         assert!(command(&wallet("export"), &lookup, std::future::ready(())).await == ExitCode::SUCCESS);
         assert!(unix_now() > 1_700_000_000);
+    }
+
+    #[tokio::test]
+    async fn a_service_never_set_up_waits_for_its_settings() {
+        let tmp = tempfile::tempdir().unwrap();
+        let data = tmp.path().join("data").to_string_lossy().into_owned();
+        let public = tmp.path().to_string_lossy().into_owned();
+        let env = |electrum: Option<&str>| {
+            let (data, public) = (data.clone(), public.clone());
+            let electrum = electrum.map(str::to_string);
+            move |k: &str| match k {
+                "DEADHOP_DATA_DIR" => Some(data.clone()),
+                "DEADHOP_PUBLIC_DIR" => Some(public.clone()),
+                "DEADHOP_ELECTRUM" => electrum.clone(),
+                _ => None,
+            }
+        };
+        // Nothing set: it waits (until shut down) instead of failing, and
+        // tells the dashboard.
+        assert!(command(&[], env(None), std::future::ready(())).await == ExitCode::SUCCESS);
+        let file = tmp.path().join(crate::setup::SETUP_FILE);
+        assert!(file.exists());
+        // Only some settings: the configuration fails as before, and the
+        // dashboard is no longer told to offer the setup.
+        assert!(command(&[], env(Some("127.0.0.1:1")), std::future::ready(())).await == ExitCode::FAILURE);
+        assert!(!file.exists());
+        // A service that was set up once (it has a database) and lost its
+        // settings fails too.
+        fs::create_dir_all(&data).unwrap();
+        fs::write(Path::new(&data).join(DB_FILE), "").unwrap();
+        assert!(has_database(Path::new(&data)));
+        assert!(command(&[], env(None), std::future::ready(())).await == ExitCode::FAILURE);
+        assert!(!file.exists());
+        fs::remove_file(Path::new(&data).join(DB_FILE)).unwrap();
+        fs::write(Path::new(&data).join("cvmpay.sqlite"), "").unwrap();
+        assert!(has_database(Path::new(&data)));
     }
 
     #[tokio::test(flavor = "multi_thread")]
@@ -2710,7 +2755,13 @@ mod tests {
         .await;
         assert_eq!(format!("{code:?}"), format!("{:?}", ExitCode::SUCCESS));
 
-        let code = cli(|_| None, std::future::ready(())).await;
+        // A configuration error is a failure exit (nothing set at all is setup
+        // mode instead: see a_service_never_set_up_waits_for_its_settings).
+        let code = cli(
+            |k| (k == "DEADHOP_PUBLIC_INVOICING").then(|| "maybe".to_string()),
+            std::future::ready(()),
+        )
+        .await;
         assert_eq!(format!("{code:?}"), format!("{:?}", ExitCode::FAILURE));
 
         // A startup failure after configuration parsing is also a failure exit.

@@ -74,6 +74,12 @@ DEADHOP_XPUB=zpub6…                            # optional with Compose (unset:
 DEADHOP_NETWORK=bitcoin                        # default; testnet, signet or regtest
 ```
 
+**Never set up yet?** Started with none of `DEADHOP_ELECTRUM`, `DEADHOP_ADMINS` and
+`DEADHOP_PUBLIC_INVOICING` and no database in its data directory, the service does not exit:
+it waits idle in *setup mode*, connected to nothing, lists what is missing in its log and
+writes `setup.json` (setting names, never values) to `DEADHOP_PUBLIC_DIR`. The dashboard then
+offers a setup page that ends with the settings to paste. Restart the service once they are set.
+
 **Electrum across a network: pin the certificate.**
 
 ```sh
@@ -146,7 +152,8 @@ See [cli.md](https://deadhop.run/docs/cli.md).
 
 | Symptom | Likely cause |
 | --- | --- |
-| Exits with `… is required`, or "set DEADHOP_ADMINS and/or DEADHOP_PUBLIC_INVOICING=true" | A required setting is missing; under Compose it restarts until set |
+| Logs "deadhop is not set up yet" and stays idle | Setup mode: none of the required settings is set and there is no database; set them and restart |
+| Exits with `… is required`, or "set DEADHOP_ADMINS and/or DEADHOP_PUBLIC_INVOICING=true" | Only some required settings are set, or a service with a database lost them; under Compose it restarts until set |
 | Exits with "server is on a different chain" | `DEADHOP_NETWORK` does not match the Electrum server's chain |
 | Refuses to start over the certificate | The pin does not match: re-read with `deadhop fingerprint` and compare on the node |
 | "this database was used with a different wallet key" | `DEADHOP_XPUB` changed; switch back, or start the new key with a fresh data directory |

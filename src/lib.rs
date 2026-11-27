@@ -25,6 +25,7 @@ pub mod relayhealth;
 pub mod routes;
 pub mod service;
 pub mod settings;
+pub mod setup;
 #[cfg(test)]
 mod snapshot;
 pub mod wallet;

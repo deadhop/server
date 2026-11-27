@@ -1,4 +1,4 @@
-//! Runs the real `deadhop` binary: once with a broken configuration, once all
+//! Runs the real `deadhop` binary: with a broken configuration, in setup mode, and all
 //! the way up against an in-process relay and Electrum stub, then stops it
 //! with SIGTERM.
 
@@ -60,14 +60,54 @@ fn electrum_stub() -> String {
 }
 
 #[test]
-fn exits_with_an_error_when_unconfigured() {
-    let out = clean_command().output().unwrap();
+fn exits_with_an_error_when_partly_configured() {
+    let dir = tempfile::tempdir().unwrap();
+    let out = clean_command()
+        .env("DEADHOP_DATA_DIR", dir.path())
+        .env("DEADHOP_ELECTRUM", "127.0.0.1:1")
+        .output()
+        .unwrap();
     assert_eq!(out.status.code(), Some(1));
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(
         stderr.contains("deadhop: invalid configuration: DEADHOP_RELAYS is required"),
         "{stderr}"
     );
+}
+
+/// With nothing set and no database, the binary waits in setup mode: it says
+/// what is missing, tells the dashboard, and stops cleanly on SIGTERM.
+#[test]
+fn waits_for_its_settings_when_never_set_up() {
+    let dir = tempfile::tempdir().unwrap();
+    let public = dir.path().join("public");
+    std::fs::create_dir(&public).unwrap();
+    let mut child = clean_command()
+        .env("DEADHOP_DATA_DIR", dir.path().join("data"))
+        .env("DEADHOP_PUBLIC_DIR", &public)
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let mut lines = BufReader::new(child.stderr.take().unwrap()).lines();
+    let mut log = String::new();
+    while !log.contains("nothing is connected") {
+        let line = lines.next().expect("the service logs setup mode").unwrap();
+        log.push_str(&line);
+        log.push('\n');
+    }
+    assert!(log.contains("deadhop is not set up yet"), "{log}");
+    assert!(log.contains("missing  DEADHOP_ELECTRUM"), "{log}");
+    let status = std::fs::read_to_string(public.join("setup.json")).unwrap();
+    assert!(status.contains("\"DEADHOP_ADMINS\""), "{status}");
+    assert!(child.try_wait().unwrap().is_none(), "still running");
+    let killed = Command::new("kill")
+        .args(["-TERM", &child.id().to_string()])
+        .status()
+        .unwrap();
+    assert!(killed.success());
+    assert_eq!(child.wait().unwrap().code(), Some(0));
+    // No database was made: the next start is still setup mode.
+    assert!(!dir.path().join("data").join("deadhop.sqlite").exists());
 }
 
 #[test]
