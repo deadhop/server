@@ -6,6 +6,7 @@ pub mod electrum;
 pub mod error;
 pub mod handshake;
 pub mod i2p;
+pub mod invoicekeys;
 pub mod keyholder;
 pub mod keys;
 pub mod manage;

@@ -67,6 +67,12 @@ pub struct CreateInvoiceParams {
     /// Optional lifetime in seconds.
     #[serde(default)]
     pub expiry_secs: Option<u64>,
+    /// Optional invoice key to book the invoice to. Left out, it is the key the
+    /// request came in on. Operators on the administration key may name any
+    /// invoice key in use (left out: the original one); on an invoice key only
+    /// that key may be named.
+    #[serde(default)]
+    pub key: Option<String>,
 }
 
 /// Arguments of `get_invoice`.
@@ -90,6 +96,12 @@ pub struct ListInvoicesParams {
     /// Page size, 1 to 200 (default 50).
     #[serde(default)]
     pub limit: Option<u32>,
+    /// Only invoices of this key.
+    #[serde(default)]
+    pub key: Option<String>,
+    /// Add the key each invoice came in on to every row.
+    #[serde(default)]
+    pub with_key: bool,
 }
 
 /// An invoice as seen by whoever holds its id.
@@ -116,6 +128,9 @@ pub struct AdminInvoice {
     pub invoice: Invoice,
     pub index: u32,
     pub creator: String,
+    /// The invoice key it came in on; only when asked for (`with_key`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub key: Option<String>,
 }
 
 /// Result of `list_invoices`.
@@ -219,6 +234,10 @@ pub struct Service {
     pub(crate) relay_probe: Mutex<HashMap<String, Arc<dyn RelayProbe>>>,
     /// Public key of each key, by key id (set once the service has them).
     pub(crate) key_pubkeys: RwLock<Vec<(String, String)>>,
+    /// Every key the service knows: built-in and added (see [`crate::keys`]).
+    pub(crate) keys: RwLock<crate::keys::Registry>,
+    /// Woken when a key is added, archived or restored.
+    pub(crate) keys_changed: tokio::sync::Notify,
     /// The network side: which proxy is in use, where each relay goes, the
     /// relay and proxy checks. Its state is reached through the service
     /// (see the `Deref` below), so `svc.pool` and the like keep working.
@@ -331,7 +350,9 @@ impl Service {
         };
         upgrade_settings(&db, &cfg)?;
         let extra: HashSet<String> = db.operators()?.into_iter().map(|o| o.pubkey).collect();
-        let base = cfg.settings();
+        let registry = crate::keys::Registry::new(db.key_rows()?);
+        let mut base = cfg.settings();
+        base.lanes = registry.lanes();
         let has_admins = !cfg.admins.is_empty() || !extra.is_empty();
         let (settings, problem) = match db.meta_get(META_SETTINGS)? {
             None => (base, None),
@@ -404,6 +425,8 @@ impl Service {
             restart: tokio::sync::Notify::new(),
             relay_probe: Mutex::new(HashMap::new()),
             key_pubkeys: RwLock::new(Vec::new()),
+            keys: RwLock::new(registry),
+            keys_changed: tokio::sync::Notify::new(),
             net: crate::netruntime::NetworkRuntime::default(),
             cfg,
             db,
@@ -421,7 +444,8 @@ impl Service {
     }
 
     /// Make `s` the live settings (it must already be validated).
-    pub(crate) fn apply_settings(&self, s: Settings) {
+    pub(crate) fn apply_settings(&self, mut s: Settings) {
+        s.lanes = self.registry().lanes();
         self.pow.set_policy(
             s.pow_bits,
             s.pow_window_secs,
@@ -442,6 +466,26 @@ impl Service {
     /// Whether invoicing is stopped by an operator.
     pub fn is_paused(&self) -> bool {
         self.paused.load(Ordering::Relaxed)
+    }
+
+    /// The environment's settings, over the keys in use now.
+    pub(crate) fn base_settings(&self) -> Settings {
+        let mut base = self.cfg.settings();
+        base.lanes = self.registry().lanes();
+        base
+    }
+
+    /// Every key the service knows, as it is now.
+    pub fn registry(&self) -> crate::keys::Registry {
+        self.keys
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone()
+    }
+
+    /// Wait until a key is added, archived or restored.
+    pub async fn keys_changed(&self) {
+        self.keys_changed.notified().await;
     }
 
     /// Install the source of relay connection states for one key.
@@ -573,15 +617,39 @@ impl Service {
 
     /// Public parameters of the service.
     pub fn info(&self, caller: &Caller) -> Result<Info> {
+        self.info_on(caller, crate::keys::INVOICES)
+    }
+
+    /// The service name and whether the public may invoice, as one key
+    /// presents them: an added key may have a name of its own, and may be
+    /// closed to the public while the service is open.
+    pub(crate) fn presented(&self, key: &str) -> (String, bool) {
+        let s = self.settings();
+        match self.registry().row(key).filter(|_| !crate::keys::is_builtin(key)) {
+            Some(r) => (
+                if r.name.is_empty() {
+                    s.name.clone()
+                } else {
+                    r.name.clone()
+                },
+                s.public_invoicing && r.public_invoicing,
+            ),
+            None => (s.name.clone(), s.public_invoicing),
+        }
+    }
+
+    /// `get_info` as served on the key `key`.
+    pub fn info_on(&self, caller: &Caller, key: &str) -> Result<Info> {
         self.admit(caller)?;
         let is_admin = self.is_admin(caller);
         let max_expiry_secs = self.expiry_limit(is_admin);
+        let (name, public_invoicing) = self.presented(key);
         let s = self.settings();
         Ok(Info {
-            name: s.name.clone(),
+            name,
             version: env!("CARGO_PKG_VERSION").to_string(),
             network: self.cfg.network.to_string(),
-            public_invoicing: s.public_invoicing,
+            public_invoicing,
             pow_bits: s.pow_bits,
             pow_window_secs: s.pow_window_secs,
             min_confirmations: s.min_confirmations,
@@ -601,9 +669,32 @@ impl Service {
     /// limits and have mined NIP-13 work into that event. Cheap checks run
     /// first; nothing is consumed by a request that is going to be refused.
     pub fn create_invoice(&self, caller: &Caller, p: CreateInvoiceParams) -> Result<Invoice> {
+        self.create_invoice_on(caller, p, crate::keys::INVOICES)
+    }
+
+    /// The invoice key an invoice made over `via` is booked to.
+    fn booked_key(&self, via: &str, asked: Option<&str>) -> Result<String> {
+        let wrong = |k: &str| Error::InvalidParams(format!("key: no invoice key '{k}' is in use"));
+        match asked {
+            None if via == crate::keys::ADMIN => Ok(crate::keys::INVOICES.into()),
+            None => Ok(via.into()),
+            Some(k) if via == crate::keys::ADMIN => match self.registry().def(k) {
+                Some(d) if !d.operators_only => Ok(k.into()),
+                _ => Err(wrong(k)),
+            },
+            Some(k) if k == via => Ok(k.into()),
+            Some(_) => Err(Error::InvalidParams(format!(
+                "key: on this key only '{via}' may be named"
+            ))),
+        }
+    }
+
+    /// `create_invoice` as served on the key `via`.
+    pub fn create_invoice_on(&self, caller: &Caller, p: CreateInvoiceParams, via: &str) -> Result<Invoice> {
         let pubkey = caller.pubkey.as_deref().ok_or(Error::Unauthorized)?;
         self.admit(caller)?;
         let admin = self.is_admin(caller);
+        let key = self.booked_key(via, p.key.as_deref())?;
         let now = (self.clock)();
         if self.is_paused() {
             return Err(Error::Paused);
@@ -631,7 +722,7 @@ impl Service {
         }
 
         if !admin {
-            if !s.public_invoicing {
+            if !self.presented(&key).1 {
                 return Err(Error::Unauthorized);
             }
             // Open invoices cost polling; invoices per day cost address indices
@@ -663,6 +754,7 @@ impl Service {
                 created_at: now,
                 expires_at: now + expiry,
                 creator: pubkey,
+                key: &key,
             },
             &|index| Ok(self.wallet.address(index)?.to_string()),
         )?;
@@ -714,7 +806,7 @@ impl Service {
         if !(1..=MAX_PAGE).contains(&limit) {
             return Err(Error::InvalidParams(format!("limit must be between 1 and {MAX_PAGE}")));
         }
-        let rows = self.db.list(p.status, p.before, limit)?;
+        let rows = self.db.list_keyed(p.status, p.before, limit, p.key.as_deref())?;
         let next_before = if rows.len() as u32 == limit {
             rows.last().map(|r| r.index)
         } else {
@@ -725,6 +817,7 @@ impl Service {
             .map(|r| AdminInvoice {
                 index: r.index,
                 creator: r.creator.clone(),
+                key: p.with_key.then(|| r.key.clone()),
                 invoice: self.view(r),
             })
             .collect();
@@ -972,6 +1065,7 @@ pub(crate) mod tests {
             amount_sat,
             memo: None,
             expiry_secs: None,
+            key: None,
         }
     }
 
@@ -1108,6 +1202,7 @@ pub(crate) mod tests {
             amount_sat: 50_000,
             memo: Some("order 7".into()),
             expiry_secs: Some(7_200),
+            key: None,
         };
         let inv = r.svc.create_invoice(&r.admin(), p).unwrap();
         assert_eq!(inv.id.len(), 32);
@@ -1432,6 +1527,7 @@ pub(crate) mod tests {
             limit: Some(2),
             before: page.next_before,
             status: None,
+            ..ListInvoicesParams::default()
         };
         let rest = r.svc.list_invoices(&r.admin(), next).unwrap();
         assert_eq!(rest.invoices.len(), 1);
@@ -1757,6 +1853,7 @@ pub(crate) mod tests {
             created_at: T0,
             expires_at: T0 + 60,
             creator: "x",
+            key: "invoices",
         };
         r.svc.db.insert(&broken, &|_| Ok("not-an-address".into())).unwrap();
         assert!(r.svc.poll_once().await.is_err());

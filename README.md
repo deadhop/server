@@ -74,6 +74,17 @@ who may create invoices and how payments are checked, are in
   <img alt="A customer's invoice: 60,000 sats for order 1042, a QR code, the address, Copy address, and expires in 1 hour" src="https://deadhop.run/shots/payments-checkout.webp" width="380">
 </p>
 
+### One server, several services
+
+Each service you run (a shop, a booking site, a donations page) can have its own invoice key:
+its own npub, its own relays and routes, and its own ledger. Payments still go to the one
+wallet, from the one address sequence; the key only decides whose books an invoice goes in.
+The original key (`server.nsec`, what `deadhop pubkey` prints) never changes, so apps already
+using it keep working. Operators add, rename, archive and restore keys from the dashboard's
+Keys tab (the `add_invoice_key` family of tools), up to 7 invoice keys at once. An added key's
+secret is kept in `keys/<id>.nsec` in the data directory, and `deadhop pubkey <id>` prints its
+public key. Keys are archived, never deleted, so every invoice can always be traced to its key.
+
 ## Run it
 
 The easiest way is Docker Compose from [deadhop/stack](https://github.com/deadhop/stack): it

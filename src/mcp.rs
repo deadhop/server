@@ -16,6 +16,9 @@ use rmcp::{tool, tool_handler, tool_router, ErrorData, RoleServer, ServerHandler
 use serde_json::json;
 
 use crate::error::Error;
+use crate::invoicekeys::{
+    AddInvoiceKeyParams, InvoiceKeyIdParams, InvoiceKeyList, ListInvoiceKeysParams, UpdateInvoiceKeyParams,
+};
 use crate::keys::KeyDef;
 use crate::manage::{
     AddOperatorParams, AuditLog, AuditParams, Backup, BackupList, ControlParams, ControlResult, Health, Metrics,
@@ -54,7 +57,7 @@ pub fn rpc_error(e: Error) -> ErrorData {
 #[derive(Clone)]
 pub struct PayServer {
     svc: Arc<Service>,
-    key: &'static KeyDef,
+    key: Arc<KeyDef>,
     router: ToolRouter<PayServer>,
 }
 
@@ -64,7 +67,7 @@ impl PayServer {
         Self::own_tools() + deadhop_netengine::tools::network_router::<PayServer>()
     }
 
-    pub fn new(svc: Arc<Service>, key: &'static KeyDef) -> Self {
+    pub fn new(svc: Arc<Service>, key: Arc<KeyDef>) -> Self {
         let mut router = Self::tool_router();
         if let Some(allowed) = key.tools {
             for tool in router.list_all() {
@@ -93,7 +96,7 @@ impl PayServer {
     )]
     async fn tool_get_info(&self, ctx: RequestContext<RoleServer>) -> Result<Json<Info>, ErrorData> {
         self.svc
-            .info(&caller_from(&ctx.extensions))
+            .info_on(&caller_from(&ctx.extensions), &self.key.id)
             .map(Json)
             .map_err(rpc_error)
     }
@@ -108,7 +111,7 @@ impl PayServer {
         ctx: RequestContext<RoleServer>,
     ) -> Result<Json<Invoice>, ErrorData> {
         self.svc
-            .create_invoice(&caller_from(&ctx.extensions), p)
+            .create_invoice_on(&caller_from(&ctx.extensions), p, &self.key.id)
             .map(Json)
             .map_err(rpc_error)
     }
@@ -214,6 +217,71 @@ impl PayServer {
     async fn tool_reset_settings(&self, ctx: RequestContext<RoleServer>) -> Result<Json<SettingsView>, ErrorData> {
         let c = caller_from(&ctx.extensions);
         self.svc.reset_settings(&c).map(Json).map_err(rpc_error)
+    }
+
+    #[tool(
+        name = "list_invoice_keys",
+        description = "Operators only: the invoice keys (the original and the added ones, archived included), each with its public key, relays and takings."
+    )]
+    async fn tool_list_invoice_keys(
+        &self,
+        Parameters(p): Parameters<ListInvoiceKeysParams>,
+        ctx: RequestContext<RoleServer>,
+    ) -> Result<Json<InvoiceKeyList>, ErrorData> {
+        let c = caller_from(&ctx.extensions);
+        self.svc.list_invoice_keys(&c, p).map(Json).map_err(rpc_error)
+    }
+
+    #[tool(
+        name = "add_invoice_key",
+        description = "Operators only: add an invoice key for another service. It gets its own npub, starts with the relays and routes of another invoice key, and its invoices are booked to it."
+    )]
+    async fn tool_add_invoice_key(
+        &self,
+        Parameters(p): Parameters<AddInvoiceKeyParams>,
+        ctx: RequestContext<RoleServer>,
+    ) -> Result<Json<InvoiceKeyList>, ErrorData> {
+        let c = caller_from(&ctx.extensions);
+        self.svc.add_invoice_key(&c, p).map(Json).map_err(rpc_error)
+    }
+
+    #[tool(
+        name = "update_invoice_key",
+        description = "Operators only: change an invoice key's label, description, colour, announced name, public invoicing or announcing."
+    )]
+    async fn tool_update_invoice_key(
+        &self,
+        Parameters(p): Parameters<UpdateInvoiceKeyParams>,
+        ctx: RequestContext<RoleServer>,
+    ) -> Result<Json<InvoiceKeyList>, ErrorData> {
+        let c = caller_from(&ctx.extensions);
+        self.svc.update_invoice_key(&c, p).map(Json).map_err(rpc_error)
+    }
+
+    #[tool(
+        name = "archive_invoice_key",
+        description = "Operators only: archive an added invoice key. It disconnects and serves nothing; its invoices stay and are still watched."
+    )]
+    async fn tool_archive_invoice_key(
+        &self,
+        Parameters(p): Parameters<InvoiceKeyIdParams>,
+        ctx: RequestContext<RoleServer>,
+    ) -> Result<Json<InvoiceKeyList>, ErrorData> {
+        let c = caller_from(&ctx.extensions);
+        self.svc.archive_invoice_key(&c, p).map(Json).map_err(rpc_error)
+    }
+
+    #[tool(
+        name = "restore_invoice_key",
+        description = "Operators only: bring an archived invoice key back, with the same npub."
+    )]
+    async fn tool_restore_invoice_key(
+        &self,
+        Parameters(p): Parameters<InvoiceKeyIdParams>,
+        ctx: RequestContext<RoleServer>,
+    ) -> Result<Json<InvoiceKeyList>, ErrorData> {
+        let c = caller_from(&ctx.extensions);
+        self.svc.restore_invoice_key(&c, p).map(Json).map_err(rpc_error)
     }
 
     #[tool(
@@ -460,9 +528,11 @@ mod tests {
         assert!(network.len() >= 5, "{network:?}");
         assert!(network.iter().any(|n| n == "check_proxy"));
         let mut public = 0;
-        for key in crate::keys::KEYS.iter().filter(|k| !k.operators_only) {
+        // The built-in keys and an added one.
+        let reg = crate::keys::Registry::new(vec![crate::keys::tests::row("shop", false)]);
+        for key in reg.defs().into_iter().filter(|k| !k.operators_only) {
             public += 1;
-            let served: Vec<String> = PayServer::new(r.svc.clone(), key)
+            let served: Vec<String> = PayServer::new(r.svc.clone(), key.clone())
                 .router
                 .list_all()
                 .iter()

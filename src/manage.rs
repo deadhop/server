@@ -170,6 +170,9 @@ impl Range {
 #[serde(deny_unknown_fields)]
 pub struct SeriesParams {
     pub range: Range,
+    /// Only the payments of this invoice key.
+    #[serde(default)]
+    pub key: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
@@ -497,21 +500,22 @@ impl Service {
             .read()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .clone();
-        crate::keys::KEYS
+        self.registry()
+            .defs()
             .iter()
             .map(|k| KeyInfo {
                 id: k.id.to_string(),
                 label: k.label.to_string(),
                 pubkey: pubkeys
                     .iter()
-                    .find(|(id, _)| id == k.id)
+                    .find(|(id, _)| *id == k.id)
                     .map(|(_, p)| p.clone())
                     .unwrap_or_default(),
                 tools: k
                     .tools
                     .map_or_else(|| vec!["*".into()], |t| t.iter().map(|s| s.to_string()).collect()),
                 operators_only: k.operators_only,
-                relays: settings.relays_for(k.id),
+                relays: settings.relays_for(&k.id),
             })
             .collect()
     }
@@ -622,7 +626,7 @@ impl Service {
         let start = end - width * n as u64;
         let points = self
             .db
-            .payment_buckets(start, width, n)?
+            .payment_buckets_keyed(start, width, n, p.key.as_deref())?
             .into_iter()
             .enumerate()
             .map(|(i, (count, sat))| SeriesPoint {
@@ -687,7 +691,7 @@ impl Service {
         };
         Ok(SettingsView {
             settings: hide(self.settings().clone()),
-            defaults: hide(self.cfg.settings()),
+            defaults: hide(self.base_settings()),
             // (Saved settings that cannot be read were not applied: nothing is overridden.)
             overridden: self.stored_patch().unwrap_or_default().names(),
             fixed: FixedSettings {
@@ -705,7 +709,7 @@ impl Service {
         })
     }
 
-    fn has_operators(&self) -> bool {
+    pub(crate) fn has_operators(&self) -> bool {
         !self.cfg.admins.is_empty()
             || !self
                 .extra_operators
@@ -808,7 +812,7 @@ impl Service {
         }
         let mut stored = self.stored_patch()?;
         stored.merge(&patch);
-        let next = stored.apply(&self.cfg.settings());
+        let next = stored.apply(&self.base_settings());
         next.validate(self.has_operators())?;
         if p.patch.relays.is_some() {
             check_relays(&next.relays, self.cfg.network)?;
@@ -875,7 +879,7 @@ impl Service {
     /// Drop every override and return to the environment values.
     pub fn reset_settings(&self, caller: &Caller) -> Result<SettingsView> {
         let actor = self.admit_change(caller)?;
-        let next = self.cfg.settings();
+        let next = self.base_settings();
         let relays_changed = self.connection_changes(&next);
         let before = self.settings().proxies.clone();
         let proxies_changed = next.proxies != before;
@@ -916,7 +920,7 @@ impl Service {
             i2p_registries: Some(previous.i2p_registries.clone()),
             ..ProxyPatch::default()
         });
-        let next = stored.apply(&self.cfg.settings());
+        let next = stored.apply(&self.base_settings());
         let json = serde_json::to_string(&stored).expect("settings always serialize");
         self.db.meta_set(META_SETTINGS, Some(&json))?;
         self.apply_settings(next);
@@ -935,7 +939,7 @@ impl Service {
         let mut stored = self.stored_patch().unwrap_or_default();
         stored.relays = (relays != self.cfg.relays).then_some(relays);
         stored.relay_keys = (!relay_keys.is_empty()).then_some(relay_keys);
-        let next = stored.apply(&self.cfg.settings());
+        let next = stored.apply(&self.base_settings());
         let json = serde_json::to_string(&stored).expect("settings always serialize");
         self.db.meta_set(META_SETTINGS, Some(&json))?;
         self.apply_settings(next);
@@ -1102,7 +1106,7 @@ impl Service {
         let backup = self.make_backup()?;
         let deleted = self.db.wipe(p.include_settings.then_some(META_SETTINGS))?;
         if p.include_settings {
-            let next = self.cfg.settings();
+            let next = self.base_settings();
             let relays_changed = self.connection_changes(&next);
             self.apply_settings(next);
             if relays_changed {
@@ -1220,7 +1224,13 @@ pub(crate) mod tests {
         assert_eq!(code(r.svc.health(&s).await), "unauthorized");
         assert_eq!(code(r.svc.metrics(&s)), "unauthorized");
         assert_eq!(
-            code(r.svc.payment_series(&s, SeriesParams { range: Range::Day })),
+            code(r.svc.payment_series(
+                &s,
+                SeriesParams {
+                    range: Range::Day,
+                    key: None
+                }
+            )),
             "unauthorized"
         );
         assert_eq!(code(r.svc.get_settings(&s)), "unauthorized");
@@ -1414,7 +1424,13 @@ pub(crate) mod tests {
         // Hourly buckets for a day, gap-filled, ending with the current hour.
         let day = r
             .svc
-            .payment_series(&r.admin(), SeriesParams { range: Range::Day })
+            .payment_series(
+                &r.admin(),
+                SeriesParams {
+                    range: Range::Day,
+                    key: None,
+                },
+            )
             .unwrap();
         assert_eq!((day.points.len(), day.bucket_secs, day.online_since), (24, 3_600, T0));
         assert_eq!(day.points.iter().map(|p| p.count).sum::<u64>(), 2);
@@ -1426,7 +1442,10 @@ pub(crate) mod tests {
             (Range::Month, 30, DAY_SECS),
             (Range::Year, 52, 7 * DAY_SECS),
         ] {
-            let s = r.svc.payment_series(&r.admin(), SeriesParams { range }).unwrap();
+            let s = r
+                .svc
+                .payment_series(&r.admin(), SeriesParams { range, key: None })
+                .unwrap();
             assert_eq!((s.points.len(), s.bucket_secs, s.range), (n, width, range));
             assert_eq!(s.points.iter().map(|p| p.sat).sum::<u64>(), 11_000);
         }
@@ -1785,6 +1804,7 @@ pub(crate) mod tests {
             amount_sat: 5_000,
             memo: None,
             expiry_secs: None,
+            key: None,
         };
         assert_eq!(code(r.svc.create_invoice(&r.admin(), p.clone())), "paused");
         assert_eq!(
@@ -2650,6 +2670,7 @@ pub(crate) mod tests {
                 amount_sat: 5_000,
                 memo: None,
                 expiry_secs: None,
+                key: None,
             };
             svc.create_invoice(&admin_of(&keys, T0 - 500, 1), p).unwrap();
         }

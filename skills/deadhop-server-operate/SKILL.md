@@ -118,6 +118,7 @@ Electrum server is always reached directly. Groups, rotation and per-relay rules
 | `deadhop` | Run the service, configured by `DEADHOP_*` variables |
 | `deadhop pubkey` | Print the public invoices key (hex), the one apps and customers use; creates the keys if needed |
 | `deadhop pubkey admin` | Print the administration key (hex); never announced |
+| `deadhop pubkey ID` | Print the public key of an invoice key added from the dashboard (one per service), such as `shop`; prints nothing for an id the service has not made |
 | `deadhop fingerprint HOST:PORT` | Print an Electrum server's TLS certificate fingerprint and the settings that pin it |
 | `deadhop wallet serve` | The offline wallet service: generate a wallet on first start, write its account key to `DEADHOP_XPUB_FILE` |
 | `deadhop wallet export` | Print the generated wallet's 24 words. Refused with your own `DEADHOP_XPUB`. **User only** |

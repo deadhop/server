@@ -455,6 +455,7 @@ impl Config {
             late_grace_secs: self.late_grace_secs,
             proxies: self.proxies.clone(),
             sweep: Sweep::default(),
+            lanes: Vec::new(),
         }
     }
 }
