@@ -1,5 +1,252 @@
 [
   {
+    "description": "Operators only: add an invoice key for another service. It gets its own npub, starts with the relays and routes of another invoice key, and its invoices are booked to it.",
+    "inputSchema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "announce": {
+          "default": null,
+          "description": "Whether it is announced on the relays (default false).",
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "color": {
+          "default": null,
+          "description": "Palette index, 0 to 7.",
+          "format": "uint8",
+          "maximum": 255,
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "copy_from": {
+          "default": null,
+          "description": "The invoice key whose relays and routes it starts with (default `invoices`);\nempty: only what is set for every key.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "description": {
+          "default": null,
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "id": {
+          "description": "Permanent id: 2 to 24 lower-case letters, digits or dashes, starting with a letter.",
+          "type": "string"
+        },
+        "label": {
+          "description": "What the dashboard calls it.",
+          "type": "string"
+        },
+        "name": {
+          "default": null,
+          "description": "Service name given on this key; empty is the service's own name.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "public_invoicing": {
+          "default": null,
+          "description": "Whether anyone may create invoices on it (default true).",
+          "type": [
+            "boolean",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "id",
+        "label"
+      ],
+      "type": "object"
+    },
+    "name": "add_invoice_key",
+    "outputSchema": {
+      "$defs": {
+        "InvoiceKeyInfo": {
+          "description": "One invoice key, what it is set to, and its takings.",
+          "properties": {
+            "announce": {
+              "description": "Whether this key is announced on the relays (when announcing is on).",
+              "type": "boolean"
+            },
+            "archived_at": {
+              "description": "When it was archived; an archived key is not connected and serves nothing.",
+              "format": "uint64",
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "color": {
+              "description": "Index into the dashboard's palette, 0 to 7.",
+              "format": "uint8",
+              "maximum": 255,
+              "minimum": 0,
+              "type": "integer"
+            },
+            "created_at": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "created_by": {
+              "description": "The operator who added it (hex public key); empty for a built-in key.",
+              "type": "string"
+            },
+            "description": {
+              "type": "string"
+            },
+            "id": {
+              "type": "string"
+            },
+            "label": {
+              "type": "string"
+            },
+            "name": {
+              "description": "The service name this key gives in `get_info` and its announcement;\nempty is the service's own name.",
+              "type": "string"
+            },
+            "original": {
+              "description": "The original invoice key (`invoices`), the one apps used before keys could be added.",
+              "type": "boolean"
+            },
+            "pubkey": {
+              "description": "Hex public key; empty until the service has loaded it.",
+              "type": "string"
+            },
+            "public_invoicing": {
+              "description": "Whether anyone (not only operators) may create invoices on this key.\nThe service-wide setting must allow it too.",
+              "type": "boolean"
+            },
+            "relays": {
+              "description": "The relays it connects to now (none while archived).",
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "totals": {
+              "$ref": "#/$defs/KeyTotals"
+            }
+          },
+          "required": [
+            "id",
+            "label",
+            "description",
+            "color",
+            "name",
+            "public_invoicing",
+            "announce",
+            "created_at",
+            "created_by",
+            "pubkey",
+            "original",
+            "relays",
+            "totals"
+          ],
+          "type": "object"
+        },
+        "KeyTotals": {
+          "description": "Aggregate figures of one key's invoices.",
+          "properties": {
+            "confirmed": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "confirmed_sat": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "detected": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "detected_sat": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "expired": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "key": {
+              "type": "string"
+            },
+            "last_paid_at": {
+              "description": "When its latest confirmed invoice settled.",
+              "format": "uint64",
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "pending": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "key",
+            "pending",
+            "detected",
+            "confirmed",
+            "expired",
+            "confirmed_sat",
+            "detected_sat"
+          ],
+          "type": "object"
+        }
+      },
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "keys": {
+          "description": "The original key first, then the added ones, archived ones included.",
+          "items": {
+            "$ref": "#/$defs/InvoiceKeyInfo"
+          },
+          "type": "array"
+        },
+        "max_keys": {
+          "description": "Invoice keys that can be in use at once, the original one included.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "since": {
+          "description": "The start of the period the totals cover.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "keys",
+        "max_keys",
+        "since"
+      ],
+      "type": "object"
+    }
+  },
+  {
     "description": "Operators only: let another Nostr key (hex, npub or nprofile) operate the service.",
     "inputSchema": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -615,6 +862,205 @@
     }
   },
   {
+    "description": "Operators only: archive an added invoice key. It disconnects and serves nothing; its invoices stay and are still watched.",
+    "inputSchema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "copy_from": {
+          "default": null,
+          "description": "Restoring: the invoice key whose relays and routes it takes (default `invoices`).",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id"
+      ],
+      "type": "object"
+    },
+    "name": "archive_invoice_key",
+    "outputSchema": {
+      "$defs": {
+        "InvoiceKeyInfo": {
+          "description": "One invoice key, what it is set to, and its takings.",
+          "properties": {
+            "announce": {
+              "description": "Whether this key is announced on the relays (when announcing is on).",
+              "type": "boolean"
+            },
+            "archived_at": {
+              "description": "When it was archived; an archived key is not connected and serves nothing.",
+              "format": "uint64",
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "color": {
+              "description": "Index into the dashboard's palette, 0 to 7.",
+              "format": "uint8",
+              "maximum": 255,
+              "minimum": 0,
+              "type": "integer"
+            },
+            "created_at": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "created_by": {
+              "description": "The operator who added it (hex public key); empty for a built-in key.",
+              "type": "string"
+            },
+            "description": {
+              "type": "string"
+            },
+            "id": {
+              "type": "string"
+            },
+            "label": {
+              "type": "string"
+            },
+            "name": {
+              "description": "The service name this key gives in `get_info` and its announcement;\nempty is the service's own name.",
+              "type": "string"
+            },
+            "original": {
+              "description": "The original invoice key (`invoices`), the one apps used before keys could be added.",
+              "type": "boolean"
+            },
+            "pubkey": {
+              "description": "Hex public key; empty until the service has loaded it.",
+              "type": "string"
+            },
+            "public_invoicing": {
+              "description": "Whether anyone (not only operators) may create invoices on this key.\nThe service-wide setting must allow it too.",
+              "type": "boolean"
+            },
+            "relays": {
+              "description": "The relays it connects to now (none while archived).",
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "totals": {
+              "$ref": "#/$defs/KeyTotals"
+            }
+          },
+          "required": [
+            "id",
+            "label",
+            "description",
+            "color",
+            "name",
+            "public_invoicing",
+            "announce",
+            "created_at",
+            "created_by",
+            "pubkey",
+            "original",
+            "relays",
+            "totals"
+          ],
+          "type": "object"
+        },
+        "KeyTotals": {
+          "description": "Aggregate figures of one key's invoices.",
+          "properties": {
+            "confirmed": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "confirmed_sat": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "detected": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "detected_sat": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "expired": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "key": {
+              "type": "string"
+            },
+            "last_paid_at": {
+              "description": "When its latest confirmed invoice settled.",
+              "format": "uint64",
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "pending": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "key",
+            "pending",
+            "detected",
+            "confirmed",
+            "expired",
+            "confirmed_sat",
+            "detected_sat"
+          ],
+          "type": "object"
+        }
+      },
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "keys": {
+          "description": "The original key first, then the added ones, archived ones included.",
+          "items": {
+            "$ref": "#/$defs/InvoiceKeyInfo"
+          },
+          "type": "array"
+        },
+        "max_keys": {
+          "description": "Invoice keys that can be in use at once, the original one included.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "since": {
+          "description": "The start of the period the totals cover.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "keys",
+        "max_keys",
+        "since"
+      ],
+      "type": "object"
+    }
+  },
+  {
     "description": "Operators only: write a consistent backup of the database on the service host.",
     "inputSchema": {
       "properties": {},
@@ -894,6 +1340,14 @@
           "minimum": 0,
           "type": [
             "integer",
+            "null"
+          ]
+        },
+        "key": {
+          "default": null,
+          "description": "Optional invoice key to book the invoice to. Left out, it is the key the\nrequest came in on. Operators on the administration key may name any\ninvoice key in use (left out: the original one); on an invoice key only\nthat key may be named.",
+          "type": [
+            "string",
             "null"
           ]
         },
@@ -2568,6 +3022,14 @@
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "additionalProperties": false,
       "properties": {
+        "key": {
+          "default": null,
+          "description": "Only the payments of this invoice key.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "range": {
           "$ref": "#/$defs/Range"
         }
@@ -3639,6 +4101,201 @@
     }
   },
   {
+    "description": "Operators only: the invoice keys (the original and the added ones, archived included), each with its public key, relays and takings.",
+    "inputSchema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "since": {
+          "default": null,
+          "description": "Count only invoices created at or after this time (unix seconds); default: all.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        }
+      },
+      "type": "object"
+    },
+    "name": "list_invoice_keys",
+    "outputSchema": {
+      "$defs": {
+        "InvoiceKeyInfo": {
+          "description": "One invoice key, what it is set to, and its takings.",
+          "properties": {
+            "announce": {
+              "description": "Whether this key is announced on the relays (when announcing is on).",
+              "type": "boolean"
+            },
+            "archived_at": {
+              "description": "When it was archived; an archived key is not connected and serves nothing.",
+              "format": "uint64",
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "color": {
+              "description": "Index into the dashboard's palette, 0 to 7.",
+              "format": "uint8",
+              "maximum": 255,
+              "minimum": 0,
+              "type": "integer"
+            },
+            "created_at": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "created_by": {
+              "description": "The operator who added it (hex public key); empty for a built-in key.",
+              "type": "string"
+            },
+            "description": {
+              "type": "string"
+            },
+            "id": {
+              "type": "string"
+            },
+            "label": {
+              "type": "string"
+            },
+            "name": {
+              "description": "The service name this key gives in `get_info` and its announcement;\nempty is the service's own name.",
+              "type": "string"
+            },
+            "original": {
+              "description": "The original invoice key (`invoices`), the one apps used before keys could be added.",
+              "type": "boolean"
+            },
+            "pubkey": {
+              "description": "Hex public key; empty until the service has loaded it.",
+              "type": "string"
+            },
+            "public_invoicing": {
+              "description": "Whether anyone (not only operators) may create invoices on this key.\nThe service-wide setting must allow it too.",
+              "type": "boolean"
+            },
+            "relays": {
+              "description": "The relays it connects to now (none while archived).",
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "totals": {
+              "$ref": "#/$defs/KeyTotals"
+            }
+          },
+          "required": [
+            "id",
+            "label",
+            "description",
+            "color",
+            "name",
+            "public_invoicing",
+            "announce",
+            "created_at",
+            "created_by",
+            "pubkey",
+            "original",
+            "relays",
+            "totals"
+          ],
+          "type": "object"
+        },
+        "KeyTotals": {
+          "description": "Aggregate figures of one key's invoices.",
+          "properties": {
+            "confirmed": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "confirmed_sat": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "detected": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "detected_sat": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "expired": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "key": {
+              "type": "string"
+            },
+            "last_paid_at": {
+              "description": "When its latest confirmed invoice settled.",
+              "format": "uint64",
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "pending": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "key",
+            "pending",
+            "detected",
+            "confirmed",
+            "expired",
+            "confirmed_sat",
+            "detected_sat"
+          ],
+          "type": "object"
+        }
+      },
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "keys": {
+          "description": "The original key first, then the added ones, archived ones included.",
+          "items": {
+            "$ref": "#/$defs/InvoiceKeyInfo"
+          },
+          "type": "array"
+        },
+        "max_keys": {
+          "description": "Invoice keys that can be in use at once, the original one included.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "since": {
+          "description": "The start of the period the totals cover.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "keys",
+        "max_keys",
+        "since"
+      ],
+      "type": "object"
+    }
+  },
+  {
     "description": "Operators only: page through invoices, newest first.",
     "inputSchema": {
       "$defs": {
@@ -3681,6 +4338,14 @@
             "null"
           ]
         },
+        "key": {
+          "default": null,
+          "description": "Only invoices of this key.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "limit": {
           "default": null,
           "description": "Page size, 1 to 200 (default 50).",
@@ -3702,6 +4367,11 @@
           ],
           "default": null,
           "description": "Only invoices in this state."
+        },
+        "with_key": {
+          "default": false,
+          "description": "Add the key each invoice came in on to every row.",
+          "type": "boolean"
         }
       },
       "type": "object"
@@ -3753,6 +4423,13 @@
               "format": "uint32",
               "minimum": 0,
               "type": "integer"
+            },
+            "key": {
+              "description": "The invoice key it came in on; only when asked for (`with_key`).",
+              "type": [
+                "string",
+                "null"
+              ]
             },
             "memo": {
               "type": "string"
@@ -5133,6 +5810,441 @@
         "disagreeing",
         "unknown",
         "unreachable"
+      ],
+      "type": "object"
+    }
+  },
+  {
+    "description": "Operators only: bring an archived invoice key back, with the same npub.",
+    "inputSchema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "copy_from": {
+          "default": null,
+          "description": "Restoring: the invoice key whose relays and routes it takes (default `invoices`).",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id"
+      ],
+      "type": "object"
+    },
+    "name": "restore_invoice_key",
+    "outputSchema": {
+      "$defs": {
+        "InvoiceKeyInfo": {
+          "description": "One invoice key, what it is set to, and its takings.",
+          "properties": {
+            "announce": {
+              "description": "Whether this key is announced on the relays (when announcing is on).",
+              "type": "boolean"
+            },
+            "archived_at": {
+              "description": "When it was archived; an archived key is not connected and serves nothing.",
+              "format": "uint64",
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "color": {
+              "description": "Index into the dashboard's palette, 0 to 7.",
+              "format": "uint8",
+              "maximum": 255,
+              "minimum": 0,
+              "type": "integer"
+            },
+            "created_at": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "created_by": {
+              "description": "The operator who added it (hex public key); empty for a built-in key.",
+              "type": "string"
+            },
+            "description": {
+              "type": "string"
+            },
+            "id": {
+              "type": "string"
+            },
+            "label": {
+              "type": "string"
+            },
+            "name": {
+              "description": "The service name this key gives in `get_info` and its announcement;\nempty is the service's own name.",
+              "type": "string"
+            },
+            "original": {
+              "description": "The original invoice key (`invoices`), the one apps used before keys could be added.",
+              "type": "boolean"
+            },
+            "pubkey": {
+              "description": "Hex public key; empty until the service has loaded it.",
+              "type": "string"
+            },
+            "public_invoicing": {
+              "description": "Whether anyone (not only operators) may create invoices on this key.\nThe service-wide setting must allow it too.",
+              "type": "boolean"
+            },
+            "relays": {
+              "description": "The relays it connects to now (none while archived).",
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "totals": {
+              "$ref": "#/$defs/KeyTotals"
+            }
+          },
+          "required": [
+            "id",
+            "label",
+            "description",
+            "color",
+            "name",
+            "public_invoicing",
+            "announce",
+            "created_at",
+            "created_by",
+            "pubkey",
+            "original",
+            "relays",
+            "totals"
+          ],
+          "type": "object"
+        },
+        "KeyTotals": {
+          "description": "Aggregate figures of one key's invoices.",
+          "properties": {
+            "confirmed": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "confirmed_sat": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "detected": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "detected_sat": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "expired": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "key": {
+              "type": "string"
+            },
+            "last_paid_at": {
+              "description": "When its latest confirmed invoice settled.",
+              "format": "uint64",
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "pending": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "key",
+            "pending",
+            "detected",
+            "confirmed",
+            "expired",
+            "confirmed_sat",
+            "detected_sat"
+          ],
+          "type": "object"
+        }
+      },
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "keys": {
+          "description": "The original key first, then the added ones, archived ones included.",
+          "items": {
+            "$ref": "#/$defs/InvoiceKeyInfo"
+          },
+          "type": "array"
+        },
+        "max_keys": {
+          "description": "Invoice keys that can be in use at once, the original one included.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "since": {
+          "description": "The start of the period the totals cover.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "keys",
+        "max_keys",
+        "since"
+      ],
+      "type": "object"
+    }
+  },
+  {
+    "description": "Operators only: change an invoice key's label, description, colour, announced name, public invoicing or announcing.",
+    "inputSchema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "announce": {
+          "default": null,
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "color": {
+          "default": null,
+          "format": "uint8",
+          "maximum": 255,
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "description": {
+          "default": null,
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "id": {
+          "type": "string"
+        },
+        "label": {
+          "default": null,
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "name": {
+          "default": null,
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "public_invoicing": {
+          "default": null,
+          "type": [
+            "boolean",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "id"
+      ],
+      "type": "object"
+    },
+    "name": "update_invoice_key",
+    "outputSchema": {
+      "$defs": {
+        "InvoiceKeyInfo": {
+          "description": "One invoice key, what it is set to, and its takings.",
+          "properties": {
+            "announce": {
+              "description": "Whether this key is announced on the relays (when announcing is on).",
+              "type": "boolean"
+            },
+            "archived_at": {
+              "description": "When it was archived; an archived key is not connected and serves nothing.",
+              "format": "uint64",
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "color": {
+              "description": "Index into the dashboard's palette, 0 to 7.",
+              "format": "uint8",
+              "maximum": 255,
+              "minimum": 0,
+              "type": "integer"
+            },
+            "created_at": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "created_by": {
+              "description": "The operator who added it (hex public key); empty for a built-in key.",
+              "type": "string"
+            },
+            "description": {
+              "type": "string"
+            },
+            "id": {
+              "type": "string"
+            },
+            "label": {
+              "type": "string"
+            },
+            "name": {
+              "description": "The service name this key gives in `get_info` and its announcement;\nempty is the service's own name.",
+              "type": "string"
+            },
+            "original": {
+              "description": "The original invoice key (`invoices`), the one apps used before keys could be added.",
+              "type": "boolean"
+            },
+            "pubkey": {
+              "description": "Hex public key; empty until the service has loaded it.",
+              "type": "string"
+            },
+            "public_invoicing": {
+              "description": "Whether anyone (not only operators) may create invoices on this key.\nThe service-wide setting must allow it too.",
+              "type": "boolean"
+            },
+            "relays": {
+              "description": "The relays it connects to now (none while archived).",
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "totals": {
+              "$ref": "#/$defs/KeyTotals"
+            }
+          },
+          "required": [
+            "id",
+            "label",
+            "description",
+            "color",
+            "name",
+            "public_invoicing",
+            "announce",
+            "created_at",
+            "created_by",
+            "pubkey",
+            "original",
+            "relays",
+            "totals"
+          ],
+          "type": "object"
+        },
+        "KeyTotals": {
+          "description": "Aggregate figures of one key's invoices.",
+          "properties": {
+            "confirmed": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "confirmed_sat": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "detected": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "detected_sat": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "expired": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "key": {
+              "type": "string"
+            },
+            "last_paid_at": {
+              "description": "When its latest confirmed invoice settled.",
+              "format": "uint64",
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "pending": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "key",
+            "pending",
+            "detected",
+            "confirmed",
+            "expired",
+            "confirmed_sat",
+            "detected_sat"
+          ],
+          "type": "object"
+        }
+      },
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "keys": {
+          "description": "The original key first, then the added ones, archived ones included.",
+          "items": {
+            "$ref": "#/$defs/InvoiceKeyInfo"
+          },
+          "type": "array"
+        },
+        "max_keys": {
+          "description": "Invoice keys that can be in use at once, the original one included.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "since": {
+          "description": "The start of the period the totals cover.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "keys",
+        "max_keys",
+        "since"
       ],
       "type": "object"
     }

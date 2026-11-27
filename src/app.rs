@@ -23,7 +23,7 @@ use crate::db::Db;
 use crate::electrum::{Chain, Electrum};
 use crate::error::{Error, Result};
 use crate::keyholder;
-use crate::keys::{open_identities, Identity, KeyDef, INVOICES};
+use crate::keys::{open_identities, open_identity, Identity, KeyDef, INVOICES};
 use crate::manage::BACKUP_DIR;
 use crate::mcp::PayServer;
 use crate::relay::Pool;
@@ -87,8 +87,18 @@ fn data_dir(value: Option<String>) -> std::path::PathBuf {
 /// deployment publish the keys (for the dashboard's config) before the service
 /// starts, without giving anything else access to the data directory.
 pub fn pubkey(data_dir: &Path, key: &str, out: &mut dyn Write) -> ExitCode {
-    match open_identities(data_dir) {
-        Ok(ids) => match ids.iter().find(|i| i.def.id == key) {
+    // An added key exists once the service has made it; it is never made here.
+    let added = crate::keys::added_def(key, key, false);
+    let opened = if crate::keys::is_builtin(key) {
+        open_identities(data_dir, &crate::keys::Registry::default())
+            .map(|ids| ids.into_iter().find(|i| i.def.id == key))
+    } else if crate::keys::check_new_id(key).is_ok() && data_dir.join(&added.file).exists() {
+        open_identity(data_dir, Arc::new(added)).map(Some)
+    } else {
+        Ok(None)
+    };
+    match opened {
+        Ok(found) => match found {
             Some(id) => {
                 let _ = writeln!(out, "{}", id.pubkey());
                 ExitCode::SUCCESS
@@ -185,7 +195,7 @@ impl RelayProbe for PoolProbe {
 /// One generation of one key's relay connections and the request loop on top
 /// of them.
 struct Link {
-    key: &'static KeyDef,
+    key: Arc<KeyDef>,
     /// Each relay and the proxy it goes through ("" for straight).
     routes: Routes,
     pool: Arc<Pool>,
@@ -216,23 +226,27 @@ impl Link {
             // Requests are a few hundred bytes; do not buffer multi-megabyte
             // reassemblies for anonymous peers.
             .with_oversized_enabled(false)
-            .with_server_info(ServerInfo::default().with_name(svc.settings().name.clone()));
+            .with_server_info(ServerInfo::default().with_name(svc.presented(&id.def.id).0));
         let transport = NostrServerTransport::with_relay_pool(transport_config, pool.clone()).await?;
         let transport = crate::handshake::local(IntoTransport::<RoleServer, _, _>::into_transport(transport));
         let cancel = CancellationToken::new();
         let ended = CancellationToken::new();
         let task = tokio::spawn({
-            let (server, cancel, ended) = (PayServer::new(svc.clone(), id.def), cancel.clone(), ended.clone());
-            let key = id.def.id;
+            let (server, cancel, ended) = (
+                PayServer::new(svc.clone(), id.def.clone()),
+                cancel.clone(),
+                ended.clone(),
+            );
+            let key = id.def.id.clone();
             async move {
                 let outcome = serve(server, transport, cancel).await;
                 tracing::info!(key, ?outcome, "request loop ended");
                 ended.cancel();
             }
         });
-        svc.set_relay_probe(id.def.id, Some(Arc::new(PoolProbe(pool.clone()))));
+        svc.set_relay_probe(&id.def.id, Some(Arc::new(PoolProbe(pool.clone()))));
         Ok(Link {
-            key: id.def,
+            key: id.def.clone(),
             routes,
             pool,
             cancel,
@@ -284,14 +298,14 @@ fn wanted(key: &str, svc: &Service) -> Option<Routes> {
 /// Connect one key the way the service is set to now: through its chosen
 /// proxy, or straight, or (kill switch) not at all.
 async fn connect_key(id: &Identity, cfg: &Config, svc: &Arc<Service>) -> Result<Option<Link>> {
-    match wanted(id.def.id, svc) {
+    match wanted(&id.def.id, svc) {
         Some(routes) => Ok(Some(Link::up(id, cfg, routes, svc).await?)),
         None => {
             tracing::warn!(
-                key = id.def.id,
+                key = id.def.id.as_str(),
                 "no relay of this key has a route now (kill switch, blocked, or its proxy is down): it is not connected"
             );
-            svc.set_relay_probe(id.def.id, None);
+            svc.set_relay_probe(&id.def.id, None);
             Ok(None)
         }
     }
@@ -326,9 +340,11 @@ fn public_relays(svc: &Service) -> String {
         nostr_sdk::Url::parse(r)
             .is_ok_and(|u| u.scheme() == "wss" && !u.host_str().is_some_and(crate::config::is_overlay_host))
     };
-    let map: std::collections::BTreeMap<&str, Vec<String>> = crate::keys::KEYS
+    let map: std::collections::BTreeMap<String, Vec<String>> = svc
+        .registry()
+        .defs()
         .iter()
-        .map(|k| (k.id, s.relays_for(k.id).into_iter().filter(open).collect()))
+        .map(|k| (k.id.clone(), s.relays_for(&k.id).into_iter().filter(open).collect()))
         .collect();
     serde_json::json!(map).to_string()
 }
@@ -376,10 +392,18 @@ async fn relink(ids: &[Identity], cfg: &Config, svc: &Arc<Service>, previous: Re
     connect(ids, cfg, svc).await
 }
 
-/// Whether every link has a relay connected within `limit`. (A key that is cut
-/// off by the kill switch has no link and nothing to check.)
+/// Whether a link's key is one the way back in depends on: the
+/// administration key and the original invoice key. An added invoice key that
+/// cannot reach its relays is that service's problem; it never sends every
+/// key back to the environment's relays.
+fn guards(l: &Link) -> bool {
+    crate::keys::is_builtin(&l.key.id)
+}
+
+/// Whether every guarding link has a relay connected within `limit`. (A key
+/// that is cut off by the kill switch has no link and nothing to check.)
 async fn all_connect_within(links: &[Link], limit: Duration) -> bool {
-    for l in links {
+    for l in links.iter().filter(|l| guards(l)) {
         if !connects_within(l, limit).await {
             return false;
         }
@@ -409,9 +433,9 @@ async fn a_link_is_dead(links: &[Link]) -> bool {
     !all_connect_within(links, RELAY_CHECK).await
 }
 
-/// Whether every link has a relay connected right now.
+/// Whether every guarding link has a relay connected right now.
 async fn all_connected(links: &[Link]) -> bool {
-    for l in links {
+    for l in links.iter().filter(|l| guards(l)) {
         if !PoolProbe(l.pool.clone()).states().await.iter().any(|r| r.connected) {
             return false;
         }
@@ -451,9 +475,39 @@ fn watch_action(connected: bool, silent_for: Duration, on_environment_relays: bo
 /// [`RELAY_DEAD_AFTER`] and the relays came from a remote change, go back to
 /// the environment's, since every remote way to fix them travels over those
 /// same dead relays.
+/// Bring the links in line with the keys in use: close the links of keys
+/// that were archived, open and connect keys that were added or restored.
+/// Returns whether anything changed.
+async fn sync_keys(svc: &Arc<Service>, cfg: &Config, ids: &mut Vec<Identity>, links: &mut Vec<Link>) -> Result<bool> {
+    let defs = svc.registry().defs();
+    let mut changed = false;
+    while let Some(i) = ids.iter().position(|id| !defs.iter().any(|d| d.id == id.def.id)) {
+        let gone = ids.remove(i);
+        let (closing, kept): (Vec<Link>, Vec<Link>) = links.drain(..).partition(|l| l.key.id == gone.def.id);
+        *links = kept;
+        for l in closing {
+            l.close().await;
+        }
+        svc.set_relay_probe(&gone.def.id, None);
+        changed = true;
+    }
+    for def in defs {
+        if ids.iter().any(|id| id.def.id == def.id) {
+            continue;
+        }
+        let id = open_identity(&cfg.data_dir, def)?;
+        svc.set_key_pubkey(&id.def.id, &id.pubkey());
+        fs::write(cfg.data_dir.join(&id.def.pubkey_file), id.pubkey())?;
+        links.extend(connect_key(&id, cfg, svc).await?);
+        ids.push(id);
+        changed = true;
+    }
+    Ok(changed)
+}
+
 async fn supervise(
     svc: Arc<Service>,
-    ids: Vec<Identity>,
+    mut ids: Vec<Identity>,
     cfg: Config,
     mut links: Vec<Link>,
     stop: CancellationToken,
@@ -514,7 +568,7 @@ async fn supervise(
                 let mut moved = false;
                 for id in &ids {
                     let at = links.iter().position(|l| l.key.id == id.def.id);
-                    let want = wanted(id.def.id, &svc);
+                    let want = wanted(&id.def.id, &svc);
                     let same = match (&want, at) {
                         (None, None) => true,
                         (Some(routes), Some(i)) => &links[i].routes == routes,
@@ -548,6 +602,14 @@ async fn supervise(
                     svc.restarted();
                     last_connected = tokio::time::Instant::now();
                     tracing::info!(connected = links.len(), "relay connections moved");
+                }
+            }
+            _ = svc.keys_changed() => {
+                // Connect the keys added (or restored), and close the ones
+                // archived. The other keys stay connected.
+                let Some(next) = or_fail(sync_keys(&svc, &cfg, &mut ids, &mut links).await, "could not connect the keys", &failed) else { return };
+                if next {
+                    live = relay_setup(&svc);
                 }
             }
             _ = watch.tick() => {
@@ -619,8 +681,11 @@ where
 impl App {
     /// Bring everything up. Fails fast on any misconfiguration.
     pub async fn start(cfg: Config) -> Result<App> {
-        let ids = open_identities(&cfg.data_dir)?;
-        let pubkeys: Vec<(&'static KeyDef, String)> = ids.iter().map(|i| (i.def, i.pubkey())).collect();
+        open_dir(&cfg.data_dir)?;
+        rename_old_files(&cfg.data_dir)?;
+        let db = Db::open(&cfg.data_dir.join(DB_FILE))?;
+        let ids = open_identities(&cfg.data_dir, &crate::keys::Registry::new(db.key_rows()?))?;
+        let pubkeys: Vec<(Arc<KeyDef>, String)> = ids.iter().map(|i| (i.def.clone(), i.pubkey())).collect();
         let pubkey_of = |key: &str| {
             pubkeys
                 .iter()
@@ -644,12 +709,10 @@ impl App {
         }
         let chain = Arc::new(chain.expect_genesis(expected));
 
-        rename_old_files(&cfg.data_dir)?;
-        let db = Db::open(&cfg.data_dir.join(DB_FILE))?;
         db.bind_account(&wallet.account_id())?;
         let svc = Service::new(cfg.clone(), db, wallet, chain, system_clock(), pubkey.clone());
         let svc = Arc::new(svc?);
-        ids.iter().for_each(|i| svc.set_key_pubkey(i.def.id, &i.pubkey()));
+        ids.iter().for_each(|i| svc.set_key_pubkey(&i.def.id, &i.pubkey()));
         let warnings = svc
             .settings()
             .warnings(cfg.network, &cfg.electrum, &cfg.electrum_security);
@@ -686,7 +749,7 @@ impl App {
         ));
 
         for (key, hex) in &pubkeys {
-            fs::write(cfg.data_dir.join(key.pubkey_file), hex)?;
+            fs::write(cfg.data_dir.join(&key.pubkey_file), hex)?;
         }
         let monitor = tokio::spawn(monitor(svc.clone(), None));
         let relay_health = tokio::spawn(relay_health_loop(svc.clone()));
@@ -755,7 +818,8 @@ pub fn log_filter(value: Option<String>) -> String {
 pub const USAGE: &str = "usage:
   deadhop                          run the service (configured by DEADHOP_* variables)
   deadhop fingerprint HOST:PORT    print the SHA-256 fingerprint of an Electrum server's TLS certificate
-  deadhop pubkey [invoices|admin]  print a public key of the service (hex; default invoices), creating its keys in DEADHOP_DATA_DIR if needed
+  deadhop pubkey [KEY]             print a public key of the service (hex): invoices (the default), admin, or an added
+                                   invoice key's id; the built-in keys are created in DEADHOP_DATA_DIR if needed
   deadhop wallet serve             offline wallet service: generate a wallet on first start, publish its xpub to DEADHOP_XPUB_FILE
   deadhop wallet export            print the wallet's recovery phrase and how to restore it";
 
@@ -862,7 +926,7 @@ mod tests {
             .meta_set(crate::service::META_SETTINGS, stored.as_deref())
             .unwrap();
         svc.pool.lock().unwrap().applied = match a {
-            Some(a) => crate::keys::KEYS
+            Some(a) => crate::keys::builtin()
                 .iter()
                 .map(|k| (k.id.to_string(), a.clone()))
                 .collect(),
@@ -1192,6 +1256,96 @@ mod tests {
     }
 
     #[tokio::test(flavor = "multi_thread")]
+    async fn an_invoice_key_is_added_served_and_archived_while_running() {
+        let mut s = stack().await;
+        let public = s.dir.path().join("public");
+        fs::create_dir(&public).unwrap();
+        s.env
+            .insert("DEADHOP_PUBLIC_DIR", public.to_string_lossy().into_owned());
+        let app = App::start(load(&s.env).unwrap()).await.unwrap();
+        let data = s.dir.path().join("data");
+        let admin = connect(&s, &app.admin_pubkey, s.admin.clone()).await;
+        let added = call(
+            &admin,
+            "add_invoice_key",
+            json!({"id": "shop", "label": "Shop", "name": "Corner Shop"}),
+        )
+        .await
+        .unwrap();
+        assert_eq!(added["keys"][1]["id"], "shop");
+        // The supervisor connects it; the other keys stay up.
+        let pubkey_file = data.join("keys/shop.pubkey");
+        eventually("the shop key", Duration::from_secs(10), || pubkey_file.exists()).await;
+        let shop = fs::read_to_string(&pubkey_file).unwrap();
+        let h = health_until(&admin, |h| h["keys"].as_array().unwrap().len() == 3).await;
+        assert_eq!(h["keys"][1]["pubkey"], shop);
+        let file = public.join(RELAYS_FILE);
+        eventually("relays.json names the shop", Duration::from_secs(5), || {
+            fs::read_to_string(&file).is_ok_and(|t| t.contains("\"shop\""))
+        })
+        .await;
+        // The command line prints it too, and never makes one up.
+        let mut out = Vec::new();
+        assert_eq!(pubkey(&data, "shop", &mut out), ExitCode::SUCCESS);
+        assert_eq!(String::from_utf8(out).unwrap().trim(), shop);
+        assert_eq!(pubkey(&data, "nope", &mut Vec::new()), ExitCode::from(2));
+        assert_eq!(pubkey(&data, "Bad_Id", &mut Vec::new()), ExitCode::from(2));
+        assert!(!data.join("keys/nope.nsec").exists());
+
+        // A customer of the shop pays through its own npub.
+        let customer = connect(
+            &s,
+            &shop,
+            MiningSigner {
+                keys: Keys::generate(),
+                bits: 8,
+            },
+        )
+        .await;
+        assert_eq!(
+            call(&customer, "get_info", json!({})).await.unwrap()["name"],
+            "Corner Shop"
+        );
+        let inv = call(&customer, "create_invoice", json!({"amount_sat": 5_000}))
+            .await
+            .unwrap();
+        let listed = call(&admin, "list_invoices", json!({"key": "shop", "with_key": true}))
+            .await
+            .unwrap();
+        assert_eq!(listed["invoices"][0]["id"], inv["id"]);
+        assert_eq!(listed["invoices"][0]["key"], "shop");
+        let ledger = call(&admin, "list_invoice_keys", json!({})).await.unwrap();
+        assert_eq!(ledger["keys"][1]["totals"]["pending"], 1);
+
+        // Archived: it disconnects, the rest stays up, and its invoice stays.
+        let renamed = call(&admin, "update_invoice_key", json!({"id": "shop", "label": "The shop"}))
+            .await
+            .unwrap();
+        assert_eq!(renamed["keys"][1]["label"], "The shop");
+        call(&admin, "archive_invoice_key", json!({"id": "shop"}))
+            .await
+            .unwrap();
+        let h = health_until(&admin, |h| h["keys"].as_array().unwrap().len() == 2).await;
+        assert_eq!(h["keys"][0]["id"], "invoices");
+        let listed = call(&admin, "list_invoices", json!({"key": "shop"})).await.unwrap();
+        assert_eq!(listed["invoices"].as_array().unwrap().len(), 1);
+        drop(customer);
+        app.stop().await;
+
+        // After a restart the archived key stays out, and a restored one comes back.
+        let app = App::start(load(&s.env).unwrap()).await.unwrap();
+        let admin = connect(&s, &app.admin_pubkey, s.admin.clone()).await;
+        let h = health_until(&admin, |h| h["keys"].as_array().unwrap().len() == 2).await;
+        assert!(h["keys"].as_array().unwrap().iter().all(|k| k["id"] != "shop"));
+        call(&admin, "restore_invoice_key", json!({"id": "shop"}))
+            .await
+            .unwrap();
+        let h = health_until(&admin, |h| h["keys"].as_array().unwrap().len() == 3).await;
+        assert_eq!(h["keys"][1]["pubkey"], shop);
+        app.stop().await;
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
     async fn the_dashboard_is_told_which_relays_each_key_listens_on() {
         let mut s = stack().await;
         let public = s.dir.path().join("public");
@@ -1235,7 +1389,9 @@ mod tests {
         assert_eq!(
             names,
             [
+                "add_invoice_key",
                 "add_operator",
+                "archive_invoice_key",
                 "backup_database",
                 "check_proxy",
                 "check_relays",
@@ -1253,10 +1409,13 @@ mod tests {
                 "get_settings",
                 "get_stats",
                 "list_backups",
+                "list_invoice_keys",
                 "list_invoices",
                 "remove_operator",
                 "reset_settings",
                 "resolve_i2p_name",
+                "restore_invoice_key",
+                "update_invoice_key",
                 "update_network",
                 "update_settings",
                 "wipe_database"
@@ -2123,7 +2282,7 @@ mod tests {
         let s = stack().await;
         let cfg = load(&s.env).unwrap();
         let app = App::start(cfg.clone()).await.unwrap();
-        let ids = open_identities(&cfg.data_dir).unwrap();
+        let ids = open_identities(&cfg.data_dir, &crate::keys::Registry::default()).unwrap();
         let none = std::collections::BTreeMap::new();
         let other = vec!["ws://127.0.0.1:9".to_string()];
         // Not connected at all (kill switch): a different relay list has nothing to be checked against.
@@ -2456,7 +2615,10 @@ mod tests {
         let (transport, (tx, sent, _)) = scripted();
         drop(tx);
         let ended = serve(
-            PayServer::new(r.svc.clone(), crate::keys::def(crate::keys::INVOICES).unwrap()),
+            PayServer::new(
+                r.svc.clone(),
+                crate::keys::Registry::default().def(crate::keys::INVOICES).unwrap(),
+            ),
             crate::handshake::local(transport),
             CancellationToken::new(),
         )
@@ -2474,7 +2636,10 @@ mod tests {
         let (transport, (tx, _, _)) = scripted();
         drop(tx);
         assert!(serve(
-            PayServer::new(r.svc.clone(), crate::keys::def(crate::keys::INVOICES).unwrap()),
+            PayServer::new(
+                r.svc.clone(),
+                crate::keys::Registry::default().def(crate::keys::INVOICES).unwrap()
+            ),
             transport,
             CancellationToken::new()
         )

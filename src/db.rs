@@ -65,6 +65,8 @@ pub struct InvoiceRow {
     pub expires_at: u64,
     pub settled_at: Option<u64>,
     pub creator: String,
+    /// The invoice key it came in on (or was booked to by an operator).
+    pub key: String,
 }
 
 /// Fields supplied when creating an invoice.
@@ -75,6 +77,21 @@ pub struct NewInvoice<'a> {
     pub created_at: u64,
     pub expires_at: u64,
     pub creator: &'a str,
+    pub key: &'a str,
+}
+
+/// Aggregate figures of one key's invoices.
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, JsonSchema)]
+pub struct KeyTotals {
+    pub key: String,
+    pub pending: u64,
+    pub detected: u64,
+    pub confirmed: u64,
+    pub expired: u64,
+    pub confirmed_sat: u64,
+    pub detected_sat: u64,
+    /// When its latest confirmed invoice settled.
+    pub last_paid_at: Option<u64>,
 }
 
 /// Aggregate figures for the dashboard.
@@ -89,7 +106,8 @@ pub struct Totals {
     pub next_index: u32,
 }
 
-const COLUMNS: &str = "id, idx, address, amount_sat, memo, status, received_sat, confirmed_sat, created_at, expires_at, settled_at, creator";
+const COLUMNS: &str =
+    "id, idx, address, amount_sat, memo, status, received_sat, confirmed_sat, created_at, expires_at, settled_at, creator, key";
 
 const SCHEMA: &str = "
 CREATE TABLE IF NOT EXISTS invoices (
@@ -104,7 +122,8 @@ CREATE TABLE IF NOT EXISTS invoices (
     created_at    INTEGER NOT NULL,
     expires_at    INTEGER NOT NULL,
     settled_at    INTEGER,
-    creator       TEXT NOT NULL
+    creator       TEXT NOT NULL,
+    key           TEXT NOT NULL DEFAULT 'invoices'
 );
 CREATE INDEX IF NOT EXISTS invoices_status ON invoices(status);
 CREATE INDEX IF NOT EXISTS invoices_settled ON invoices(settled_at);
@@ -137,7 +156,26 @@ CREATE TABLE IF NOT EXISTS relay_events (
     ms    INTEGER
 );
 CREATE INDEX IF NOT EXISTS relay_events_at ON relay_events(at);
+CREATE TABLE IF NOT EXISTS service_keys (
+    id               TEXT PRIMARY KEY,
+    label            TEXT NOT NULL,
+    description      TEXT NOT NULL,
+    color            INTEGER NOT NULL,
+    name             TEXT NOT NULL,
+    public_invoicing INTEGER NOT NULL,
+    announce         INTEGER NOT NULL,
+    created_at       INTEGER NOT NULL,
+    created_by       TEXT NOT NULL,
+    archived_at      INTEGER
+);
 ";
+
+/// Databases from before invoice keys: every invoice came in on the original key.
+const ADD_KEY_COLUMN: &str = "ALTER TABLE invoices ADD COLUMN key TEXT NOT NULL DEFAULT 'invoices'";
+const HAS_KEY_COLUMN: &str = "SELECT COUNT(*) FROM pragma_table_info('invoices') WHERE name = 'key'";
+const KEY_INDEX: &str = "CREATE INDEX IF NOT EXISTS invoices_key ON invoices(key)";
+const KEY_ROW_COLUMNS: &str =
+    "id, label, description, color, name, public_invoicing, announce, created_at, created_by, archived_at";
 
 /// How long relay results are kept: a little over the longest window shown.
 pub const RELAY_EVENTS_KEPT_SECS: u64 = 8 * 86_400;
@@ -208,6 +246,7 @@ fn row_to_invoice(r: &Row<'_>) -> rusqlite::Result<(InvoiceRow, String)> {
             expires_at: r.get(9)?,
             settled_at: r.get(10)?,
             creator: r.get(11)?,
+            key: r.get(12)?,
         },
         status,
     ))
@@ -216,6 +255,26 @@ fn row_to_invoice(r: &Row<'_>) -> rusqlite::Result<(InvoiceRow, String)> {
 /// One `GROUP BY status` row: status, count, confirmed sum, received sum.
 fn totals_row(r: &Row<'_>) -> rusqlite::Result<(String, u64, u64, u64)> {
     Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?))
+}
+
+fn key_row(r: &Row<'_>) -> rusqlite::Result<crate::keys::KeyRow> {
+    Ok(crate::keys::KeyRow {
+        id: r.get(0)?,
+        label: r.get(1)?,
+        description: r.get(2)?,
+        color: r.get(3)?,
+        name: r.get(4)?,
+        public_invoicing: r.get(5)?,
+        announce: r.get(6)?,
+        created_at: r.get(7)?,
+        created_by: r.get(8)?,
+        archived_at: r.get(9)?,
+    })
+}
+
+/// One `GROUP BY key, status` row: key, status, count, confirmed sum, received sum, last settlement.
+fn key_totals_row(r: &Row<'_>) -> rusqlite::Result<(String, String, u64, u64, u64, Option<u64>)> {
+    Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?))
 }
 
 fn audit_row(r: &Row<'_>) -> rusqlite::Result<AuditRow> {
@@ -274,6 +333,11 @@ impl Db {
     fn init(conn: Connection) -> Result<Db> {
         conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL; PRAGMA foreign_keys=ON;")?;
         conn.execute_batch(SCHEMA)?;
+        let has_key: bool = conn.query_row(HAS_KEY_COLUMN, [], |r| r.get(0))?;
+        if !has_key {
+            conn.execute_batch(ADD_KEY_COLUMN)?;
+        }
+        conn.execute_batch(KEY_INDEX)?;
         // Databases from before the high-water mark existed: start it above
         // every index already used.
         conn.execute(BACKFILL_NEXT_INDEX, [NEXT_INDEX])?;
@@ -301,8 +365,8 @@ impl Db {
         let next = (u64::from(index) + 1).to_string();
         tx.execute(UPSERT_META, params![NEXT_INDEX, next])?;
         tx.execute(
-            "INSERT INTO invoices (id, idx, address, amount_sat, memo, status, created_at, expires_at, creator)
-             VALUES (?1, ?2, ?3, ?4, ?5, 'pending', ?6, ?7, ?8)",
+            "INSERT INTO invoices (id, idx, address, amount_sat, memo, status, created_at, expires_at, creator, key)
+             VALUES (?1, ?2, ?3, ?4, ?5, 'pending', ?6, ?7, ?8, ?9)",
             params![
                 new.id,
                 index,
@@ -311,7 +375,8 @@ impl Db {
                 new.memo,
                 new.created_at,
                 new.expires_at,
-                new.creator
+                new.creator,
+                new.key
             ],
         )?;
         tx.commit()?;
@@ -328,6 +393,7 @@ impl Db {
             expires_at: new.expires_at,
             settled_at: None,
             creator: new.creator.to_string(),
+            key: new.key.to_string(),
         })
     }
 
@@ -353,13 +419,25 @@ impl Db {
     /// Newest-first page of invoices, optionally filtered by status, strictly
     /// below derivation index `before`.
     pub fn list(&self, status: Option<Status>, before: Option<u32>, limit: u32) -> Result<Vec<InvoiceRow>> {
+        self.list_keyed(status, before, limit, None)
+    }
+
+    /// [`Db::list`], optionally only the invoices of one key.
+    pub fn list_keyed(
+        &self,
+        status: Option<Status>,
+        before: Option<u32>,
+        limit: u32,
+        key: Option<&str>,
+    ) -> Result<Vec<InvoiceRow>> {
         let conn = self.lock();
         let mut stmt = conn.prepare(&format!(
             "SELECT {COLUMNS} FROM invoices
-             WHERE (?1 IS NULL OR status = ?1) AND (?2 IS NULL OR idx < ?2)
+             WHERE (?1 IS NULL OR status = ?1) AND (?2 IS NULL OR idx < ?2) AND (?4 IS NULL OR key = ?4)
              ORDER BY idx DESC LIMIT ?3"
         ))?;
-        let rows = stmt.query_map(params![status.map(Status::as_str), before, limit], row_to_invoice)?;
+        let status = status.map(Status::as_str);
+        let rows = stmt.query_map(params![status, before, limit, key], row_to_invoice)?;
         let mut out = Vec::new();
         for r in rows {
             out.push(finish(r?)?);
@@ -455,6 +533,74 @@ impl Db {
             }
         }
         Ok(t)
+    }
+
+    /// What is stored about the keys, oldest first.
+    pub fn key_rows(&self) -> Result<Vec<crate::keys::KeyRow>> {
+        let conn = self.lock();
+        let mut stmt = conn.prepare(&format!(
+            "SELECT {KEY_ROW_COLUMNS} FROM service_keys ORDER BY created_at, id"
+        ))?;
+        let rows = stmt.query_map([], key_row)?;
+        Ok(rows.collect::<rusqlite::Result<_>>()?)
+    }
+
+    /// Store what is known about a key, replacing what was stored.
+    pub fn put_key_row(&self, k: &crate::keys::KeyRow) -> Result<()> {
+        self.lock().execute(
+            &format!(
+                "INSERT OR REPLACE INTO service_keys ({KEY_ROW_COLUMNS}) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)"
+            ),
+            params![
+                k.id,
+                k.label,
+                k.description,
+                k.color,
+                k.name,
+                k.public_invoicing,
+                k.announce,
+                k.created_at,
+                k.created_by,
+                k.archived_at
+            ],
+        )?;
+        Ok(())
+    }
+
+    /// Counts and sums per key and status of the invoices created at or after
+    /// `since`, with each key's latest settlement.
+    pub fn key_totals(&self, since: u64) -> Result<Vec<KeyTotals>> {
+        let conn = self.lock();
+        let mut stmt = conn.prepare(
+            "SELECT key, status, COUNT(*), COALESCE(SUM(confirmed_sat), 0), COALESCE(SUM(received_sat), 0), MAX(settled_at)
+             FROM invoices WHERE created_at >= ?1 GROUP BY key, status ORDER BY key",
+        )?;
+        let rows = stmt.query_map([since], key_totals_row)?;
+        let mut out: Vec<KeyTotals> = Vec::new();
+        for r in rows {
+            let (key, status, count, confirmed_sat, received_sat, settled) = r?;
+            if out.last().is_none_or(|t| t.key != key) {
+                out.push(KeyTotals {
+                    key: key.clone(),
+                    ..KeyTotals::default()
+                });
+            }
+            let t = out.last_mut().expect("pushed above");
+            match Status::parse(&status)? {
+                Status::Pending => t.pending = count,
+                Status::Detected => {
+                    t.detected = count;
+                    t.detected_sat = received_sat;
+                }
+                Status::Confirmed => {
+                    t.confirmed = count;
+                    t.confirmed_sat = confirmed_sat;
+                    t.last_paid_at = settled;
+                }
+                Status::Expired => t.expired = count,
+            }
+        }
+        Ok(out)
     }
 
     /// Read a bookkeeping value.
@@ -598,14 +744,25 @@ impl Db {
     /// Confirmed payments in `n` consecutive buckets of `width` seconds from
     /// `start`, as (count, sum) per bucket; empty buckets are zero.
     pub fn payment_buckets(&self, start: u64, width: u64, n: usize) -> Result<Vec<(u64, u64)>> {
+        self.payment_buckets_keyed(start, width, n, None)
+    }
+
+    /// [`Db::payment_buckets`], optionally only the payments of one key.
+    pub fn payment_buckets_keyed(
+        &self,
+        start: u64,
+        width: u64,
+        n: usize,
+        key: Option<&str>,
+    ) -> Result<Vec<(u64, u64)>> {
         let end = start + width * n as u64;
         let conn = self.lock();
         let mut stmt = conn.prepare(
             "SELECT (settled_at - ?1) / ?2, COUNT(*), COALESCE(SUM(confirmed_sat), 0) FROM invoices
-             WHERE status = 'confirmed' AND settled_at >= ?1 AND settled_at < ?3
+             WHERE status = 'confirmed' AND settled_at >= ?1 AND settled_at < ?3 AND (?4 IS NULL OR key = ?4)
              GROUP BY 1",
         )?;
-        let rows = stmt.query_map(params![start, width, end], bucket_row)?;
+        let rows = stmt.query_map(params![start, width, end, key], bucket_row)?;
         let mut out = vec![(0, 0); n];
         for r in rows {
             let (bucket, count, sum) = r?;
@@ -676,6 +833,7 @@ mod tests {
             created_at,
             expires_at,
             creator: "c",
+            key: "invoices",
         }
     }
 
@@ -994,6 +1152,89 @@ mod tests {
         })
         .join();
         assert_eq!(db.count_open().unwrap(), 0);
+    }
+
+    #[test]
+    fn invoices_are_kept_per_key() {
+        let db = Db::open_in_memory().unwrap();
+        let mut shop = new("s", 5, 100);
+        shop.key = "shop";
+        db.insert(&new("a", 1, 100), &addr).unwrap();
+        let s = db.insert(&shop, &addr).unwrap();
+        assert_eq!(s.key, "shop");
+        assert_eq!(db.get("s").unwrap().unwrap().key, "shop");
+        db.update("s", Status::Confirmed, 10_000, 10_000, Some(50)).unwrap();
+        let only = |k| {
+            db.list_keyed(None, None, 10, Some(k))
+                .unwrap()
+                .iter()
+                .map(|r| r.id.clone())
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(only("shop"), ["s"]);
+        assert_eq!(only("invoices"), ["a"]);
+        assert_eq!(
+            db.payment_buckets_keyed(0, 100, 1, Some("shop")).unwrap(),
+            vec![(1, 10_000)]
+        );
+        assert_eq!(
+            db.payment_buckets_keyed(0, 100, 1, Some("invoices")).unwrap(),
+            vec![(0, 0)]
+        );
+        let t = db.key_totals(0).unwrap();
+        assert_eq!(t.len(), 2);
+        assert_eq!((t[0].key.as_str(), t[0].pending), ("invoices", 1));
+        assert_eq!(
+            (t[1].key.as_str(), t[1].confirmed, t[1].confirmed_sat, t[1].last_paid_at),
+            ("shop", 1, 10_000, Some(50))
+        );
+        // Only invoices created since then.
+        assert_eq!(db.key_totals(3).unwrap().len(), 1);
+        let mut d = new("d", 6, 100);
+        d.key = "shop";
+        db.insert(&d, &addr).unwrap();
+        db.update("d", Status::Detected, 10_000, 0, None).unwrap();
+        let mut e = new("e", 7, 100);
+        e.key = "shop";
+        db.insert(&e, &addr).unwrap();
+        db.update("e", Status::Expired, 0, 0, None).unwrap();
+        let t = db.key_totals(3).unwrap();
+        assert_eq!((t[0].detected, t[0].detected_sat, t[0].expired), (1, 10_000, 1));
+        db.execute_raw("UPDATE invoices SET status = 'odd' WHERE id = 'e'");
+        assert!(db.key_totals(0).is_err());
+    }
+
+    #[test]
+    fn what_is_known_about_keys_is_stored() {
+        let db = Db::open_in_memory().unwrap();
+        assert!(db.key_rows().unwrap().is_empty());
+        let mut shop = crate::keys::tests::row("shop", false);
+        db.put_key_row(&shop).unwrap();
+        db.put_key_row(&crate::keys::tests::row("cafe", true)).unwrap();
+        shop.label = "Shop".into();
+        db.put_key_row(&shop).unwrap();
+        let rows = db.key_rows().unwrap();
+        let ids: Vec<&str> = rows.iter().map(|r| r.id.as_str()).collect();
+        assert_eq!(ids, ["cafe", "shop"]);
+        assert_eq!(rows[1], shop);
+        assert_eq!(rows[0].archived_at, Some(2));
+    }
+
+    #[test]
+    fn an_old_database_books_its_invoices_to_the_original_key() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "CREATE TABLE invoices (id TEXT PRIMARY KEY, idx INTEGER NOT NULL UNIQUE, address TEXT NOT NULL UNIQUE,
+             amount_sat INTEGER NOT NULL, memo TEXT NOT NULL, status TEXT NOT NULL, received_sat INTEGER NOT NULL DEFAULT 0,
+             confirmed_sat INTEGER NOT NULL DEFAULT 0, created_at INTEGER NOT NULL, expires_at INTEGER NOT NULL,
+             settled_at INTEGER, creator TEXT NOT NULL);
+             INSERT INTO invoices (id, idx, address, amount_sat, memo, status, created_at, expires_at, creator)
+             VALUES ('old', 0, 'a0', 1, '', 'pending', 1, 2, 'c');",
+        )
+        .unwrap();
+        let db = Db::init(conn).unwrap();
+        assert_eq!(db.get("old").unwrap().unwrap().key, "invoices");
+        assert_eq!(db.list_keyed(None, None, 5, Some("invoices")).unwrap().len(), 1);
     }
 
     #[test]

@@ -115,6 +115,11 @@ pub struct Settings {
     /// Proxies for relay connections only.
     pub proxies: ProxySettings,
     pub sweep: Sweep,
+    /// The keys relays and proxies can be assigned to (the service's keys in
+    /// use). Not a setting: the service fills it in from its keys. Empty
+    /// means the built-in keys.
+    #[serde(skip)]
+    pub lanes: Vec<crate::network::Lane>,
 }
 
 /// Partial update of [`Sweep`].
@@ -461,7 +466,11 @@ impl Settings {
     pub fn topology(&self) -> Topology {
         Topology {
             settings: self.network(),
-            lanes: crate::keys::lanes(),
+            lanes: if self.lanes.is_empty() {
+                crate::keys::lanes()
+            } else {
+                self.lanes.clone()
+            },
         }
     }
 

@@ -29,7 +29,8 @@ impl NetworkHost for Service {
     }
 
     fn connects_while_offline(&self, lane: &str, policy: OfflinePolicy) -> bool {
-        let operators = crate::keys::def(lane).is_some_and(|k| k.operators_only);
+        // Only the administration key is for operators; every other key invoices.
+        let operators = lane == crate::keys::ADMIN;
         !matches!(
             (policy, operators),
             (OfflinePolicy::KillSwitch, _) | (OfflinePolicy::AdminOnly, false) | (OfflinePolicy::InvoicingOnly, true)
